@@ -1,0 +1,2786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#101725" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>WSOP Mixed-Game Trainer</title>
+<style>
+  html, body { margin:0; padding:0; background:#101725; color:#e8dfc8;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-text-size-adjust:100%; }
+  #root { min-height:100vh; }
+  #boot { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; color:#c9a84c; font-size:15px; letter-spacing:2px; }
+  #boot .ring { width:34px; height:34px; border:3px solid #c9a84c33; border-top-color:#c9a84c;
+    border-radius:50%; animation:spin 0.9s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="boot"><div class="ring"></div><div>DEALING IN…</div></div>
+
+  <!-- React + Babel from CDN (no build step needed) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect } = React;
+
+// ─── RESPONSIVE HOOK ─────────────────────────────
+function useWidth() {
+  const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 800);
+  useEffect(() => {
+    const h = () => setW(window.innerWidth);
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
+  }, []);
+  return w;
+}
+
+// ─── GAME REGISTRY ───────────────────────────────
+// Grouped into Limit games and Big-Bet (no-limit / pot-limit) games.
+const SECTIONS = [
+  { title:"LIMIT GAMES", games:[
+    { id:"triple", label:"2-7 Triple Draw",  tag:"DRAW",    available:true  },
+    { id:"badugi", label:"Badugi",           tag:"DRAW",    available:true  },
+    { id:"lhe",    label:"Limit Hold'em",    tag:"HOLD'EM", available:true  },
+    { id:"omaha8", label:"Omaha Hi-Lo",      tag:"OMAHA 8", available:true  },
+    { id:"razz",   label:"Razz",             tag:"STUD",    available:true  },
+    { id:"stud",   label:"7-Card Stud",      tag:"STUD",    available:true  },
+    { id:"stud8",  label:"Stud Hi-Lo",       tag:"STUD 8",  available:true  },
+  ]},
+  { title:"BIG BET GAMES", games:[
+    { id:"single", label:"2-7 Single Draw",  tag:"NO LIMIT",  available:true  },
+    { id:"nlhe",   label:"No-Limit Hold'em", tag:"NO LIMIT",  available:true  },
+    { id:"plo",    label:"Pot-Limit Omaha",  tag:"POT LIMIT", available:true  },
+    { id:"bigo",   label:"Big O",            tag:"POT LIMIT", available:true  },
+    { id:"soon1",  label:"More soon",        tag:"",          available:false },
+    { id:"soon2",  label:"More soon",        tag:"",          available:false },
+    { id:"soon3",  label:"More soon",        tag:"",          available:false },
+  ]},
+  { title:"DRAMAHA · SPLIT DRAW", games:[
+    { id:"dramahaH",  label:"Dramaha High",  tag:"SPLIT", available:true },
+    { id:"dramaha27", label:"2-7 Dramaha",   tag:"SPLIT", available:true },
+    { id:"dramadugi", label:"Dramadugi",     tag:"SPLIT", available:true },
+  ]},
+];
+// Flat list for lookups.
+const GAMES = SECTIONS.flatMap(s => s.games);
+
+// Game families
+const IS_DRAW  = gid => gid === "single" || gid === "triple" || gid === "badugi";
+const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo";
+const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8";
+const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo";
+const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo";
+// Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
+// from the five hole cards. The "side" is which hand the draw half is scored as.
+const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
+const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
+const DRAW_CAP     = gid => gid === "dramadugi" ? 3 : 5;   // max cards a player may draw
+// Betting structure per game: "fl" fixed-limit, "nl" no-limit, "pl" pot-limit.
+const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
+                       : (gid === "plo" || gid === "bigo")   ? "pl" : "fl";
+// Cards dealt per player for draw games.
+const HAND_SIZE = gid => (gid === "badugi" ? 4 : 5);
+const HOLE_SIZE = gid => (gid === "bigo" ? 5 : IS_OMAHA(gid) ? 4 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
+
+// ─── CONSTANTS ───────────────────────────────────
+const SUITS = ["♠","♥","♦","♣"];
+const RANKS = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"];
+const RV    = {2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,J:11,Q:12,K:13,A:14};
+const RED   = new Set(["♥","♦"]);
+const ANTE  = 10;
+const SB    = 20;   // small bet (streets 0 and 1)
+const BB    = 40;   // big bet   (streets 2 and 3)
+const SBLIND = 10;  // flop games: small blind
+const BBLIND = 20;  // flop games: big blind (= small bet)
+const STUD_ANTE = 5; // stud games: ante per player
+const BRINGIN   = 10; // stud games: forced bring-in on 3rd street
+
+// ─── STAKES & FORMAT ─────────────────────────────
+// Every money value derives from one headline number `sb` (the small blind).
+//   blinds  sb / 2·sb      fixed-limit bets  2·sb / 4·sb
+//   draw ante sb · stud ante ≈ sb/2 · bring-in sb
+// At sb=10 this reproduces the legacy table exactly (ante10, bets 20/40, blinds 10/20).
+const mkStakes = (sb, label) => ({
+  label, sb,
+  sblind: sb, bblind: 2 * sb,          // flop-game blinds
+  sbet: 2 * sb, bbet: 4 * sb,          // fixed-limit small/big bet
+  ante: sb, studAnte: Math.max(1, Math.round(sb / 2)), bringin: sb,
+});
+const CASH_STAKES   = [mkStakes(5, "$5 / $10"), mkStakes(10, "$10 / $20"), mkStakes(25, "$25 / $50")];
+const TOURNEY_STAKES = mkStakes(10, "Tournament");   // fixed blind size; stack depth is the variable
+const BB_DEPTHS     = [200, 100, 50, 10];
+const CASH_DEPTH    = 100;                            // cash buy-in fixed at 100bb
+// Active stakes for a given state.
+const STK = st => (st.format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[st.stakeIdx ?? 1]);
+// The "one big bet/blind" used to size a stack by depth — relabelled per game family.
+const depthUnit = (gid, stk) => (BET_MODE(gid) === "fl" ? stk.bbet : stk.bblind);
+const depthWord = gid => (BET_MODE(gid) === "fl" ? "big bets" : "big blinds");
+// Starting stack for a state's format/stake/depth.
+const startStack = st => depthUnit(st.gid, STK(st)) * (st.format === "tourney" ? (st.bbDepth ?? 100) : CASH_DEPTH);
+// Suit order for bring-in / board tie-breaks (spades high → clubs low)
+const SUIT_RANK = { "♠":4, "♥":3, "♦":2, "♣":1 };
+
+// ─── CPU PROFILES ────────────────────────────────
+// Three distinct opponents with realistic leaks.
+// Martin gains tilt stacks when he loses — plays worse.
+const PROF = {
+  1:{ name:"Tommy",  tag:"The Rock",   aggr:0.20, bluff:0.05, slow:0.36, leak:0.10, standPat:0.07, over:0.03, sz:0.45, cry:0.07 },
+  2:{ name:"Carlos", tag:"The Maniac", aggr:0.75, bluff:0.38, slow:0.03, leak:0.25, standPat:0.04, over:0.15, sz:1.25, cry:0.28 },
+  3:{ name:"Martin", tag:"Old Reg",    aggr:0.38, bluff:0.12, slow:0.20, leak:0.22, standPat:0.25, over:0.06, sz:0.65, cry:0.14 },
+};
+
+// ─── DECK ────────────────────────────────────────
+function mkDeck() {
+  const d = [];
+  for (const s of SUITS) for (const r of RANKS) d.push({ s, r, v: RV[r] });
+  for (let i = d.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [d[i], d[j]] = [d[j], d[i]];
+  }
+  return d;
+}
+
+// ─── 2-7 LOWBALL EVALUATOR ───────────────────────
+// Rules: Aces are HIGH (bad). Straights count. Flushes count.
+// Lower five-card hand wins. Best: 7-5-4-3-2 rainbow.
+function eval27(cards) {
+  if (!cards || cards.length !== 5) return null;
+  const vs = cards.map(c => c.v).sort((a, b) => b - a);
+  const isF = new Set(cards.map(c => c.s)).size === 1;
+  const isS = new Set(vs).size === 5 && vs[0] - vs[4] === 4;
+  const cnt = {}; vs.forEach(v => (cnt[v] = (cnt[v] || 0) + 1));
+  const fr = Object.values(cnt).sort((a, b) => b - a);
+  let cat;
+  if      (isF && isS)                cat = 8;
+  else if (fr[0] === 4)               cat = 7;
+  else if (fr[0] === 3 && fr[1] === 2) cat = 6;
+  else if (isF)                        cat = 5;
+  else if (isS)                        cat = 4;
+  else if (fr[0] === 3)               cat = 3;
+  else if (fr[0] === 2 && fr[1] === 2) cat = 2;
+  else if (fr[0] === 2)               cat = 1;
+  else                                cat = 0;
+  const CATS = ["High Card","Pair","Two Pair","Three of a Kind","Straight","Flush","Full House","Four of a Kind","Str. Flush"];
+  const RN = {14:"Ace",13:"King",12:"Queen",11:"Jack",10:"Ten",9:"Nine",8:"Eight",7:"Seven",6:"Six",5:"Five",4:"Four",3:"Three",2:"Deuce"};
+  return { cat, vs, desc: cat === 0 ? `${RN[vs[0]]}-low` : CATS[cat] };
+}
+function cmp27(a, b) {
+  if (!a || !b) return 0;
+  if (a.cat !== b.cat) return a.cat < b.cat ? -1 : 1;
+  for (let i = 0; i < 5; i++) if (a.vs[i] !== b.vs[i]) return a.vs[i] < b.vs[i] ? -1 : 1;
+  return 0;
+}
+function hColor(ev) {
+  if (!ev) return "#6b7280";
+  if (ev.high) { // flop high hand: higher category is better
+    if (ev.cat >= 6) return "#4ade80";
+    if (ev.cat >= 3) return "#86efac";
+    if (ev.cat >= 1) return "#fde047";
+    return "#fb923c";
+  }
+  if (ev.low) { // razz / ace-to-five low: lower category & lower top card better
+    if (ev.cat > 0) return "#f87171";          // any pair+ is bad
+    const top = ev.tb ? ev.tb[0] : 14;
+    if (top <= 6) return "#4ade80";
+    if (top <= 7) return "#86efac";
+    if (top <= 8) return "#fde047";
+    if (top <= 9) return "#fb923c";
+    return "#f87171";
+  }
+  if (ev.game === "badugi") {
+    if (ev.size === 4) return ev.vs[0] <= 7 ? "#4ade80" : "#86efac"; // 4-card badugi
+    if (ev.size === 3) return "#fde047";
+    if (ev.size === 2) return "#fb923c";
+    return "#f87171";
+  }
+  if (ev.cat > 0)     return "#f87171";
+  if (ev.vs[0] <= 7)  return "#4ade80";
+  if (ev.vs[0] <= 8)  return "#86efac";
+  if (ev.vs[0] <= 9)  return "#fde047";
+  if (ev.vs[0] <= 10) return "#fb923c";
+  return "#f87171";
+}
+
+// ─── BADUGI EVALUATOR ────────────────────────────
+// Aces are LOW. A "badugi" = cards with all distinct ranks AND all distinct
+// suits. More cards beats fewer (4-card beats 3-card beats 2-card). Within the
+// same size, the lower high card wins. Best possible: A-2-3-4 rainbow.
+const BV = v => (v === 14 ? 1 : v); // ace counts as 1 (low) in badugi
+function evalBadugi(cards) {
+  if (!cards || cards.length < 4) return null;   // 4 (badugi) or 5 (dramadugi hole) → best 4-card badugi
+  // Find the largest subset with unique ranks and unique suits; tie-break lowest.
+  let best = null;
+  const n = cards.length;
+  for (let mask = 1; mask < (1 << n); mask++) {
+    const sub = [];
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) sub.push(cards[i]);
+    const ranks = new Set(sub.map(c => BV(c.v)));
+    const suits = new Set(sub.map(c => c.s));
+    if (ranks.size !== sub.length || suits.size !== sub.length) continue; // not valid
+    const vs = sub.map(c => BV(c.v)).sort((a, b) => b - a); // high first
+    const cand = { size: sub.length, vs };
+    if (!best) { best = cand; continue; }
+    if (cand.size !== best.size) { if (cand.size > best.size) best = cand; continue; }
+    // same size: compare high cards, lower wins
+    for (let i = 0; i < cand.size; i++) {
+      if (cand.vs[i] !== best.vs[i]) { if (cand.vs[i] < best.vs[i]) best = cand; break; }
+    }
+  }
+  const RN = {1:"Ace",2:"Deuce",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven",8:"Eight",9:"Nine",10:"Ten",11:"Jack",12:"Queen",13:"King"};
+  const sizeWord = ["", "1-card", "2-card", "3-card", "Badugi"][best.size];
+  const low = RN[best.vs[0]];
+  const desc = best.size === 4 ? `${low}-high Badugi` : `${sizeWord} (${low} high)`;
+  return { game:"badugi", size:best.size, vs:best.vs, desc };
+}
+function cmpBadugi(a, b) {
+  if (!a || !b) return 0;
+  if (a.size !== b.size) return a.size > b.size ? -1 : 1; // more cards wins
+  for (let i = 0; i < a.size; i++) if (a.vs[i] !== b.vs[i]) return a.vs[i] < b.vs[i] ? -1 : 1;
+  return 0;
+}
+
+// ─── HIGH-HAND EVALUATOR (flop games) ────────────
+// Best 5-card poker hand. Higher is better. Ace high; wheel A-2-3-4-5 = 5-high.
+function evalHigh5(cards) {
+  const vs = cards.map(c => c.v).sort((a, b) => b - a);
+  const isFlush = new Set(cards.map(c => c.s)).size === 1;
+  const uniq = [...new Set(vs)].sort((a, b) => b - a);
+  let strHigh = 0;
+  if (uniq.length === 5) {
+    if (uniq[0] - uniq[4] === 4) strHigh = uniq[0];
+    else if (uniq[0] === 14 && uniq[1] === 5 && uniq[4] === 2) strHigh = 5; // wheel
+  }
+  const cnt = {}; vs.forEach(v => (cnt[v] = (cnt[v] || 0) + 1));
+  const groups = Object.entries(cnt).map(([v, c]) => ({ v:+v, c })).sort((a, b) => b.c - a.c || b.v - a.v);
+  const freq = groups.map(g => g.c);
+  let cat, tb;
+  if      (isFlush && strHigh)            { cat = 8; tb = [strHigh]; }
+  else if (freq[0] === 4)                 { cat = 7; tb = [groups[0].v, groups[1].v]; }
+  else if (freq[0] === 3 && freq[1] === 2){ cat = 6; tb = [groups[0].v, groups[1].v]; }
+  else if (isFlush)                       { cat = 5; tb = vs.slice(); }
+  else if (strHigh)                       { cat = 4; tb = [strHigh]; }
+  else if (freq[0] === 3)                 { cat = 3; tb = [groups[0].v, ...groups.slice(1).map(g => g.v)]; }
+  else if (freq[0] === 2 && freq[1] === 2){ cat = 2; const pr=[groups[0].v,groups[1].v].sort((a,b)=>b-a); tb=[...pr, groups[2].v]; }
+  else if (freq[0] === 2)                 { cat = 1; tb = [groups[0].v, ...groups.slice(1).map(g => g.v)]; }
+  else                                    { cat = 0; tb = vs.slice(); }
+  const CATS = ["High Card","Pair","Two Pair","Trips","Straight","Flush","Full House","Quads","Str. Flush"];
+  return { cat, tb, desc: CATS[cat], high:true };
+}
+function cmpHigh(a, b) {
+  if (!a || !b) return 0;
+  if (a.cat !== b.cat) return a.cat > b.cat ? -1 : 1; // higher cat wins
+  const n = Math.max(a.tb.length, b.tb.length);
+  for (let i = 0; i < n; i++) { const x = a.tb[i]||0, y = b.tb[i]||0; if (x !== y) return x > y ? -1 : 1; }
+  return 0;
+}
+function kCombos(arr, k) {
+  const res = [], n = arr.length, idx = [...Array(k).keys()];
+  if (k > n) return res;
+  while (true) {
+    res.push(idx.map(i => arr[i]));
+    let i = k - 1;
+    while (i >= 0 && idx[i] === n - k + i) i--;
+    if (i < 0) break;
+    idx[i]++;
+    for (let j = i + 1; j < k; j++) idx[j] = idx[j-1] + 1;
+  }
+  return res;
+}
+// Hold'em: best 5 of (2 hole + board)
+function bestHoldemHigh(hole, board) {
+  const seven = [...hole, ...board];
+  if (seven.length < 5) return null;
+  let best = null;
+  for (const c of kCombos(seven, 5)) { const e = evalHigh5(c); if (!best || cmpHigh(e, best) < 0) best = e; }
+  return best;
+}
+// Omaha: exactly 2 hole + 3 board
+function bestOmahaHigh(hole, board) {
+  if (board.length < 3) return null;
+  let best = null;
+  for (const h of kCombos(hole, 2))
+    for (const b of kCombos(board, 3)) { const e = evalHigh5([...h, ...b]); if (!best || cmpHigh(e, best) < 0) best = e; }
+  return best;
+}
+// Omaha-8 low: exactly 2 hole + 3 board, 5 distinct ranks all ≤8 (A=1). Lower wins.
+const lowVal = v => (v === 14 ? 1 : v);
+function bestOmahaLow(hole, board) {
+  if (board.length < 3) return null;
+  let best = null;
+  for (const h of kCombos(hole, 2))
+    for (const b of kCombos(board, 3)) {
+      const five = [...h, ...b].map(c => lowVal(c.v));
+      if (new Set(five).size !== 5) continue;
+      if (Math.max(...five) > 8) continue;
+      const sorted = [...five].sort((a, b) => b - a);
+      if (!best || cmpLow(sorted, best) < 0) best = sorted;
+    }
+  return best;
+}
+function cmpLow(a, b) {
+  if (!a || !b) return 0;
+  for (let i = 0; i < 5; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  return 0;
+}
+const LOWNAME = { 1:"A",2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8" };
+function lowDesc(lo) { return lo ? lo.map(v => LOWNAME[v]).join("-") + " low" : "no low"; }
+
+// Best high hand for a flop game (dispatches Hold'em vs Omaha)
+function flopHigh(gid, hole, board) {
+  return IS_OMAHA(gid) ? bestOmahaHigh(hole, board) : bestHoldemHigh(hole, board);
+}
+
+// ─── STUD EVALUATORS ─────────────────────────────
+// Razz / ace-to-five low: straights & flushes DON'T count; pairs are a
+// category penalty (no-pair beats any pair, etc.). Ace is low. Best = 5-4-3-2-A.
+function evalRazz5(cards) {
+  const vs = cards.map(c => lowVal(c.v)).sort((a, b) => b - a);
+  const cnt = {}; vs.forEach(v => (cnt[v] = (cnt[v] || 0) + 1));
+  const f = Object.values(cnt).sort((a, b) => b - a);
+  let cat;
+  if      (f[0] === 4)               cat = 7; // quads
+  else if (f[0] === 3 && f[1] === 2) cat = 6; // full house
+  else if (f[0] === 3)               cat = 3; // trips
+  else if (f[0] === 2 && f[1] === 2) cat = 2; // two pair
+  else if (f[0] === 2)               cat = 1; // one pair
+  else                               cat = 0; // no pair (best)
+  return { cat, tb: vs, low:true };
+}
+function cmpRazz(a, b) {
+  if (!a || !b) return 0;
+  if (a.cat !== b.cat) return a.cat < b.cat ? -1 : 1; // lower category is better
+  for (let i = 0; i < 5; i++) { const x = a.tb[i]||0, y = b.tb[i]||0; if (x !== y) return x < y ? -1 : 1; }
+  return 0;
+}
+function bestRazz(seven) {
+  if (!seven || seven.length < 5) return null;
+  let best = null;
+  for (const c of kCombos(seven, 5)) { const e = evalRazz5(c); if (!best || cmpRazz(e, best) < 0) best = e; }
+  if (best) best.desc = razzDesc(best);
+  return best;
+}
+function razzDesc(ev) {
+  if (!ev) return "—";
+  const top = ev.tb.map(v => LOWNAME[v] || v);
+  if (ev.cat === 0) return `${top[0]}-low`;
+  const C = ["", "pair", "two pair", "trips", "", "", "full house", "quads"][ev.cat];
+  return `${top[0]}-high (${C})`;
+}
+// 8-or-better low from any 5 of N (stud-8). Ace low; 5 distinct ranks ≤ 8.
+function bestLow7(seven) {
+  if (!seven || seven.length < 5) return null;
+  let best = null;
+  for (const c of kCombos(seven, 5)) {
+    const five = c.map(x => lowVal(x.v));
+    if (new Set(five).size !== 5) continue;
+    if (Math.max(...five) > 8) continue;
+    const s = [...five].sort((a, b) => b - a);
+    if (!best || cmpLow(s, best) < 0) best = s;
+  }
+  return best;
+}
+// Best high hand from 7 stud cards (reuses best-of-7)
+function studHigh(seven) { return bestHoldemHigh(seven, []); } // bestHoldemHigh uses all of (hole+board)=seven
+
+// "up" cards a player is showing (face-up). Used for bring-in & first-to-act.
+const upCards = p => p.hand.filter(c => c.up);
+
+// Partial low value of showing cards (lower = better for razz ordering); returns sorted-desc ace-low vector
+function showLowVec(cards) { return cards.map(c => lowVal(c.v)).sort((a, b) => b - a); }
+function cmpVecLow(a, b) { for (let i=0;i<Math.max(a.length,b.length);i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x<y?-1:1;} return 0; }
+
+// ─── GENERIC DISPATCHERS ─────────────────────────
+function evalHand(gid, cards) {
+  return gid === "badugi" ? evalBadugi(cards) : eval27(cards);
+}
+function cmpHand(gid, a, b) {
+  return gid === "badugi" ? cmpBadugi(a, b) : cmp27(a, b);
+}
+
+// ─── CPU DRAW ────────────────────────────────────
+// Keep low unpaired cards, discard the rest — with personality leaks.
+function cpuDrawCards(hand, pr, gid) {
+  if (IS_DRAMAHA(gid)) return cpuDrawCardsDramaha(hand, gid);
+  let discard;
+  if (gid === "badugi") {
+    // Keep the cards that form the best badugi; discard the rest.
+    const keepIdx = badugiKeepIndices(hand);
+    discard = hand.map((_, i) => i).filter(i => !keepIdx.has(i));
+  } else {
+    const seen = new Set(); discard = [];
+    hand.forEach((c, i) => {
+      if (c.v <= 7 && !seen.has(c.v)) seen.add(c.v);
+      else discard.push(i);
+    });
+  }
+  if (discard.length === 1 && Math.random() < pr.standPat) return [];          // stands pat with one draw
+  if (discard.length === 0 && Math.random() < pr.over) {                        // brain fade: draws when pat
+    const worst = hand.reduce((w, c, i) => c.v > w.v ? { v:c.v, i } : w, { v:0, i:0 });
+    return [worst.i];
+  }
+  if (discard.length > 0 && Math.random() < pr.leak) return discard.slice(0, -1); // misses a discard
+  return discard;
+}
+
+// Indices of the cards that make up the best badugi (to keep).
+function badugiKeepIndices(hand) {
+  const n = hand.length;
+  let best = { size:0, sum:99, idx:new Set() };
+  for (let mask = 1; mask < (1 << n); mask++) {
+    const sub = [], idx = new Set();
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) { sub.push(hand[i]); idx.add(i); }
+    const ranks = new Set(sub.map(c => BV(c.v)));
+    const suits = new Set(sub.map(c => c.s));
+    if (ranks.size !== sub.length || suits.size !== sub.length) continue;
+    const sum = sub.reduce((a, c) => a + BV(c.v), 0);
+    if (sub.length > best.size || (sub.length === best.size && sum < best.sum))
+      best = { size:sub.length, sum, idx };
+  }
+  return best.idx;
+}
+
+// ─── CPU BETTING ─────────────────────────────────
+// Personality-driven decisions. Tilt amplifies aggression and looseness.
+function cpuDecide(st, idx) {
+  if (IS_FLOP(st.gid)) return cpuDecideFlop(st, idx);
+  if (IS_STUD(st.gid)) return cpuDecideStud(st, idx);
+  if (IS_DRAMAHA(st.gid)) return cpuDecideDramaha(st, idx);
+  const pr   = PROF[idx];
+  const pl   = st.players[idx];
+  const tilt = Math.min(3, st.cpuTilt?.[idx] || 0);
+  const call = Math.min(st.currentBet - pl.betSt, pl.chips);
+  const isNL = st.gid === "single";
+  const fb   = st.streetN <= 1 ? STK(st).sbet : STK(st).bbet;
+
+  // Style slider (botTight): 100 = optimal (solid, disciplined, value-focused),
+  // 0 = exploitative (loose, aggressive, bluff-heavy, higher variance).
+  const tight = st.botTight?.[idx] ?? 50;
+  const L     = (100 - tight) / 100;   // "exploit factor": higher = more aggression/bluffs
+
+  // Looser bots bet/bluff/call far more; tilt amplifies on top of that.
+  const looseMul = 0.55 + L * 1.15;            // ~0.55 (nit) .. ~1.70 (maniac-loose)
+  const effAggr  = Math.min(0.97, pr.aggr  * looseMul * (1 + tilt * 0.40));
+  const effBluff = Math.min(0.80, pr.bluff * looseMul * (1 + tilt * 0.55));
+  const effCry   = Math.min(0.70, pr.cry   * looseMul * (1 + tilt * 0.50));
+  const effSlow  = tilt > 0 ? 0 : pr.slow;
+
+  const isBluff = Math.random() < effBluff;
+  const isSlow  = Math.random() < effSlow;
+  const isAggr  = Math.random() < effAggr;
+  const isCry   = Math.random() < effCry;
+
+  const hand = pl.hand;
+  const ev   = evalHand(st.gid, hand);
+  let keepers, good, ok;
+  if (st.gid === "badugi") {
+    // "keepers" = cards already in a valid badugi; good = 4-card 8-high or better
+    keepers = badugiKeepIndices(hand).size;
+    good = ev && ev.size === 4 && ev.vs[0] <= 8;
+    ok   = ev && (ev.size === 4 || (ev.size === 3 && ev.vs[0] <= 6));
+  } else {
+    keepers = new Set(hand.filter(c => c.v <= 7).map(c => c.v)).size;
+    good = ev && ev.cat === 0 && ev.vs[0] <= 8;
+    ok   = ev && ev.cat === 0 && ev.vs[0] <= 10;
+  }
+
+  // Looseness lowers the # of good cards needed to continue, and raises
+  // how big a bet the bot will call with marginal holdings.
+  const minKeep   = tight >= 70 ? 4 : tight >= 40 ? 3 : 2;
+  const callTol   = Math.round(35 + L * 60);   // ~35 (nit) .. ~95 (loose) chips tolerated pre-draw
+  const callTolPD = Math.round(45 + L * 75);   // post-draw tolerance
+
+  // Bet size: NL uses pot multiple + noise; FL uses fixed bet
+  const size = () => {
+    if (!isNL) return fb;
+    const noise = (Math.floor(Math.random() * 5) - 2) * 5;
+    return Math.min(Math.max(Math.floor(st.pot * pr.sz) + noise, 20), pl.chips);
+  };
+
+  // Pre-draw street: evaluate drawing potential
+  if (st.streetN === 0) {
+    if (call <= 0) {
+      if ((keepers >= minKeep && isAggr) || (keepers >= minKeep - 1 && isBluff))
+        if (!isSlow) return { action:"bet", amount: pl.betSt + size() };
+      return { action:"check", amount:0 };
+    }
+    if (keepers >= minKeep)                          return { action:"call", amount:0 };
+    if (keepers >= minKeep - 1 && call <= callTol)   return { action:"call", amount:0 };
+    if ((isBluff || isCry) && call <= callTol * 0.8) return { action:"call", amount:0 };
+    return { action:"fold", amount:0 };
+  }
+
+  // Post-draw streets: evaluate made hand
+  if (call <= 0) {
+    if ((good && !isSlow) || (ok && isAggr) || isBluff) return { action:"bet", amount: pl.betSt + size() };
+    return { action:"check", amount:0 };
+  }
+  if (good)                                       return { action:"call", amount:0 };
+  if (ok && call <= callTolPD)                    return { action:"call", amount:0 };
+  if ((isBluff || isCry) && call <= callTolPD*0.8) return { action:"call", amount:0 };
+  return { action:"fold", amount:0 };
+}
+
+// ─── FLOP-GAME HAND STRENGTH (0..1) ──────────────
+// Preflop uses a starting-hand heuristic; postflop uses the made hand category
+// plus a small bump for flush/straight draws.
+function flopStrength(st, pl) {
+  const gid = st.gid, board = st.board || [];
+  const hole = pl.hand;
+  if (board.length === 0) {
+    // Preflop heuristic
+    if (gid === "lhe") {
+      const [a, b] = [...hole].sort((x, y) => y.v - x.v);
+      const pair = a.v === b.v;
+      const suited = a.s === b.s;
+      const gap = a.v - b.v;
+      let s = 0;
+      if (pair) s = 0.5 + (a.v - 2) / 24;                 // pairs .5..~1
+      else {
+        s = (a.v + b.v) / 40;                             // high cards
+        if (suited) s += 0.08;
+        if (gap === 1) s += 0.06; else if (gap === 2) s += 0.03;
+        if (a.v >= 13) s += 0.05;
+      }
+      return Math.max(0, Math.min(1, s));
+    }
+    // Omaha: reward pairs, double-suited, connectedness, high cards
+    const vs = hole.map(c => c.v);
+    const suitCounts = {}; hole.forEach(c => suitCounts[c.s] = (suitCounts[c.s]||0)+1);
+    const pairs = vs.length - new Set(vs).size;
+    const highs = vs.filter(v => v >= 11).length;
+    const doubleSuited = Object.values(suitCounts).filter(c => c >= 2).length >= 2;
+    let s = 0.3 + pairs * 0.12 + highs * 0.06 + (doubleSuited ? 0.12 : 0);
+    if (vs.includes(14) && vs.includes(2)) s += 0.05; // low potential
+    return Math.max(0, Math.min(1, s));
+  }
+  // Postflop: made hand strength
+  const hi = flopHigh(gid, hole, board);
+  let s = 0;
+  if (hi) {
+    s = [0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1][hi.cat] || 0.2;
+    // top-pair-ish bump handled by category already
+  }
+  // Draw equity bump (Hold'em only, simple): flush/oesd on the turn
+  if (gid === "lhe" && board.length < 5) {
+    const allSuits = {}; [...hole, ...board].forEach(c => allSuits[c.s] = (allSuits[c.s]||0)+1);
+    if (Math.max(...Object.values(allSuits)) === 4) s = Math.max(s, 0.55); // flush draw
+  }
+  // Hi-lo flop games (Omaha-8, Big O): having a made/likely low adds value
+  if (IS_HILO(gid)) {
+    const lo = bestOmahaLow(hole, board);
+    if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03);
+  }
+  return Math.max(0, Math.min(1, s));
+}
+// Pot-limit cap: the largest TOTAL street bet a player may make.
+function potLimitMaxTotal(st, pl) {
+  const toCall = Math.max(0, st.currentBet - pl.betSt);
+  return Math.min(pl.betSt + pl.chips, st.currentBet + st.pot + toCall);
+}
+
+function cpuDecideFlop(st, idx) {
+  const pr   = PROF[idx];
+  const pl   = st.players[idx];
+  const tilt = Math.min(3, st.cpuTilt?.[idx] || 0);
+  const call = Math.min(st.currentBet - pl.betSt, pl.chips);
+  const fb   = st.streetN <= 1 ? STK(st).sbet : STK(st).bbet;
+  const tight = st.botTight?.[idx] ?? 50;
+  const L     = (100 - tight) / 100;
+  const mode  = BET_MODE(st.gid);
+
+  const str = flopStrength(st, pl);
+  // Thresholds shift with tightness: looser bots play weaker hands.
+  const openThresh = 0.40 - L * 0.18;   // need this strength to bet/raise when checked to
+  const callThresh = 0.30 - L * 0.16;   // need this strength to call a bet
+  const raiseThresh = 0.74 - L * 0.10;  // strength to raise a bet
+
+  const bluff = Math.random() < Math.min(0.8, pr.bluff * (0.7 + L) * (1 + tilt * 0.5));
+  const slow  = tilt === 0 && Math.random() < pr.slow;
+
+  // Bet/raise sizing. Fixed-limit uses fb; big-bet sizes off the pot & profile.
+  const sizedTotal = (raising) => {
+    if (mode === "fl") return pl.betSt + (raising ? call + fb : fb);
+    const frac = Math.min(1.1, Math.max(0.4, pr.sz));        // pot fraction by personality
+    let total = st.currentBet + Math.round((st.pot + call) * frac / 5) * 5; // raise sized off pot
+    if (!raising) total = Math.max(fb, Math.round(st.pot * frac / 5) * 5);   // open bet
+    const cap = mode === "pl" ? potLimitMaxTotal(st, pl) : pl.betSt + pl.chips; // PL cap or stack
+    return Math.min(Math.max(total, st.currentBet + fb), cap);
+  };
+
+  if (call <= 0) {
+    if ((str >= openThresh && !slow) || bluff) return { action:"bet", amount: sizedTotal(false) };
+    return { action:"check", amount:0 };
+  }
+  // facing a bet
+  if (str >= raiseThresh && !slow) return { action:"raise", amount: sizedTotal(true) };
+  // pot odds: cheaper calls are easier to make
+  const potOdds = call / (st.pot + call);
+  if (str >= callThresh || (str >= callThresh - 0.08 && potOdds < 0.2) || bluff)
+    return { action:"call", amount:0 };
+  return { action:"fold", amount:0 };
+}
+
+// ─── STUD HAND STRENGTH (0..1) ───────────────────
+// Uses all of a player's own cards (the CPU "knows" its own down cards).
+function studStrength(st, pl) {
+  const gid = st.gid;
+  const n = pl.hand.length;
+  if (gid === "razz") {
+    // Lower is better; score by how many low (≤8) distinct cards and how low.
+    const lows = [...new Set(pl.hand.map(c => lowVal(c.v)).filter(v => v <= 8))].sort((a,b)=>a-b);
+    let s = lows.length / 5 * 0.7;                         // breadth of low cards
+    if (lows.length) s += Math.max(0, (8 - lows[lows.length-1]) / 8) * 0.3; // smoothness
+    const ev = bestRazz(pl.hand);
+    if (n >= 5 && ev) s = ev.cat === 0 ? Math.max(s, 0.6 + (8 - (ev.tb[0]||8)) * 0.05) : Math.min(s, 0.35);
+    return Math.max(0, Math.min(1, s));
+  }
+  // stud / stud8 high
+  const hi = studHigh(pl.hand.length >= 5 ? pl.hand : pad5(pl.hand));
+  let s = hi ? ([0.16,0.40,0.58,0.72,0.82,0.88,0.94,0.98,1][hi.cat] || 0.2) : 0.2;
+  // early streets: reward pairs/high cards / three to a flush or straight
+  if (n < 5) {
+    const vs = pl.hand.map(c => c.v);
+    const pair = vs.length !== new Set(vs).size;
+    const high = vs.filter(v => v >= 11).length;
+    s = Math.max(s, 0.30 + (pair ? 0.25 : 0) + high * 0.05);
+    const suits = {}; pl.hand.forEach(c => suits[c.s]=(suits[c.s]||0)+1);
+    if (Math.max(...Object.values(suits)) >= 3) s += 0.08; // 3-flush
+  }
+  if (gid === "stud8") {
+    const lo = bestLow7(pl.hand);
+    if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03);
+    else if (n < 5) { // low draw potential
+      const lows = new Set(pl.hand.map(c=>lowVal(c.v)).filter(v=>v<=8)).size;
+      if (lows >= 2) s = Math.max(s, 0.4);
+    }
+  }
+  return Math.max(0, Math.min(1, s));
+}
+// pad a <5 card set to 5 for evalHigh5 by repeating nothing — instead just eval what we have
+function pad5(cards) { return cards.length >= 5 ? cards : cards; }
+
+function cpuDecideStud(st, idx) {
+  const pr   = PROF[idx];
+  const pl   = st.players[idx];
+  const tilt = Math.min(3, st.cpuTilt?.[idx] || 0);
+  const call = Math.min(st.currentBet - pl.betSt, pl.chips);
+  const fb   = st.streetN <= 1 ? STK(st).sbet : STK(st).bbet;
+  const tight = st.botTight?.[idx] ?? 50;
+  const L     = (100 - tight) / 100;
+
+  const str = studStrength(st, pl);
+  const openThresh  = 0.42 - L * 0.18;
+  const callThresh  = 0.32 - L * 0.16;
+  const raiseThresh = 0.76 - L * 0.10;
+  const bluff = Math.random() < Math.min(0.7, pr.bluff * (0.6 + L) * (1 + tilt * 0.5));
+  const slow  = tilt === 0 && Math.random() < pr.slow;
+
+  if (call <= 0) {
+    if ((str >= openThresh && !slow) || bluff) return { action:"bet", amount: pl.betSt + fb };
+    return { action:"check", amount:0 };
+  }
+  if (str >= raiseThresh && !slow) return { action:"raise", amount: pl.betSt + call + fb };
+  const potOdds = call / (st.pot + call);
+  if (str >= callThresh || (str >= callThresh - 0.08 && potOdds < 0.18) || bluff)
+    return { action:"call", amount:0 };
+  return { action:"fold", amount:0 };
+}
+
+// ─── COACH ───────────────────────────────────────
+// Real-time strategy advice for the human seat (seat 0). Reuses the same
+// hand-strength estimators the CPUs use, then maps strength + pot odds to a
+// plain-language recommendation. Returns { tone, text }, tone ∈ good|ok|warn.
+function heroStrength(st) {
+  const me = st.players[0];
+  if (IS_FLOP(st.gid)) return flopStrength(st, me);
+  if (IS_STUD(st.gid)) return studStrength(st, me);
+  if (IS_DRAMAHA(st.gid)) return dramahaStrength(st, me);
+  return heroDrawStrength(st, me);
+}
+function drawsLeftOf(st) { return Math.max(0, (st.maxDraws || 1) - (st.drawN || 0)); }
+function heroDrawStrength(st, me) {
+  const ev = evalHand(st.gid, me.hand);
+  const dl = drawsLeftOf(st);            // draws still to come (incl. the one pending)
+  const future = Math.max(0, dl - 1);    // draws after the current betting round
+  if (st.gid === "badugi") {
+    if (ev && ev.size === 4) return ev.vs[0] <= 7 ? 0.92 : ev.vs[0] <= 9 ? 0.76 : 0.6;
+    const keep = badugiKeepIndices(me.hand).size;
+    const base = keep >= 3 ? 0.5 : keep >= 2 ? 0.32 : 0.16;
+    return Math.min(0.9, base + future * 0.04 * (keep >= 3 ? 1 : 0.5));
+  }
+  if (ev && ev.cat === 0) {               // made 2-7 low: no pair/straight/flush
+    const top = ev.vs[0];
+    return top <= 7 ? 0.95 : top <= 8 ? 0.82 : top <= 9 ? 0.62 : top <= 10 ? 0.46 : 0.34;
+  }
+  // Unmade: equity scales with how many smooth lows you hold AND draws remaining.
+  const lows = new Set(me.hand.filter(c => c.v <= 8).map(c => c.v)).size;
+  const base = lows >= 4 ? 0.5 : lows >= 3 ? 0.36 : lows >= 2 ? 0.24 : 0.13;
+  return Math.min(0.92, base + future * 0.05);
+}
+// ── Draw planner ──────────────────────────────────
+// Returns the strongest discard plan for the current draw, given draws left:
+//   { keep:[idx], discard:[idx], pat:bool, head:"draw 2"|"stand pat"|..., why, tone }
+// Rank notation for a set of kept cards (high-to-low; aceLow for badugi).
+function keepLabel(hand, idxs, aceLow = false) {
+  const val = c => (aceLow ? BV(c.v) : c.v);
+  return idxs.map(i => hand[i]).sort((a, b) => val(b) - val(a)).map(c => c.r).join("-");
+}
+// 2-7 lowball (single & triple draw)
+function plan27(hand, drawsLeft) {
+  const last = drawsLeft <= 1;
+  const all  = hand.map((_, i) => i);
+  const ev   = eval27(hand);                       // cat 0 = made low (no pair/str/flush)
+  // One index per distinct rank (lowest copy), ascending by 2-7 value (2 low … A high)
+  const firstOf = {};
+  hand.forEach((c, i) => { if (!(c.v in firstOf)) firstOf[c.v] = i; });
+  const uniq   = Object.values(firstOf).map(i => ({ i, v: hand[i].v })).sort((a, b) => a.v - b.v);
+  const sevens = uniq.filter(x => x.v <= 7);
+  const mk = (keep, head, why, tone) => ({
+    keep: [...keep].sort((a, b) => a - b),
+    discard: all.filter(i => !keep.includes(i)),
+    pat: keep.length === hand.length, head, why, tone,
+  });
+
+  // Made hand: decide pat vs. break
+  if (ev && ev.cat === 0) {
+    const made = ev.vs[0], second = ev.vs[1];
+    if (made <= 7)
+      return mk(all, "stand pat", `You hold a ${ev.desc} — a premium hand. Never break a made seven.`, "good");
+    if (made === 8) {
+      if (last)        return mk(all, "stand pat", `Final draw — take your made ${ev.desc} to showdown.`, "good");
+      if (second <= 6) return mk(all, "stand pat", `A smooth ${ev.desc} is strong enough to stand on this early.`, "good");
+      const keep = sevens.map(x => x.i);            // rough eight (8-7…): break the 8
+      return mk(keep, "draw 1", `That's a rough ${ev.desc}. With ${drawsLeft} draws left, break the 8 and draw one to a seven (${keepLabel(hand, keep)}).`, "ok");
+    }
+    if (made === 9 && last && second <= 6)
+      return mk(all, "stand pat", `A smooth nine is a marginal pat on the final draw — fine heads-up, break it if several players are still drawing.`, "ok");
+    // made ten+, or a nine we're breaking → fall through to draw logic
+  }
+
+  // Drawing: pick the best low draw
+  if (sevens.length >= 4) {
+    const keep = sevens.slice(0, 4).map(x => x.i);
+    return mk(keep, "draw 1", `Keep four to a seven (${keepLabel(hand, keep)}) — the premium one-card draw.`, "good");
+  }
+  if (sevens.length === 3) {
+    if (!last) {
+      const keep = sevens.map(x => x.i);
+      return mk(keep, "draw 2", `Keep three to a seven (${keepLabel(hand, keep)}). With ${drawsLeft} draws left, break toward the seven rather than settle for an eight.`, "ok");
+    }
+    const extra = uniq.find(x => x.v > 7 && x.v <= 9);  // a nine or eight pairs it to a one-card draw
+    if (extra) {
+      const keep = [...sevens.map(x => x.i), extra.i];
+      return mk(keep, "draw 1", `Final draw — keep four to ${extra.v <= 8 ? "an eight" : "a nine"} (${keepLabel(hand, keep)}). Take the one-card draw; there are no redraws left to chase a seven.`, "ok");
+    }
+    return mk(sevens.map(x => x.i), `draw ${hand.length - 3}`, `Final draw — no eight or nine to pair down, so draw two at the seven (${keepLabel(hand, sevens.map(x => x.i))}) or fold to a bet.`, "warn");
+  }
+  // Fewer than three to a seven: fall back to a three-to-an-eight draw if available.
+  const eights = uniq.filter(x => x.v <= 8);
+  if (eights.length >= 3) {
+    const keep3 = eights.slice(0, 3).map(x => x.i);
+    if (!last)
+      return mk(keep3, `draw ${hand.length - 3}`, `Best you have is three to an eight (${keepLabel(hand, keep3)}) — a weak draw. Continue only for a cheap price; fold to real pressure.`, "warn");
+    const extra = uniq.find(x => x.v > 8 && x.v <= 9);  // only a nine is worth keeping on the river
+    if (extra) {
+      const keep = [...keep3, extra.i];
+      return mk(keep, "draw 1", `Final draw — keep four to a nine (${keepLabel(hand, keep)}) and take the one-card draw. A weak holding; fold to a bet.`, "warn");
+    }
+    return mk(keep3, `draw ${hand.length - 3}`, `Final draw — three to an eight (${keepLabel(hand, keep3)}); your only improvement is shedding the high cards, so draw two or fold to a bet.`, "warn");
+  }
+  if (sevens.length === 2) {
+    const keep = sevens.map(x => x.i);
+    if (drawsLeft >= 2)
+      return mk(keep, `draw ${hand.length - 2}`, `Just two to a seven (${keepLabel(hand, keep)}) — playable early but loose. Fold to heavy action.`, "warn");
+    return mk(keep, `draw ${hand.length - 2}`, `Two to a seven with one draw left rarely gets there. Fold unless it's free.`, "warn");
+  }
+  const keep = sevens.map(x => x.i);
+  return mk(keep, "fold", `Too few low cards to draw to a winner — fold this.`, "warn");
+}
+// Badugi
+function planBadugi(hand, drawsLeft) {
+  const last    = drawsLeft <= 1;
+  const all     = hand.map((_, i) => i);
+  const keepSet = badugiKeepIndices(hand);
+  const ev      = evalBadugi(hand);
+  const mk = (keep, head, why, tone) => ({
+    keep: [...keep].sort((a, b) => a - b),
+    discard: all.filter(i => !keep.includes(i)),
+    pat: keep.length === hand.length, head, why, tone,
+  });
+  if (keepSet.size === 4) {                          // a made badugi
+    const high = ev.vs[0];                           // 1=A … 13=K (ace low)
+    if (high <= 8 || last)
+      return mk(all, "stand pat", `${last ? "Final draw — keep" : "Stand on"} your ${ev.desc}.`, high <= 8 ? "good" : "ok");
+    const hi = [...keepSet].reduce((h, i) => BV(hand[i].v) > BV(hand[h].v) ? i : h, [...keepSet][0]);
+    const keep = all.filter(i => i !== hi);          // rough badugi early → break the high card
+    return mk(keep, "draw 1", `That's a rough ${ev.desc}. Break the ${hand[hi].r} and try to improve while draws remain.`, "ok");
+  }
+  const keep  = [...keepSet];
+  const draws = hand.length - keepSet.size;
+  return mk(keep, `draw ${draws}`, `Keep your ${keepSet.size}-card base (${keepLabel(hand, keep, true)}) and draw the duplicate rank/suit card${draws > 1 ? "s" : ""}.`, keepSet.size >= 3 ? "ok" : "warn");
+}
+function coachDrawPlan(st, me) {
+  if (IS_DRAMAHA(st.gid)) return planDramaha(st, me);
+  const dl = drawsLeftOf(st);
+  return st.gid === "badugi" ? planBadugi(me.hand, dl) : plan27(me.hand, dl);
+}
+// 5-card-draw-high plan for the Dramaha-High draw side.
+function planDrawHigh(hand) {
+  const all = hand.map((_, i) => i);
+  const e = bestHoldemHigh(hand, []);
+  const cnt = {}; hand.forEach((c, i) => { (cnt[c.v] = cnt[c.v] || []).push(i); });
+  const groups = Object.values(cnt).filter(g => g.length >= 2);
+  const mk = (keep, head, why, tone) => ({ keep:[...keep].sort((a,b)=>a-b), discard: all.filter(i=>!keep.includes(i)), pat: keep.length===hand.length, head, why, tone });
+  if (e && e.cat >= 4) return mk(all, "stand pat", `Made ${e.desc} — stand pat on the high side.`, "good");
+  if (e && e.cat === 3) { const t = Object.values(cnt).find(g => g.length === 3); return mk(t, "draw 2", `Trips (${e.desc}) — keep them and draw two for quads or a full house.`, "good"); }
+  if (e && e.cat === 2) return mk(groups.flat(), "draw 1", `Two pair — keep both and draw one for a full house.`, "ok");
+  if (e && e.cat === 1) return mk(groups[0], "draw 3", `One pair (${e.desc}) — keep the pair, draw three.`, "ok");
+  const order = hand.map((c, i) => ({ i, v:c.v })).sort((a, b) => b.v - a.v);
+  const keep = order.filter(o => o.v >= 12).slice(0, 2).map(o => o.i);
+  if (!keep.length) return mk([], "draw 5", `No pair or high cards — a weak high side; draw five or fold to a bet.`, "warn");
+  return mk(keep, `draw ${hand.length - keep.length}`, `No made hand — keep your high card(s) and draw.`, "warn");
+}
+function planDramaha(st, me) {
+  const side = DRAMAHA_SIDE(st.gid), cap = DRAW_CAP(st.gid);
+  let p = side === "27" ? plan27(me.hand, 1)
+        : side === "badugi" ? planBadugi(me.hand, 1)
+        : planDrawHigh(me.hand);
+  // Respect the discard cap (Dramadugi: 3) and add the two-way caveat.
+  if (p.discard.length > cap) { p = { ...p, discard: p.discard.slice(0, cap), keep: me.hand.map((_,i)=>i).filter(i=>!p.discard.slice(0,cap).includes(i)) }; }
+  const note = side === "high"
+    ? " Weigh the Omaha half too — your two best hole cards play the board."
+    : " Remember the same five cards also feed your Omaha high.";
+  return { ...p, why: (p.why || "") + note };
+}
+// Read the table's tendencies from the live opponents (for exploit mode).
+function tableRead(st) {
+  const opp = st.players.filter(p => p.id !== 0 && !p.folded && !p.sittingOut);
+  if (!opp.length) return { loose: 0.5, aggro: 0.5, n: 0 };
+  const tight = opp.reduce((a, p) => a + (st.botTight?.[p.id] ?? 50), 0) / opp.length;
+  const aggro = opp.reduce((a, p) => a + (PROF[p.id]?.aggr ?? 0.5), 0) / opp.length;
+  return { loose: 1 - tight / 100, aggro, n: opp.length };
+}
+function coachBet(st, me, callAmt) {
+  const facing  = callAmt > 0;
+  const str     = heroStrength(st);
+  const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
+  const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
+  const mode    = st.coachMode || "gto";
+  // Strictness shifts the action thresholds; exploit also tilts to the table read.
+  let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36, tag = "", ex = "";
+  if (mode === "nitty") { raiseCut = 0.83; valueCut = 0.63; thinCut = 0.46; tag = "[Nitty] "; }
+  if (mode === "exploit") {
+    tag = "[Exploit] ";
+    const r = tableRead(st);
+    if (r.loose >= 0.55)      { valueCut -= 0.07; thinCut -= 0.06; ex = " These players call too much — value-bet thinner and skip bluffs."; }
+    else if (r.loose <= 0.40) { valueCut += 0.04; ex = " Tight table — they over-fold, so keep applying pressure with bets."; }
+    else if (r.aggro >= 0.60) { ex = " Aggressive table — let them bet your strong hands and call down a bit lighter."; }
+  }
+  if (facing) {
+    if (str >= raiseCut)         return { tone:"good", text:`${tag}Strong hand — raise for value. You're well ahead of ${oddsTxt} pot odds.${ex}` };
+    if (str >= valueCut)         return { tone:"good", text:`${tag}Solid holding. Calling is standard; a raise is fine.${ex}` };
+    if (str >= potOdds + 0.14)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
+    if (str >= potOdds && mode !== "nitty") return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
+    return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. ${mode === "nitty" ? "Fold — don't pay off without a real holding." : "Folding is usually best here."}` };
+  }
+  if (str >= raiseCut)           return { tone:"good", text:`${tag}Big hand — bet for value, don't give a free card.${ex}` };
+  if (str >= valueCut)           return { tone:"good", text:`${tag}Good holding — a bet pressures weaker hands.${ex}` };
+  if (str >= thinCut)            return { tone:"ok",   text:`${tag}Thin but playable — checking keeps the pot under control.${ex}` };
+  return { tone:"warn", text:`Not much here — check and take the free card.` };
+}
+function coachDraw(st, me) {
+  const plan    = coachDrawPlan(st, me);
+  const sel     = st.sel;
+  const mode    = st.coachMode || "gto";
+  const matches = plan.discard.length === sel.length && plan.discard.every(i => sel.includes(i));
+  // Strictness nudge on weak/marginal draws.
+  let nudge = "";
+  if (plan.tone === "warn") {
+    if (mode === "nitty") nudge = " Nitty line: just fold these — don't draw at trash.";
+    else if (mode === "exploit" && tableRead(st).loose >= 0.55) nudge = " Loose table: avoid drawing thin into a field of callers.";
+  }
+  // Affirm when the player's current selection already matches the recommended play.
+  if (matches) {
+    const lead = plan.pat
+      ? `Standing pat is correct. ${plan.why}`
+      : `That matches the recommended play — ${plan.head}. ${plan.why}`;
+    return { tone:"good", text: lead + nudge };
+  }
+  const head = plan.head.charAt(0).toUpperCase() + plan.head.slice(1);
+  return { tone: plan.tone, text: `Recommended: ${head}. ${plan.why}${nudge}` };
+}
+
+// ─── ACTION QUEUE ────────────────────────────────
+const live = p => !p.folded && !p.sittingOut;
+// Can this player still make a betting decision? (live AND has chips behind).
+// All-in players stay live for the showdown but are never queued to act.
+const canAct = p => live(p) && p.chips > 0;
+
+function startQueue(players, dealerIdx) {
+  const q = [];
+  for (let off = 1; off <= 4; off++) {
+    const i = (dealerIdx + off) % 4;
+    if (canAct(players[i])) q.push(i);
+  }
+  return q;
+}
+function reQueue(players, aggrIdx) {
+  const q = [];
+  for (let off = 1; off <= 4; off++) {
+    const i = (aggrIdx + off) % 4;
+    if (canAct(players[i]) && i !== aggrIdx) q.push(i);
+  }
+  return q;
+}
+// Live seats in order starting at `from` (inclusive). Used for preflop action.
+function queueFrom(players, from) {
+  const q = [];
+  for (let off = 0; off < 4; off++) {
+    const i = (from + off) % 4;
+    if (canAct(players[i])) q.push(i);
+  }
+  return q;
+}
+// Live seats clockwise from the button (for assigning blinds).
+function liveFromDealer(players, dealerIdx) {
+  const order = [];
+  for (let off = 1; off <= 4; off++) {
+    const i = (dealerIdx + off) % 4;
+    if (live(players[i])) order.push(i);
+  }
+  return order;
+}
+
+// ─── STUD ORDER HELPERS ──────────────────────────
+// Bring-in seat on 3rd street: lowest up-card (Stud/Stud-8) or highest (Razz).
+// Tie-break by suit (spades high). Returns seat index.
+function bringInSeat(players, gid) {
+  const seats = players.filter(live).filter(p => upCards(p).length);
+  if (!seats.length) return players.findIndex(live);
+  const score = p => { const c = upCards(p)[0]; return c.v * 10 + SUIT_RANK[c.s]; };
+  if (gid === "razz") return seats.reduce((a, b) => score(b) > score(a) ? b : a).id; // highest brings in
+  return seats.reduce((a, b) => score(b) < score(a) ? b : a).id;                       // lowest brings in
+}
+// First to act on 4th+ street: best showing hand acts first (Stud/Stud-8 high),
+// or lowest showing (Razz). Compares the up-cards as a partial hand.
+function firstToActStud(players, gid) {
+  const seats = players.filter(live);
+  if (!seats.length) return 0;
+  if (gid === "razz") {
+    return seats.reduce((a, b) => cmpVecLow(showLowVec(upCards(b)), showLowVec(upCards(a))) < 0 ? b : a).id;
+  }
+  // high games: best poker value of up-cards acts first
+  const upEval = p => { const u = upCards(p); return u.length >= 5 ? evalHigh5(u.slice(0,5)) : partialHigh(u); };
+  return seats.reduce((a, b) => cmpHigh(upEval(b), upEval(a)) < 0 ? b : a).id;
+}
+// Rank a partial set of up-cards (1-4) as a high "hand" for ordering only.
+function partialHigh(cards) {
+  const vs = cards.map(c => c.v).sort((a, b) => b - a);
+  const cnt = {}; vs.forEach(v => (cnt[v] = (cnt[v] || 0) + 1));
+  const g = Object.entries(cnt).map(([v,c]) => ({v:+v,c})).sort((a,b) => b.c-a.c || b.v-a.v);
+  const f = g.map(x => x.c);
+  let cat;
+  if (f[0] === 4) cat = 7; else if (f[0] === 3) cat = 3;
+  else if (f[0] === 2 && f[1] === 2) cat = 2; else if (f[0] === 2) cat = 1; else cat = 0;
+  return { cat, tb: g.flatMap(x => Array(x.c).fill(x.v)) };
+}
+// Queue clockwise starting at a given seat (inclusive of live seats).
+function queueFromSeat(players, from) {
+  const q = [];
+  for (let off = 0; off < 4; off++) { const i = (from + off) % 4; if (canAct(players[i])) q.push(i); }
+  return q;
+}
+
+// ─── STATE ───────────────────────────────────────
+const mkPs = (prev = null, startChips = 2000) => [
+  { id:0, name:"You",          chips:prev?prev[0].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:true,  lastAct:null },
+  { id:1, name:PROF[1].name,   chips:prev?prev[1].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
+  { id:2, name:PROF[2].name,   chips:prev?prev[2].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
+  { id:3, name:PROF[3].name,   chips:prev?prev[3].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
+];
+const mkState = (gid, prev = null) => {
+  const format   = prev?.format   ?? "cash";
+  const stakeIdx = prev?.stakeIdx ?? 1;          // $10/$20 == legacy numbers
+  const bbDepth  = prev?.bbDepth  ?? 100;
+  const stk      = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
+  const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
+  return {
+  gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[],
+  pot:0, currentBet:0, queue:[], streetN:0, drawN:0, seq:0,
+  maxDraws:(gid === "triple" || gid === "badugi") ? 3 : 1, nlBet:40,
+  dealerIdx:Math.floor(Math.random() * 4), reveal:false,
+  msg:"Press Deal to start", result:null, sel:[],
+  cpuTilt: prev?.cpuTilt || { 1:0, 2:0, 3:0 },
+  stats:   prev?.stats   || { hands:0, wins:0 },
+  // Per-bot tightness (0 loose .. 100 tight). Defaults loosened from old behaviour.
+  botTight: prev?.botTight || { 1:62, 2:18, 3:38 },
+  // Coach mode: surface live strategy tips on the player's turn.
+  coach: prev?.coach ?? false,
+  coachMode: prev?.coachMode ?? "gto",           // "nitty" | "gto" | "exploit"
+  // Stakes & format.
+  format, stakeIdx, bbDepth,
+  drawDone:false,                                // dramaha: has the single mid-hand draw happened?
+  };
+};
+
+// ─── ACTION ENGINE ───────────────────────────────
+// Verified flow:
+//   Single Draw:  [ante] → bet(NL) → draw → bet(NL) → showdown
+//   Triple Draw:  [ante] → bet(SB) → draw → bet(SB) → draw → bet(BB) → draw → bet(BB) → showdown
+//
+// Betting round ends when every active player has either
+// folded or matched the highest bet (queue empties).
+// A bet/raise re-opens action for all other active players.
+
+function applyAction(st, action, amount = 0) {
+  if (!st.queue.length || st.phase !== "acting") return st;
+  const idx     = st.queue[0];
+  const players = st.players.map(p => ({ ...p, hand:[...p.hand] }));
+  let { pot, currentBet } = st;
+  let newQ;
+  const a = players[idx];
+
+  switch (action) {
+    case "fold":
+      a.folded  = true;
+      a.lastAct = { text:"Fold", color:"#f87171" };
+      newQ = st.queue.slice(1);
+      break;
+    case "check":
+      a.lastAct = { text:"Check", color:"#64748b" };
+      newQ = st.queue.slice(1);
+      break;
+    case "call": {
+      const c  = Math.min(currentBet - a.betSt, a.chips);
+      a.chips -= c; a.betSt += c; pot += c;
+      a.lastAct = { text:`Call $${c}`, color:"#60a5fa" };
+      newQ = st.queue.slice(1);
+      break;
+    }
+    case "bet":
+    case "raise": {
+      // amount = intended TOTAL street bet for this player. A player can never
+      // wager below what they've already put in, and never more than their stack.
+      const want = Math.max(amount, a.betSt);
+      const put  = Math.max(0, Math.min(want - a.betSt, a.chips));
+      a.chips -= put; a.betSt += put; pot += put;
+      if (a.betSt > st.currentBet && put > 0) {
+        // Genuine bet/raise that increases the wager → re-opens action for everyone.
+        const verb = st.currentBet > 0 ? "Raise" : "Bet";
+        currentBet = a.betSt;
+        a.lastAct  = { text:`${verb} $${put}`, color:"#fbbf24" };
+        newQ = reQueue(players, idx);
+      } else {
+        // All-in short, or no real increase → behaves like a call/check, no re-open.
+        a.lastAct = put > 0 ? { text:`Call $${put}`, color:"#60a5fa" }
+                            : { text:"Check", color:"#64748b" };
+        newQ = st.queue.slice(1);
+      }
+      break;
+    }
+    default: return st;
+  }
+
+  // If one player left, they win the pot immediately
+  const still = players.filter(live);
+  if (still.length === 1) {
+    still[0].chips += pot;
+    return settle(st, players, 0, still[0].id === 0 ? "player" : "cpu",
+      `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${pot} — all others folded!`,
+      [still[0].id]);
+  }
+
+  // Betting round complete — advance to draw or showdown
+  if (newQ.length === 0) return nextPhase({ ...st, players, pot, currentBet, queue:[] });
+
+  const nx = newQ[0];
+  return { ...st, players, pot, currentBet, queue:newQ, seq:(st.seq||0)+1,
+    msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
+}
+
+// Transition: betting done → draw / next board / showdown
+function nextPhase(st) {
+  const players = st.players.map(p => ({ ...p, betSt:0 }));
+
+  // ── Stud games: deal one card to each live player, recompute first to act ──
+  if (IS_STUD(st.gid)) {
+    if (st.streetN >= 4) return showdownStud({ ...st, players });
+    const dealUp = st.streetN < 3; // 4th,5th,6th up (streetN 1,2,3); 7th down (streetN 4)
+    const deal1 = (ps, deck) => ps.map(p => {
+      if (!live(p)) return p;
+      const c = { ...deck.shift(), up: dealUp };
+      return { ...p, hand:[...p.hand, c] };
+    });
+    // If fewer than 2 can still act, deal remaining streets and go to showdown.
+    const canAct = players.filter(p => live(p) && p.chips > 0).length;
+    let deck = [...st.deck];
+    let ps = deal1(players, deck);
+    let streetN = st.streetN + 1;
+    if (canAct < 2) {
+      let s2 = { ...st, players:ps, deck, streetN };
+      while (s2.streetN < 4) {
+        let d = [...s2.deck];
+        const up = s2.streetN < 3;
+        const np = s2.players.map(p => live(p) ? { ...p, hand:[...p.hand, { ...d.shift(), up }] } : p);
+        s2 = { ...s2, players:np, deck:d, streetN:s2.streetN + 1 };
+      }
+      return showdownStud(s2);
+    }
+    const first = firstToActStud(ps, st.gid);
+    const queue = queueFromSeat(ps, first);
+    const nx = queue[0];
+    const lbl = ["", "4th", "5th", "6th", "7th"][streetN] + " street";
+    return { ...st, players:ps, deck, streetN, queue, currentBet:0, phase:"acting",
+      boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+      msg: nx === 0 ? `Your action on ${lbl} — Pot $${st.pot}` : `${ps[nx].name} acts on ${lbl}…` };
+  }
+
+  // ── Dramaha: flop → DRAW → turn → river → split showdown ──
+  if (IS_DRAMAHA(st.gid)) {
+    const deck = [...st.deck], board = [...st.board];
+    const canAct = players.filter(p => live(p) && p.chips > 0).length;
+    if (st.streetN === 0) {                              // preflop done → flop
+      deck.shift(); board.push(deck.shift(), deck.shift(), deck.shift());
+      if (canAct < 2) return dramahaRunout({ ...st, players, deck, board, streetN:1 });
+      const queue = startQueue(players, st.dealerIdx), nx = queue[0];
+      return { ...st, players, deck, board, streetN:1, queue, currentBet:0, phase:"acting",
+        boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+        msg: nx===0 ? `Your action on the flop — Pot $${st.pot}` : `${players[nx].name} acts on the flop…` };
+    }
+    if (st.streetN === 1 && !st.drawDone) {              // flop done → the draw
+      if (canAct < 2) return dramahaRunout({ ...st, players, deck, board });
+      return { ...st, players, currentBet:0, phase:"drawing", sel:[], seq:(st.seq||0)+1,
+        msg:`Draw — discard 0–${DRAW_CAP(st.gid)} from your hand, then Draw` };
+    }
+    if (st.streetN === 2) {                              // turn done → river
+      deck.shift(); board.push(deck.shift());
+      if (canAct < 2) return dramahaRunout({ ...st, players, deck, board, streetN:3 });
+      const queue = startQueue(players, st.dealerIdx), nx = queue[0];
+      return { ...st, players, deck, board, streetN:3, queue, currentBet:0, phase:"acting",
+        boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+        msg: nx===0 ? `Your action on the river — Pot $${st.pot}` : `${players[nx].name} acts on the river…` };
+    }
+    return showdownDramaha({ ...st, players });          // river done → showdown
+  }
+
+  // ── Flop games: deal the next board segment, then a new betting round ──
+  if (IS_FLOP(st.gid)) {
+    if (st.streetN >= 3) return showdownFlop({ ...st, players });
+    const deck    = [...st.deck];
+    const board   = [...st.board];
+    if (st.streetN === 0)      { deck.shift(); board.push(deck.shift(), deck.shift(), deck.shift()); } // burn + flop
+    else                       { deck.shift(); board.push(deck.shift()); }                              // burn + turn/river
+    const streetN = st.streetN + 1;
+    const queue   = startQueue(players, st.dealerIdx); // postflop: first live seat left of button
+    // If fewer than 2 players can still act (e.g. all-in), run the board out to showdown.
+    const canAct = players.filter(p => live(p) && p.chips > 0).length;
+    if (canAct < 2) {
+      let s2 = { ...st, players, deck, board, streetN, currentBet:0 };
+      while (s2.streetN < 3) {
+        const d = [...s2.deck], bd = [...s2.board];
+        d.shift(); bd.push(d.shift());
+        s2 = { ...s2, deck:d, board:bd, streetN:s2.streetN + 1 };
+      }
+      return showdownFlop(s2);
+    }
+    const nx      = queue[0];
+    const lbl     = ["", "the flop", "the turn", "the river"][streetN];
+    return { ...st, players, deck, board, streetN, queue, currentBet:0, phase:"acting",
+      boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+      msg: nx === 0 ? `Your action on ${lbl} — Pot $${st.pot}` : `${players[nx].name} acts on ${lbl}…` };
+  }
+
+  // ── Draw games ──
+  if (st.drawN < st.maxDraws) {
+    const n   = st.drawN + 1;
+    const max = st.maxDraws;
+    return { ...st, players, currentBet:0, phase:"drawing", sel:[],
+      msg: max > 1 ? `Draw ${n} of ${max} — tap cards to discard, then Draw` : "Tap cards to discard, then click Draw" };
+  }
+  return showdown({ ...st, players });
+}
+
+// Execute draw: player + all CPU players draw simultaneously
+function execDraw(st, playerDiscards, playerFolds = false) {
+  const deck = [...st.deck];
+  const players = st.players.map(p => {
+    if (p.sittingOut || (p.folded && p.id !== 0)) return { ...p };
+    if (p.id === 0) {
+      if (playerFolds) return { ...p, folded:true, lastAct:{ text:"Fold", color:"#f87171" } };
+      if (p.folded)    return { ...p };   // already folded earlier — don't re-deal
+      const hand = p.hand.map((c, i) => playerDiscards.includes(i) ? deck.shift() : c);
+      return { ...p, hand, betSt:0, lastAct:null };
+    }
+    if (p.folded) return { ...p };
+    const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid);
+    const hand = p.hand.map((c, i) => disc.includes(i) ? deck.shift() : c);
+    return { ...p, hand, betSt:0,
+      lastAct:{ text:disc.length === 0 ? "Stands Pat" : `Drew ${disc.length}`, color:"#94a3b8" } };
+  });
+
+  const still = players.filter(live);
+  if (still.length === 1) {
+    still[0].chips += st.pot;
+    return settle({ ...st, players, deck }, players, st.pot,
+      still[0].id === 0 ? "player" : "cpu",
+      `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${st.pot} — all others folded!`,
+      [still[0].id]);
+  }
+
+  const drawN   = st.drawN + 1;
+  const streetN = st.streetN + 1;
+  const queue   = startQueue(players, st.dealerIdx);
+  const nx      = queue[0];
+
+  // Dramaha: the single draw is over → deal the turn, resume betting (big bet).
+  if (IS_DRAMAHA(st.gid)) {
+    const dk = [...deck], board = [...st.board];
+    dk.shift(); board.push(dk.shift());              // burn + turn
+    return { ...st, players, deck:dk, board, drawDone:true, streetN:2, queue, currentBet:0, phase:"acting", sel:[],
+      boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+      msg: nx === 0 ? `Your action on the turn — Pot $${st.pot}` : `${players[nx].name} acts on the turn…` };
+  }
+
+  return { ...st, players, deck, drawN, streetN, queue, currentBet:0, phase:"acting", sel:[], seq:(st.seq||0)+1,
+    msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx].name} is thinking…` };
+}
+
+// Showdown: lowest hand wins, split ties
+function showdown(st) {
+  const still   = st.players.filter(live);
+  const evaled  = still.map(p => ({ ...p, ev:evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev));
+  const best    = evaled[0];
+  const winners = evaled.filter(p => cmpHand(st.gid, p.ev, best.ev) === 0);
+  const split   = Math.floor(st.pot / winners.length);
+  const rem     = st.pot % winners.length;
+  const potWon  = winners.some(w => w.id === 0) ? split : 0;
+  const players = st.players.map(p => {
+    const wi = winners.findIndex(w => w.id === p.id);
+    return wi >= 0 ? { ...p, chips:p.chips + split + (wi === 0 ? rem : 0) } : p;
+  });
+  const youWin = winners.some(w => w.id === 0);
+  const names  = winners.map(w => w.id === 0 ? "You" : w.name).join(" & ");
+  const msg    = winners.length > 1
+    ? `Chop — ${names} split $${st.pot} with ${best.ev.desc}`
+    : `${names} win${!youWin ? "s" : ""} $${st.pot} with ${best.ev.desc}!`;
+  return settle(st, players, potWon, youWin ? "player" : "cpu", msg, winners.map(w => w.id));
+}
+
+// Showdown for flop games. LHE: high only. Omaha-8: split high/low (8-or-better).
+function showdownFlop(st) {
+  const still = st.players.filter(live);
+  const board = st.board;
+  const evals = still.map(p => ({
+    p, hi: flopHigh(st.gid, p.hand, board),
+    lo: IS_HILO(st.gid) ? bestOmahaLow(p.hand, board) : null,
+  }));
+
+  // High winners
+  let bestHi = null;
+  evals.forEach(e => { if (!bestHi || cmpHigh(e.hi, bestHi) < 0) bestHi = e.hi; });
+  const hiWinners = evals.filter(e => cmpHigh(e.hi, bestHi) === 0);
+
+  // Low winners (only if a qualifying low exists)
+  let bestLo = null;
+  evals.forEach(e => { if (e.lo && (!bestLo || cmpLow(e.lo, bestLo) < 0)) bestLo = e.lo; });
+  const loWinners = bestLo ? evals.filter(e => e.lo && cmpLow(e.lo, bestLo) === 0) : [];
+
+  const pot = st.pot;
+  const award = {};            // id -> chips won
+  let msg;
+
+  if (IS_HILO(st.gid) && loWinners.length) {
+    // Split pot: half high, half low
+    const hiShare = Math.floor(pot / 2);
+    const loShare = pot - hiShare;
+    const perHi = Math.floor(hiShare / hiWinners.length);
+    const perLo = Math.floor(loShare / loWinners.length);
+    hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + perHi + (i===0 ? hiShare - perHi*hiWinners.length : 0));
+    loWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + perLo + (i===0 ? loShare - perLo*loWinners.length : 0));
+    const nm = e => e.p.id===0 ? "You" : e.p.name;
+    const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
+    // Same single player wins both halves → "scoops"
+    if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
+      const who = nm(hiWinners[0]);
+      msg = `${who} scoop${who==="You"?"":"s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+    } else {
+      const hiNames = hiWinners.map(nm).join(" & ");
+      const loNames = loWinners.map(nm).join(" & ");
+      msg = `${hiNames} ${verb(hiWinners)} the high (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low (${lowDesc(bestLo)}).`;
+    }
+  } else {
+    // High scoops (no qualifying low, or non-hi-lo game)
+    const per = Math.floor(pot / hiWinners.length);
+    hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + per + (i===0 ? pot - per*hiWinners.length : 0));
+    const names = hiWinners.map(e => e.p.id===0?"You":e.p.name).join(" & ");
+    const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
+    const scoop = IS_HILO(st.gid) ? " (no low)" : "";
+    msg = `${names} win${single?"s":""} $${pot} with ${bestHi.desc}${scoop}.`;
+  }
+
+  const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
+  const youWon  = (award[0] || 0) > 0;
+  return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
+}
+
+// Showdown for stud games. razz: low-only. stud: high-only. stud8: hi-lo split.
+function showdownStud(st) {
+  const still = st.players.filter(live);
+  const pot = st.pot;
+  const award = {};
+  let msg;
+  const nm = p => p.id === 0 ? "You" : p.name;
+
+  if (st.gid === "razz") {
+    const evals = still.map(p => ({ p, lo: bestRazz(p.hand) }));
+    let best = null; evals.forEach(e => { if (!best || cmpRazz(e.lo, best) < 0) best = e.lo; });
+    const winners = evals.filter(e => cmpRazz(e.lo, best) === 0);
+    const per = Math.floor(pot / winners.length);
+    winners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + per + (i===0 ? pot - per*winners.length : 0));
+    const names = winners.map(e => nm(e.p)).join(" & ");
+    const single = winners.length === 1 && winners[0].p.id !== 0;
+    msg = `${names} win${single?"s":""} $${pot} with ${razzDesc(best)}.`;
+  } else if (st.gid === "stud") {
+    const evals = still.map(p => ({ p, hi: studHigh(p.hand) }));
+    let best = null; evals.forEach(e => { if (!best || cmpHigh(e.hi, best) < 0) best = e.hi; });
+    const winners = evals.filter(e => cmpHigh(e.hi, best) === 0);
+    const per = Math.floor(pot / winners.length);
+    winners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + per + (i===0 ? pot - per*winners.length : 0));
+    const names = winners.map(e => nm(e.p)).join(" & ");
+    const single = winners.length === 1 && winners[0].p.id !== 0;
+    msg = `${names} win${single?"s":""} $${pot} with ${best.desc}.`;
+  } else { // stud8 hi-lo
+    const evals = still.map(p => ({ p, hi: studHigh(p.hand), lo: bestLow7(p.hand) }));
+    let bestHi = null; evals.forEach(e => { if (!bestHi || cmpHigh(e.hi, bestHi) < 0) bestHi = e.hi; });
+    const hiWinners = evals.filter(e => cmpHigh(e.hi, bestHi) === 0);
+    let bestLo = null; evals.forEach(e => { if (e.lo && (!bestLo || cmpLow(e.lo, bestLo) < 0)) bestLo = e.lo; });
+    const loWinners = bestLo ? evals.filter(e => e.lo && cmpLow(e.lo, bestLo) === 0) : [];
+    const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
+    if (loWinners.length) {
+      const hiShare = Math.floor(pot/2), loShare = pot - hiShare;
+      const perHi = Math.floor(hiShare/hiWinners.length), perLo = Math.floor(loShare/loWinners.length);
+      hiWinners.forEach((e,i) => award[e.p.id] = (award[e.p.id]||0) + perHi + (i===0?hiShare-perHi*hiWinners.length:0));
+      loWinners.forEach((e,i) => award[e.p.id] = (award[e.p.id]||0) + perLo + (i===0?loShare-perLo*loWinners.length:0));
+      if (hiWinners.length===1 && loWinners.length===1 && hiWinners[0].p.id===loWinners[0].p.id) {
+        const who = nm(hiWinners[0].p);
+        msg = `${who} scoop${who==="You"?"":"s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+      } else {
+        msg = `${hiWinners.map(e=>nm(e.p)).join(" & ")} ${verb(hiWinners)} the high (${bestHi.desc}); ${loWinners.map(e=>nm(e.p)).join(" & ")} ${verb(loWinners)} the low (${lowDesc(bestLo)}).`;
+      }
+    } else {
+      const per = Math.floor(pot/hiWinners.length);
+      hiWinners.forEach((e,i) => award[e.p.id] = (award[e.p.id]||0) + per + (i===0?pot-per*hiWinners.length:0));
+      const single = hiWinners.length===1 && hiWinners[0].p.id!==0;
+      msg = `${hiWinners.map(e=>nm(e.p)).join(" & ")} win${single?"s":""} $${pot} with ${bestHi.desc} (no low).`;
+    }
+  }
+
+  const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
+  const youWon  = (award[0] || 0) > 0;
+  return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
+}
+
+// ─── DRAMAHA ─────────────────────────────────────
+// Draw-side hand made from the five hole cards (the half that isn't Omaha-high).
+function drawSideEval(gid, hole) {
+  const side = DRAMAHA_SIDE(gid);
+  return side === "27" ? eval27(hole) : side === "badugi" ? evalBadugi(hole) : bestHoldemHigh(hole, []);
+}
+function drawSideCmp(gid, a, b) {            // <0 ⇒ a is the better hand
+  const side = DRAMAHA_SIDE(gid);
+  return side === "27" ? cmp27(a, b) : side === "badugi" ? cmpBadugi(a, b) : cmpHigh(a, b);
+}
+const drawSideName = gid => DRAMAHA_SIDE(gid) === "27" ? "2-7" : DRAMAHA_SIDE(gid) === "badugi" ? "badugi" : "draw";
+
+// Showdown: split between best Omaha high (2 hole + 3 board) and best draw-side
+// hand (from the five hole cards). Neither half has a qualifier.
+function showdownDramaha(st) {
+  const still = st.players.filter(live);
+  const board = st.board, gid = st.gid;
+  const evals = still.map(p => ({ p, hi: bestOmahaHigh(p.hand, board), dr: drawSideEval(gid, p.hand) }));
+
+  let bestHi = null;
+  evals.forEach(e => { if (e.hi && (!bestHi || cmpHigh(e.hi, bestHi) < 0)) bestHi = e.hi; });
+  const hiWinners = bestHi ? evals.filter(e => e.hi && cmpHigh(e.hi, bestHi) === 0) : [];
+  let bestDr = null;
+  evals.forEach(e => { if (e.dr && (!bestDr || drawSideCmp(gid, e.dr, bestDr) < 0)) bestDr = e.dr; });
+  const drWinners = bestDr ? evals.filter(e => e.dr && drawSideCmp(gid, e.dr, bestDr) === 0) : [];
+
+  const pot = st.pot, award = {};
+  const hiShare = Math.floor(pot / 2), drShare = pot - hiShare;
+  const give = (winners, share) => {
+    if (!winners.length) return 0;
+    const per = Math.floor(share / winners.length);
+    winners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? share - per * winners.length : 0));
+    return 1;
+  };
+  // If somehow one half has no winner, the other half takes the whole pot.
+  if (hiWinners.length && drWinners.length) { give(hiWinners, hiShare); give(drWinners, drShare); }
+  else if (hiWinners.length)                give(hiWinners, pot);
+  else                                      give(drWinners, pot);
+
+  const nm = e => e.p.id === 0 ? "You" : e.p.name;
+  const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
+  const side = drawSideName(gid);
+  let msg;
+  if (hiWinners.length === 1 && drWinners.length === 1 && hiWinners[0].p.id === drWinners[0].p.id) {
+    const who = nm(hiWinners[0]);
+    msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${bestHi.desc} (Omaha) + ${bestDr.desc} (${side}).`;
+  } else {
+    msg = `${hiWinners.map(nm).join(" & ")} ${verb(hiWinners)} the Omaha high (${bestHi?.desc}); ${drWinners.map(nm).join(" & ")} ${verb(drWinners)} the ${side} (${bestDr?.desc}).`;
+  }
+  const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
+  const youWon  = (award[0] || 0) > 0;
+  return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
+}
+
+// Combined betting strength for Dramaha (0..1). You can win either half, so
+// being strong in one half is valuable and being two-way is best.
+function dramahaHiStrength(hole, board) {
+  if (board && board.length >= 3) {
+    const hi = bestOmahaHigh(hole, board);
+    return hi ? ([0.18,0.40,0.58,0.72,0.82,0.88,0.94,0.98,1][hi.cat] || 0.2) : 0.2;
+  }
+  const vs = hole.map(c => c.v);
+  const sc = {}; hole.forEach(c => sc[c.s] = (sc[c.s]||0)+1);
+  const pairs = vs.length - new Set(vs).size;
+  const highs = vs.filter(v => v >= 11).length;
+  const ds = Object.values(sc).filter(c => c >= 2).length >= 2;
+  return Math.max(0, Math.min(1, 0.28 + pairs*0.11 + highs*0.05 + (ds?0.1:0)));
+}
+function dramahaDrawStrength(gid, hole) {
+  const side = DRAMAHA_SIDE(gid);
+  if (side === "high") {
+    const e = bestHoldemHigh(hole, []);
+    return e ? ([0.16,0.42,0.60,0.74,0.84,0.90,0.95,0.98,1][e.cat] || 0.2) : 0.2;
+  }
+  if (side === "27") {
+    const e = eval27(hole);
+    if (e && e.cat === 0) { const t = e.vs[0]; return t<=7?0.9:t<=8?0.76:t<=9?0.58:t<=10?0.44:0.32; }
+    const lows = new Set(hole.filter(c => c.v <= 8).map(c => c.v)).size;
+    return lows>=4?0.4:lows>=3?0.28:0.16;
+  }
+  const e = evalBadugi(hole);
+  if (e && e.size === 4) return e.vs[0] <= 8 ? 0.85 : 0.68;
+  const keep = badugiKeepIndices(hole).size;
+  return keep>=3?0.42:keep>=2?0.26:0.14;
+}
+function dramahaStrength(st, pl) {
+  const hi = dramahaHiStrength(pl.hand, st.board || []);
+  const dr = dramahaDrawStrength(st.gid, pl.hand);
+  const hiW = Math.max(hi, dr), loW = Math.min(hi, dr);
+  return Math.max(0, Math.min(1, 0.58*hiW + 0.32*loW + 0.1*((hi+dr)/2)));
+}
+function cpuDecideDramaha(st, idx) {
+  const pr = PROF[idx], pl = st.players[idx];
+  const tilt = Math.min(3, st.cpuTilt?.[idx] || 0);
+  const call = Math.min(st.currentBet - pl.betSt, pl.chips);
+  const fb   = st.streetN <= 1 ? STK(st).sbet : STK(st).bbet;
+  const tight = st.botTight?.[idx] ?? 50, L = (100 - tight) / 100;
+  const str  = dramahaStrength(st, pl);
+  const openThresh = 0.42 - L*0.18, callThresh = 0.30 - L*0.16, raiseThresh = 0.74 - L*0.10;
+  const bluff = Math.random() < Math.min(0.8, pr.bluff * (0.7 + L) * (1 + tilt*0.5));
+  const slow  = tilt === 0 && Math.random() < pr.slow;
+  const betTot = raising => pl.betSt + (raising ? call + fb : fb);
+  if (call <= 0) {
+    if ((str >= openThresh && !slow) || bluff) return { action:"bet", amount: betTot(false) };
+    return { action:"check", amount:0 };
+  }
+  if (str >= raiseThresh && !slow && pl.chips > call) return { action:"raise", amount: betTot(true) };
+  const potOdds = call / (st.pot + call);
+  if (str >= callThresh || str >= potOdds * 0.85) return { action:"call", amount:0 };
+  if (bluff && call <= fb) return { action:"call", amount:0 };
+  return { action:"fold", amount:0 };
+}
+// Bot draw: keep what helps the draw half (capped by the game's discard limit).
+function cpuDrawCardsDramaha(hand, gid) {
+  const side = DRAMAHA_SIDE(gid), cap = DRAW_CAP(gid);
+  let keep = new Set();
+  if (side === "badugi") keep = badugiKeepIndices(hand);
+  else if (side === "27") {
+    const seen = new Set();
+    hand.forEach((c, i) => { if (c.v <= 8 && !seen.has(c.v)) { seen.add(c.v); keep.add(i); } });
+  } else {
+    const cnt = {}; hand.forEach(c => cnt[c.v] = (cnt[c.v]||0)+1);
+    hand.forEach((c, i) => { if (cnt[c.v] >= 2 || c.v >= 11) keep.add(i); });
+    if (keep.size === 0) {
+      const order = hand.map((c, i) => ({ i, v:c.v })).sort((a, b) => b.v - a.v);
+      keep.add(order[0].i); keep.add(order[1].i);
+    }
+  }
+  let disc = hand.map((_, i) => i).filter(i => !keep.has(i));
+  if (disc.length > cap) disc = disc.slice(0, cap);
+  return disc;
+}
+
+// All-in before the betting completes: run the board to five cards, then split.
+function dramahaRunout(st) {
+  let deck = [...st.deck], board = [...st.board];
+  while (board.length < 5) { deck.shift(); board.push(deck.shift()); }
+  return showdownDramaha({ ...st, deck, board });
+}
+
+function settle(st, players, potWon, result, msg, winnerIds = []) {
+  // Tilt system: losing CPUs tilt; tilt decays on CPU wins
+  const cpuTilt = { ...st.cpuTilt };
+  if (result === "player") {
+    players.filter(p => p.id !== 0 && live(p)).forEach(p => {
+      cpuTilt[p.id] = Math.min(3, (cpuTilt[p.id] || 0) + 1);
+    });
+  } else {
+    [1,2,3].forEach(i => { if (cpuTilt[i] > 0) cpuTilt[i]--; });
+  }
+  const stats = {
+    hands: st.stats.hands + 1,
+    wins:  st.stats.wins + (result === "player" ? 1 : 0),
+  };
+  return { ...st, players, pot:0, phase:"showdown", reveal:true, msg, result, cpuTilt, stats,
+    winnerIds, seq:(st.seq||0)+1 };
+}
+
+function winnerId(st) {
+  if (st.phase !== "showdown") return null;
+  const s = st.players.filter(live);
+  if (s.length === 1) return s[0].id;
+  if (IS_STUD(st.gid)) {
+    if (st.gid === "razz") {
+      let best = null, id = s[0].id;
+      s.forEach(p => { const e = bestRazz(p.hand); if (!best || cmpRazz(e, best) < 0) { best = e; id = p.id; } });
+      return id;
+    }
+    let best = null, id = s[0].id;
+    s.forEach(p => { const e = studHigh(p.hand); if (!best || cmpHigh(e, best) < 0) { best = e; id = p.id; } });
+    return id; // high-hand winner
+  }
+  if (IS_FLOP(st.gid)) {
+    let best = null, id = s[0].id;
+    s.forEach(p => { const e = flopHigh(st.gid, p.hand, st.board); if (!best || cmpHigh(e, best) < 0) { best = e; id = p.id; } });
+    return id; // highlights the high-hand winner
+  }
+  return s.map(p => ({ ...p, ev:evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev))[0].id;
+}
+
+// ─── ROOT ────────────────────────────────────────
+function App() {
+  const [st, setSt]   = useState(mkState("single"));
+  const [showSettings, setShowSettings] = useState(false);
+  const screenW       = useWidth();
+  const mobile        = screenW < 560;
+
+  // CPU auto-acts with realistic delays (tilted CPUs act faster — impulsive)
+  useEffect(() => {
+    if (st.phase !== "acting" || !st.queue.length || st.queue[0] === 0) return;
+    const actor = st.queue[0];
+    const tilt  = st.cpuTilt?.[actor] || 0;
+    const delay = tilt > 0 ? 280 + Math.random() * 350 : 480 + Math.random() * 550;
+    const t = setTimeout(() => {
+      setSt(s => {
+        if (s.phase !== "acting" || !s.queue.length || s.queue[0] !== actor) return s;
+        const { action, amount } = cpuDecide(s, actor);
+        return applyAction(s, action, amount);
+      });
+    }, delay);
+    return () => clearTimeout(t);
+  }, [st.seq, st.phase]);
+
+  // When you've folded (or are sitting out), the draw phase must auto-resolve —
+  // the bots draw on their own and the hand plays out to showdown without you.
+  useEffect(() => {
+    if (st.phase !== "drawing") return;
+    if (live(st.players[0])) return;            // you're still in — wait for your input
+    const t = setTimeout(() => {
+      setSt(s => (s.phase === "drawing" && !live(s.players[0])) ? execDraw(s, [], false) : s);
+    }, 650);
+    return () => clearTimeout(t);
+  }, [st.seq, st.phase]);
+
+  const switchGame = g => { if (!g.available) return; setSt(s => mkState(g.id, s)); };
+
+  const deal = () => setSt(s => {
+    const deck   = mkDeck();
+    const dealer = Math.floor(Math.random() * 4); // randomised every hand
+    const stk    = STK(s);
+
+    // ── STUD GAMES: antes, deal 2 down + 1 up, bring-in posts ──
+    if (IS_STUD(s.gid)) {
+      let cursor = 0;
+      let players = mkPs(s.players).map(p => {
+        if (p.chips < stk.studAnte + 1)
+          return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
+        const hole = [
+          { ...deck[cursor++], up:false },
+          { ...deck[cursor++], up:false },
+          { ...deck[cursor++], up:true },   // door card (3rd street up-card)
+        ];
+        return { ...p, sittingOut:false, folded:false, hand:hole, betSt:0,
+          chips:p.chips - stk.studAnte, lastAct:{ text:`Ante $${stk.studAnte}`, color:"#475569" } };
+      });
+      let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
+      // Bring-in
+      const biId = bringInSeat(players, s.gid);
+      players = players.map(p => {
+        if (p.id !== biId) return p;
+        const amt = Math.min(stk.bringin, p.chips);
+        pot += amt;
+        return { ...p, chips:p.chips - amt, betSt:amt, lastAct:{ text:`Bring-in $${amt}`, color:"#fbbf24" } };
+      });
+      const queue = queueFromSeat(players, (biId + 1) % 4); // wraps to put bring-in last
+      const nx = queue[0];
+      return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, board:[], pot,
+        currentBet:stk.bringin, queue, phase:"acting", dealerIdx:dealer, streetN:0,
+        dealKey:(s.dealKey||0)+1, boardKey:(s.boardKey||0)+1, seq:(s.seq||0)+1,
+        msg: nx === 0 ? `Your action on 3rd street — Pot $${pot}` : `${players[nx].name} acts on 3rd street…` };
+    }
+
+    // ── FLOP & DRAMAHA GAMES: blinds + hole cards, board comes later ──
+    if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
+      const hs = HOLE_SIZE(s.gid);
+      let cursor = 0;
+      let players = mkPs(s.players).map(p => {
+        if (p.chips < stk.bblind)
+          return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
+        const hand = deck.slice(cursor, cursor + hs);
+        cursor += hs;
+        return { ...p, sittingOut:false, folded:false, hand, betSt:0, lastAct:null };
+      });
+      // Assign blinds to first two live seats left of the button
+      const order = liveFromDealer(players, dealer);
+      const sbId = order[0], bbId = order[1] ?? order[0];
+      let pot = 0;
+      players = players.map(p => {
+        if (p.id === sbId) { const amt = Math.min(stk.sblind, p.chips); pot += amt; return { ...p, chips:p.chips-amt, betSt:amt, lastAct:{ text:`SB $${amt}`, color:"#475569" } }; }
+        if (p.id === bbId) { const amt = Math.min(stk.bblind, p.chips); pot += amt; return { ...p, chips:p.chips-amt, betSt:amt, lastAct:{ text:`BB $${amt}`, color:"#475569" } }; }
+        return p;
+      });
+      // Preflop action starts left of the big blind
+      const bbPos = (dealer + 1 + order.indexOf(bbId)) % 4; // seat index of BB
+      const queue = queueFrom(players, (bbId + 1) % 4);
+      const nx = queue[0];
+      return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, board:[], pot,
+        currentBet:stk.bblind, queue, phase:"acting", dealerIdx:dealer, streetN:0,
+        dealKey:(s.dealKey||0)+1, boardKey:(s.boardKey||0)+1, seq:(s.seq||0)+1,
+        msg: nx === 0 ? `Your action preflop — Pot $${pot}` : `${players[nx].name} acts preflop…` };
+    }
+
+    // ── DRAW GAMES: antes + full hands ──
+    const hs = HAND_SIZE(s.gid);
+    let cursor = 0;
+    const players = mkPs(s.players).map(p => {
+      if (p.chips < stk.ante)  // sit out broke players
+        return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
+      const hand = deck.slice(cursor, cursor + hs);
+      cursor += hs;
+      return { ...p, sittingOut:false, folded:false, hand, chips:p.chips - stk.ante, betSt:0,
+        lastAct:{ text:`Ante $${stk.ante}`, color:"#475569" } };
+    });
+    const pot   = players.filter(p => !p.sittingOut).length * stk.ante;
+    const queue = startQueue(players, dealer);
+    const nx    = queue[0];
+    return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, pot, queue,
+      phase:"acting", maxDraws:(s.gid === "triple" || s.gid === "badugi") ? 3 : 1, dealerIdx:dealer,
+      nlBet:Math.max(40, Math.floor(pot * 0.65)),
+      dealKey:(s.dealKey || 0) + 1, seq:(s.seq||0)+1,  // bumps to replay deal animation
+      msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
+  });
+
+  const act   = (action, amount = 0) => setSt(s => applyAction(s, action, amount));
+  const flip  = i => { if (st.phase !== "drawing") return; setSt(s => {
+    if (s.sel.includes(i)) return { ...s, sel:s.sel.filter(x=>x!==i) };
+    if (IS_DRAMAHA(s.gid) && s.sel.length >= DRAW_CAP(s.gid)) return s; // dramadugi caps at 3
+    return { ...s, sel:[...s.sel, i] };
+  }); };
+  const draw  = () => setSt(s => execDraw(s, s.sel, false));
+  const fold  = () => setSt(s => execDraw(s, [], true));  // FIX: fold during draw now works
+  const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
+  const setCoach = v => setSt(s => ({ ...s, coach:v }));
+  const setCoachMode = m => setSt(s => ({ ...s, coachMode:m }));
+  // Changing format/stake/depth resets the table to fresh, equal stacks (can't change mid-hand).
+  const applyStakeChange = (s, patch) => {
+    const ns  = { ...s, ...patch };
+    const stk = ns.format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[ns.stakeIdx];
+    const chips = depthUnit(ns.gid, stk) * (ns.format === "tourney" ? ns.bbDepth : CASH_DEPTH);
+    return { ...ns, phase:"idle", pot:0, currentBet:0, board:[], reveal:false, result:null,
+      sel:[], queue:[], streetN:0, drawN:0, msg:"Stakes set — press Deal",
+      players: ns.players.map(p => ({ ...p, chips, hand:[], betSt:0, folded:false, sittingOut:false, lastAct:null })) };
+  };
+  const setFormat = f => setSt(s => applyStakeChange(s, { format:f }));
+  const setStake  = i => setSt(s => applyStakeChange(s, { stakeIdx:i }));
+  const setDepth  = d => setSt(s => applyStakeChange(s, { bbDepth:d }));
+
+  // Derived
+  const me       = st.players[0];
+  const meActive = !me.folded && !me.sittingOut;
+  const myTurn   = st.phase === "acting" && st.queue[0] === 0;
+  const drawing  = st.phase === "drawing";
+  const cpuTurn  = st.phase === "acting" && st.queue.length > 0 && st.queue[0] !== 0;
+  const callAmt  = myTurn ? Math.min(st.currentBet - me.betSt, me.chips) : 0;
+  const canCheck = myTurn && st.currentBet === me.betSt;
+  const mode     = BET_MODE(st.gid);
+  const stk      = STK(st);
+  const bigBet   = mode === "nl" || mode === "pl";
+  const isFL     = mode === "fl";
+  const stud     = IS_STUD(st.gid);
+  const flop     = IS_FLOP(st.gid);
+  const dramaha  = IS_DRAMAHA(st.gid);
+  const fb       = st.streetN <= 1 ? stk.sbet : stk.bbet;  // FL: streets 0-1 = small, 2-3 = big
+  const toCallNow = Math.max(0, st.currentBet - me.betSt);
+  const nlMin    = st.currentBet > 0 ? Math.max(toCallNow + st.currentBet, stk.bblind) : stk.bblind; // additional chips
+  const nlCapTot = mode === "pl" ? potLimitMaxTotal(st, me) : (me.betSt + me.chips);
+  const nlMax    = Math.max(nlMin, nlCapTot - me.betSt);   // additional chips (≥ min)
+  const nlVal    = Math.max(nlMin, Math.min(st.nlBet, nlMax));
+  const odds     = callAmt > 0 ? (st.pot / callAmt).toFixed(1) : null;
+  const wid      = winnerId(st);
+  // Live hand readout
+  const myEval   = stud
+    ? (st.gid === "razz" ? (me.hand.length >= 1 ? bestRazz(me.hand) : null)
+                         : (me.hand.length >= 5 ? studHigh(me.hand) : null))
+    : dramaha
+    ? (me.hand.length === HAND_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaHigh(me.hand, st.board) : null)
+    : flop
+    ? (me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? flopHigh(st.gid, me.hand, st.board) : null)
+    : (me.hand.length === HAND_SIZE(st.gid) ? evalHand(st.gid, me.hand) : null);
+  // Dramaha draw-side hand (made from the five hole cards), shown alongside the Omaha high.
+  const myDraw   = dramaha && me.hand.length === HAND_SIZE(st.gid) ? drawSideEval(st.gid, me.hand) : null;
+  const myDrawTxt = myDraw ? (DRAMAHA_SIDE(st.gid) === "27" ? `2-7: ${myDraw.desc}`
+                            : DRAMAHA_SIDE(st.gid) === "badugi" ? myDraw.desc
+                            : `Draw: ${myDraw.desc}`) : null;
+  const myLow    = stud
+    ? (st.gid === "stud8" && me.hand.length >= 5 ? bestLow7(me.hand) : null)
+    : (IS_HILO(st.gid) && me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaLow(me.hand, st.board) : null);
+  const minLive  = stud ? (stk.studAnte + 1) : (flop || dramaha) ? stk.bblind : stk.ante;
+  const isOver   = st.phase === "idle" || st.phase === "showdown";
+  const ableCount = st.players.filter(p => p.chips >= minLive).length;
+  const meBroke  = isOver && me.chips < minLive;
+  const allBroke = isOver && st.players.filter((_,i)=>i>0).every(p=>p.chips<minLive);
+  const gameOver = isOver && (meBroke || allBroke || ableCount < 2);
+  const tilted   = [1,2,3].filter(i => (st.cpuTilt?.[i]||0) > 0);
+  const SLBL     = stud
+    ? ["3rd Street","4th Street","5th Street","6th Street","7th Street"]
+    : (flop || dramaha)
+    ? ["Preflop","Flop","Turn","River"]
+    : ["Pre-Draw Betting","After Draw 1","After Draw 2","After Draw 3"];
+  const streetLbl = st.phase === "showdown" ? "Showdown"
+    : (dramaha && st.phase === "drawing") ? "The Draw"
+    : (SLBL[st.streetN] || "");
+
+  // Coach advice (only when coach mode is on and it's your move)
+  const advice = !st.coach || !meActive ? null
+    : drawing            ? coachDraw(st, me)
+    : myTurn             ? coachBet(st, me, callAmt)
+    : null;
+
+  // Bet-size presets (pot-limit caps at the pot; no-limit allows all-in)
+  const presets = (mode === "pl"
+    ? [ { lbl:"½ Pot", v:Math.floor(st.pot*.5) }, { lbl:"¾ Pot", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:nlMax } ]
+    : [ { lbl:"½ Pot", v:Math.floor(st.pot*.5) }, { lbl:"⅔ Pot", v:Math.floor(st.pot*.67) }, { lbl:"Pot", v:st.pot }, { lbl:"All In", v:nlMax } ]
+  ).map(p => ({ ...p, v:Math.max(nlMin, Math.min(p.v, nlMax)) }))
+   .filter((p,i,a) => p.v > 0 && a.findIndex(x => x.v === p.v) === i);
+
+  return (
+    <div style={S.root}>
+      <style>{`
+        @keyframes dealIn {
+          0%   { opacity: 0; transform: translateY(-34px) translateX(-22px) rotate(-12deg) scale(0.7); }
+          100% { opacity: 1; transform: translateY(0) translateX(0) rotate(0deg) scale(1); }
+        }
+        @keyframes winPulse {
+          0%,100% { filter: drop-shadow(0 0 8px rgba(74,222,128,0.4)); }
+          50%     { filter: drop-shadow(0 0 18px rgba(74,222,128,0.85)); }
+        }
+        @keyframes potShine {
+          0%   { background-position: -120% 0; }
+          100% { background-position: 220% 0; }
+        }
+        @keyframes feltGlow {
+          0%,100% { opacity: 0.55; }
+          50%     { opacity: 0.8; }
+        }
+        @keyframes brandIn {
+          0% { opacity:0; letter-spacing: 10px; }
+          100% { opacity:1; letter-spacing: 5px; }
+        }
+      `}</style>
+
+      {/* BRAND LOCKUP */}
+      <div style={S.brand}>
+        <span style={S.brandRule}/>
+        <span style={S.brandMark}>♠</span>
+        <span style={S.brandText}>THE RAIL</span>
+        <span style={S.brandSub}>mixed game trainer</span>
+        <span style={S.brandMark}>♠</span>
+        <span style={S.brandRule}/>
+      </div>
+
+      {/* HEADER: selector + gear */}
+      <div style={S.headerRow}>
+        <div style={{...S.selWrap, flex:1}}>
+          {SECTIONS.map(sec => (
+            <div key={sec.title} style={S.selSection}>
+              <div style={S.selSecTitle}>{sec.title}</div>
+              <div style={S.selGrid}>
+                {sec.games.map(g => (
+                  <button key={g.id} onClick={()=>switchGame(g)} disabled={!g.available}
+                    style={{...S.gBtn,...(g.id===st.gid?S.gOn:{}),...(!g.available?S.gOff:{})}}>
+                    {g.tag && <span style={{...S.gTag,...(g.id===st.gid?{color:"#c9a84c"}:{})}}>{g.tag}</span>}
+                    <span style={S.gName}>{g.label}</span>
+                    {!g.available && <span style={S.gSoon}>＋</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={()=>setShowSettings(true)} style={S.gearBtn} title="Settings">⚙</button>
+      </div>
+
+      {/* SETTINGS OVERLAY */}
+      {showSettings && (
+        <div style={S.overlay} onClick={()=>setShowSettings(false)}>
+          <div style={S.modal} onClick={e=>e.stopPropagation()}>
+            <div style={S.modalHead}>
+              <span style={S.modalTitle}>⚙ Table Settings</span>
+              <button onClick={()=>setShowSettings(false)} style={S.modalClose}>✕</button>
+            </div>
+
+            <div style={S.modalSection}>OPPONENT STYLE · OPTIMAL ↔ EXPLOITATIVE</div>
+            <div style={S.modalHint}>Higher = optimal (solid, balanced, value-focused, hard to read). Lower = exploitative (attacks, bluffs and applies pressure, higher variance — and more beatable if you adjust).</div>
+
+            {[1,2,3].map(id => {
+              const t = st.botTight?.[id] ?? 50;
+              const desc = t >= 78 ? "Optimal" : t >= 58 ? "Disciplined" : t >= 42 ? "Balanced" : t >= 24 ? "Exploitative" : "Wildly Exploit.";
+              return (
+                <div key={id} style={S.tightRow}>
+                  <div style={S.tightLabel}>
+                    <span style={{color:"#c9a84c",fontSize:12}}>{PROF[id].name}</span>
+                    <span style={{color:"#9d8a62",fontSize:9}}>{PROF[id].tag}</span>
+                  </div>
+                  <input type="range" min={0} max={100} step={2} value={t}
+                    onChange={e=>setTight(id, +e.target.value)} style={S.tightSlider}/>
+                  <span style={S.tightVal}>{desc}</span>
+                </div>
+              );
+            })}
+
+            <div style={S.modalActions}>
+              <button onClick={()=>{ setTight(1,28); setTight(2,12); setTight(3,22); }} style={S.presetBtn}>All Exploit.</button>
+              <button onClick={()=>{ setTight(1,62); setTight(2,18); setTight(3,38); }} style={S.presetBtn}>Reset</button>
+              <button onClick={()=>{ setTight(1,84); setTight(2,70); setTight(3,80); }} style={S.presetBtn}>All Optimal</button>
+            </div>
+
+            <div style={{...S.modalSection,marginTop:14}}>COACHING</div>
+            <div style={S.modalHint}>Show live strategy tips on your turn — hand strength, pot odds, and the recommended play.</div>
+            <button onClick={()=>setCoach(!st.coach)} style={{...S.toggleRow,...(st.coach?S.toggleRowOn:{})}}>
+              <span style={{display:"flex",flexDirection:"column",alignItems:"flex-start"}}>
+                <span style={{color:st.coach?"#bff0cf":"#c9a84c",fontSize:12}}>Coach Mode</span>
+                <span style={{color:"#9c8760",fontSize:9}}>{st.coach?"On — tips appear as you play":"Off"}</span>
+              </span>
+              <span style={{...S.switch,...(st.coach?S.switchOn:{})}}>
+                <span style={{...S.knob,...(st.coach?S.knobOn:{})}}/>
+              </span>
+            </button>
+
+            {/* Coaching strictness */}
+            <div style={S.modalHint}>Strictness sets the baseline the coach grades you against.</div>
+            <div style={S.segRow}>
+              {[
+                ["nitty","Nitty","Tight & low-risk — only premium spots"],
+                ["gto","GTO","Balanced, theoretically sound baseline"],
+                ["exploit","Exploit","Adjusts to how these opponents play"],
+              ].map(([id,label,desc])=>(
+                <button key={id} onClick={()=>setCoachMode(id)}
+                  style={{...S.segBtn,...(st.coachMode===id?S.segBtnOn:{})}}>
+                  <span style={{fontSize:11,fontWeight:"bold"}}>{label}</span>
+                  <span style={{fontSize:8,lineHeight:1.25,marginTop:2,opacity:0.8}}>{desc}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Stakes & format */}
+            <div style={{...S.modalSection,marginTop:14}}>TABLE STAKES</div>
+            <div style={S.modalHint}>Cash buys in at 100bb. Tournament lets you pick stack depth on the table screen.</div>
+            <div style={S.segRow}>
+              {[["cash","Cash Game"],["tourney","Tournament"]].map(([id,label])=>(
+                <button key={id} onClick={()=>setFormat(id)}
+                  style={{...S.segBtn,...(st.format===id?S.segBtnOn:{})}}>
+                  <span style={{fontSize:11,fontWeight:"bold"}}>{label}</span>
+                </button>
+              ))}
+            </div>
+            {st.format==="cash" && (
+              <div style={{...S.segRow,marginTop:8}}>
+                {CASH_STAKES.map((s,i)=>(
+                  <button key={i} onClick={()=>setStake(i)}
+                    style={{...S.segBtn,...(st.stakeIdx===i?S.segBtnOn:{})}}>
+                    <span style={{fontSize:11,fontWeight:"bold"}}>{s.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {st.format==="tourney" && (
+              <div style={{...S.modalHint,marginTop:8,color:"#c9a84c"}}>
+                Stack depth selector is on the main table screen ({BB_DEPTHS.join(" / ")} {depthWord(st.gid)}).
+              </div>
+            )}
+
+            <button onClick={()=>setShowSettings(false)} style={S.modalDone}>DONE</button>
+          </div>
+        </div>
+      )}
+
+      {/* MAIN CONTROLS — coach toggle, stakes readout, tournament depth */}
+      <div style={S.ctrlBar}>
+        <button onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
+          {st.coach ? "● COACH ON" : "COACH OFF"}
+        </button>
+        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : STK(st).label}</span>
+        {st.format==="tourney" && (
+          <div style={S.depthRow}>
+            {BB_DEPTHS.map(d => (
+              <button key={d} onClick={()=>setDepth(d)}
+                style={{...S.depthBtn, ...(st.bbDepth===d?S.depthBtnOn:{})}}>{d}</button>
+            ))}
+            <span style={S.depthCap}>{depthWord(st.gid)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* STATS */}
+      {st.stats.hands > 0 && (
+        <div style={S.statsBar}>
+          <span style={S.stat}>{st.stats.hands} hands</span>
+          <span style={{...S.stat,color:"#4ade80"}}>{st.stats.wins}W</span>
+          <span style={{...S.stat,color:"#f87171"}}>{st.stats.hands-st.stats.wins}L</span>
+          {tilted.length>0 && <span style={{...S.stat,color:"#f97316"}}>🔥 {tilted.map(i=>PROF[i].name).join(", ")} tilted</span>}
+        </div>
+      )}
+
+      {/* TABLE */}
+      <div style={S.shell}>
+        <div style={S.rail}>
+          <div style={S.felt}>
+
+            {/* ── CPU SECTION ─────────────── */}
+            {mobile ? (
+              /* Mobile: all 3 CPUs in a compact top strip */
+              <div style={S.mStrip}>
+                {[1,2,3].map(id => (
+                  <MobileSeat key={id} p={st.players[id]} reveal={st.reveal} gid={st.gid} board={st.board}
+                    isDealer={st.dealerIdx===id}
+                    thinking={cpuTurn && st.queue[0]===id}
+                    wid={wid} won={(st.winnerIds||[]).includes(id)} tilt={st.cpuTilt?.[id]||0} profile={PROF[id]} />
+                ))}
+              </div>
+            ) : (
+              <>
+                {/* Desktop: diamond layout */}
+                <div style={S.rowTop}>
+                  <Seat p={st.players[2]} reveal={st.reveal} gid={st.gid} board={st.board} dealKey={st.dealKey} isDealer={st.dealerIdx===2}
+                    thinking={cpuTurn&&st.queue[0]===2} wid={wid} won={(st.winnerIds||[]).includes(2)} tilt={st.cpuTilt?.[2]||0} profile={PROF[2]}/>
+                </div>
+                <div style={S.rowMid}>
+                  <div style={S.sideSeat}>
+                    <Seat p={st.players[1]} reveal={st.reveal} gid={st.gid} board={st.board} dealKey={st.dealKey} isDealer={st.dealerIdx===1} compact
+                      thinking={cpuTurn&&st.queue[0]===1} wid={wid} won={(st.winnerIds||[]).includes(1)} tilt={st.cpuTilt?.[1]||0} profile={PROF[1]}/>
+                  </div>
+                  {/* Centre info (pot + community board) */}
+                  <CentreInfo st={st} streetLbl={streetLbl}/>
+                  <div style={S.sideSeat}>
+                    <Seat p={st.players[3]} reveal={st.reveal} gid={st.gid} board={st.board} dealKey={st.dealKey} isDealer={st.dealerIdx===3} compact
+                      thinking={cpuTurn&&st.queue[0]===3} wid={wid} won={(st.winnerIds||[]).includes(3)} tilt={st.cpuTilt?.[3]||0} profile={PROF[3]}/>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Mobile centre info (below the CPU strip) */}
+            {mobile && <CentreInfo st={st} streetLbl={streetLbl}/>}
+
+            {/* ── PLAYER SECTION ──────────── */}
+            <div style={S.botRow}>
+              <div style={S.youBar}>
+                {st.dealerIdx===0 && <DBtn/>}
+                <span style={S.youName}>You</span>
+                <span style={S.chips}>${me.chips}</span>
+                {me.lastAct && <Bdg {...me.lastAct}/>}
+                {myEval && (
+                  <span style={{...S.evalBdg,color:hColor(myEval),background:hColor(myEval)+"18",border:`1px solid ${hColor(myEval)}44`}}>
+                    {myEval.desc}
+                  </span>
+                )}
+                {myLow && (
+                  <span style={{...S.evalBdg,color:"#86efac",background:"#86efac18",border:"1px solid #86efac44"}}>
+                    {lowDesc(myLow)}
+                  </span>
+                )}
+                {myDrawTxt && (
+                  <span style={{...S.evalBdg,color:"#e3c87a",background:"#e3c87a18",border:"1px solid #e3c87a44"}}>
+                    {myDrawTxt}
+                  </span>
+                )}
+              </div>
+              <div style={S.myCards}>
+                {stud
+                  ? (me.hand.length > 0
+                      ? me.hand.map((c,i) => (
+                          <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                            <Card card={c} mobile={mobile} dealIdx={i}/>
+                            <span style={{fontSize:6.5,letterSpacing:1,color:c.up?"#c9a84c88":"#4a3a28"}}>{c.up?"UP":"DOWN"}</span>
+                          </div>
+                        ))
+                      : <span style={S.emptyH}>· · ·</span>)
+                  : me.hand.length === (flop ? HOLE_SIZE(st.gid) : HAND_SIZE(st.gid))
+                  ? me.hand.map((c,i) => (
+                      <Card key={`${st.dealKey}-${c.r}${c.s}`} card={c}
+                        selected={st.sel.includes(i)}
+                        onClick={drawing ? () => flip(i) : null}
+                        interactive={drawing}
+                        mobile={mobile}
+                        dealIdx={i}/>
+                    ))
+                  : <span style={S.emptyH}>{(flop?HOLE_SIZE(st.gid):HAND_SIZE(st.gid))===2?"· ·":(flop?HOLE_SIZE(st.gid):HAND_SIZE(st.gid))===4?"· · · ·":"· · · · ·"}</span>}
+              </div>
+              {drawing && st.sel.length > 0 && (
+                <div style={S.discardNote}>
+                  {st.sel.length} card{st.sel.length>1?"s":""} marked for discard — tap again to undo
+                </div>
+              )}
+            </div>
+
+          </div>{/* /felt */}
+        </div>{/* /rail */}
+      </div>{/* /shell */}
+
+      {/* ── ACTION PANEL ── */}
+      <div style={{...S.panel,...((myTurn||drawing)?S.panelOn:{})}}>
+
+        {/* Phase / status line */}
+        <div style={S.statusLine}>
+          {cpuTurn && <><Dots/><span style={S.stTxt}>{st.players[st.queue[0]]?.name} is thinking…</span></>}
+          {!meActive && st.phase!=="showdown" && st.phase!=="idle" && (
+            <><span style={{...S.stTxt,color:"#ef444488",letterSpacing:2,fontSize:9}}>FOLDED</span>
+            <span style={S.stTxt}>You're out of this hand — watching it play out…</span></>
+          )}
+          {myTurn && !drawing && (
+            <>
+              <span style={{...S.stTxt,color:"#c9a84c88",letterSpacing:2,fontSize:9}}>YOUR ACTION</span>
+              <span style={S.stTxt}>
+                {isFL ? `Fixed Limit · ${fb===stk.sbet?"Small Bet":"Big Bet"} $${fb}`
+                      : mode==="pl" ? `Pot-Limit · max $${nlMax}` : "No-Limit"}
+              </span>
+              {odds && <span style={S.oddsPill}>{callAmt>=me.chips?"ALL IN ":" "}{odds}:1 · call ${callAmt}</span>}
+            </>
+          )}
+          {drawing && meActive && (
+            <><span style={{...S.stTxt,color:"#c9a84c88",letterSpacing:2,fontSize:9}}>DRAW PHASE</span>
+            <span style={S.stTxt}>
+              {st.sel.length===0?"Tap cards to select discards, or Stand Pat":"Tap again to deselect"}
+              {st.maxDraws>1 && ` · Draw ${st.drawN+1} of ${st.maxDraws}`}
+            </span></>
+          )}
+          {st.phase==="showdown" && <span style={S.stTxt}>{st.msg}</span>}
+          {st.phase==="idle"     && <span style={S.stTxt}>Press Deal to begin</span>}
+        </div>
+
+        {/* Coach tip */}
+        {advice && (
+          <div style={{...S.coachBar,...S.coachTone[advice.tone]}}>
+            <span style={{...S.coachTag,
+              background: advice.tone==="good"?"rgba(74,222,128,0.22)":advice.tone==="warn"?"rgba(248,113,113,0.22)":"rgba(201,168,76,0.22)",
+              color: advice.tone==="good"?"#7ee2a0":advice.tone==="warn"?"#f49a9a":"#e7cf8e"}}>COACH</span>
+            <span style={S.coachTxt}>{advice.text}</span>
+          </div>
+        )}
+
+        {/* DRAW CONTROLS (only when you're still in the hand) */}
+        {drawing && meActive && (
+          <div style={S.btnRow}>
+            <Btn s={S.bFold} onClick={fold}>FOLD</Btn>
+            <Btn s={S.bDraw} onClick={draw}>
+              {st.sel.length===0?"STAND PAT →":`DRAW ${st.sel.length} →`}
+            </Btn>
+          </div>
+        )}
+
+        {/* BIG-BET BETTING (no-limit / pot-limit) */}
+        {myTurn && !drawing && bigBet && (
+          <div style={S.nlWrap}>
+            <div style={S.preRow}>
+              {presets.map(p=>(
+                <button key={p.lbl}
+                  style={{...S.pre,...(nlVal===p.v?S.preOn:{})}}
+                  onClick={()=>setSt(s=>({...s,nlBet:p.v}))}>
+                  <span style={S.preLbl}>{p.lbl}</span>
+                  <span style={S.preAmt}>${p.v}</span>
+                </button>
+              ))}
+            </div>
+            <div style={S.slRow}>
+              <button style={S.stepBtn}
+                onClick={()=>setSt(s=>({...s,nlBet:Math.max(nlMin, nlVal-10)}))}>−$10</button>
+              <span style={S.slEdge}>${nlMin}</span>
+              <input type="range" min={nlMin} max={Math.max(nlMin,nlMax)} step={5}
+                value={nlVal} onChange={e=>setSt(s=>({...s,nlBet:+e.target.value}))} style={S.slider}/>
+              <span style={S.slEdge}>${nlMax}</span>
+              <button style={S.stepBtn}
+                onClick={()=>setSt(s=>({...s,nlBet:Math.min(nlMax, nlVal+10)}))}>+$10</button>
+              <span style={S.slVal}>{st.currentBet>0?"Raise":"Bet"} ${nlVal}</span>
+            </div>
+            <div style={S.btnRow}>
+              <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>
+              {canCheck
+                ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
+                :<Btn s={S.bCall}  onClick={()=>act("call")}>{callAmt>=me.chips?"ALL IN":`CALL $${callAmt}`}</Btn>}
+              <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+nlVal)}>
+                {st.currentBet>0?`RAISE $${nlVal}`:`BET $${nlVal}`}
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {/* FL BETTING */}
+        {myTurn && !drawing && isFL && (
+          <div style={S.btnRow}>
+            <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>
+            {canCheck
+              ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
+              :<Btn s={S.bCall}  onClick={()=>act("call")}>CALL ${callAmt}</Btn>}
+            <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+fb)}>
+              {st.currentBet>0?`RAISE $${fb}`:`BET $${fb}`}
+            </Btn>
+          </div>
+        )}
+
+        {/* DEAL / GAME OVER */}
+        {isOver && !gameOver && (
+          <div style={S.btnRow}>
+            <Btn s={S.bDeal} onClick={deal}>{st.phase==="idle"?"DEAL":"DEAL AGAIN"}</Btn>
+          </div>
+        )}
+        {gameOver && isOver && (
+          <div style={{...S.btnRow,gap:14}}>
+            <span style={{fontSize:12,color:"#f87171",flex:1,textAlign:"center"}}>
+              {meBroke?"You're out of chips!":"You cleaned up — everyone else is broke!"}
+            </span>
+            <Btn s={S.bDeal} onClick={()=>setSt(s=>{
+              const ns = mkState(s.gid, s);              // carry settings (stakes, coach, tightness) via prev
+              const chips = startStack(ns);              // but reset to fresh, equal stacks
+              return { ...ns, stats:{ hands:0, wins:0 }, cpuTilt:{ 1:0, 2:0, 3:0 },
+                players: ns.players.map(p=>({ ...p, chips })) };
+            })}>NEW SESSION</Btn>
+          </div>
+        )}
+
+      </div>
+
+      {/* FOOTER */}
+      <div style={S.foot}>
+        {st.gid==="lhe" ? (
+          <><b style={{color:"#c9a84c44"}}>LIMIT HOLD'EM</b>
+          {" · 2 hole + 5 board · best five wins · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="omaha8" ? (
+          <><b style={{color:"#c9a84c44"}}>OMAHA HI-LO 8</b>
+          {" · use exactly 2 of 4 hole cards · high & qualifying low (8-or-better) split the pot · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="razz" ? (
+          <><b style={{color:"#c9a84c44"}}>RAZZ</b>
+          {" · 7-card stud for low · Aces low · straights & flushes don't count · Nuts: 5-4-3-2-A · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="stud" ? (
+          <><b style={{color:"#c9a84c44"}}>7-CARD STUD</b>
+          {" · 2 down, 4 up, 1 down · best five of seven · low card brings in · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="stud8" ? (
+          <><b style={{color:"#c9a84c44"}}>STUD HI-LO 8</b>
+          {" · 7-card stud · high & qualifying low (8-or-better) split · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="badugi" ? (
+          <><b style={{color:"#c9a84c44"}}>BADUGI</b>
+          {" · Aces low · 4 distinct ranks & suits = a Badugi · Nuts: A-2-3-4 rainbow · "}
+          {`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="nlhe" ? (
+          <><b style={{color:"#c9a84c44"}}>NO-LIMIT HOLD'EM</b>
+          {" · 2 hole + 5 board · best five wins · bet anything up to your stack · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="plo" ? (
+          <><b style={{color:"#c9a84c44"}}>POT-LIMIT OMAHA</b>
+          {" · use exactly 2 of 4 hole cards · max bet = size of the pot · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="bigo" ? (
+          <><b style={{color:"#c9a84c44"}}>BIG O</b>
+          {" · 5 hole cards, use exactly 2 · high & qualifying low (8-or-better) split · pot-limit · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="dramahaH" ? (
+          <><b style={{color:"#c9a84c44"}}>DRAMAHA HIGH</b>
+          {" · 5-card Omaha high (exactly 2 hole + 3 board) splits with best 5-card-draw high · one draw after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="dramaha27" ? (
+          <><b style={{color:"#c9a84c44"}}>2-7 DRAMAHA</b>
+          {" · Omaha high splits with best 2-7 lowball (from your 5 hole cards) · one draw after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="dramadugi" ? (
+          <><b style={{color:"#c9a84c44"}}>DRAMADUGI</b>
+          {" · Omaha high splits with best 4-card Badugi (from your 5 hole cards) · draw 0–3 after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="single" ? (
+          <><b style={{color:"#c9a84c44"}}>2-7 LOWBALL</b>
+          {" · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · No-Limit"}</>
+        ) : (
+          <><b style={{color:"#c9a84c44"}}>2-7 TRIPLE DRAW</b>
+          {" · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · "}
+          {`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        )}
+      </div>
+
+    </div>
+  );
+}
+
+// ─── CENTRE INFO ─────────────────────────────────
+function CentreInfo({ st, streetLbl }) {
+  const flop = IS_FLOP(st.gid);
+  const dramaha = IS_DRAMAHA(st.gid);
+  return (
+    <div style={S.centre}>
+      {/* Community board for flop & dramaha games */}
+      {(flop || dramaha) && st.phase !== "idle" && (
+        <div style={S.board}>
+          {[0,1,2,3,4].map(i => {
+            const c = st.board[i];
+            return c
+              ? <BoardCard key={`${st.boardKey}-${i}`} card={c} idx={i}/>
+              : <div key={i} style={S.boardSlot}/>;
+          })}
+        </div>
+      )}
+      <div style={S.potBox}>
+        <div style={S.potShine}/>
+        <span style={S.potLbl}>POT</span>
+        <span style={S.potAmt}>${st.pot}</span>
+      </div>
+      {st.phase !== "idle" && <div style={S.streetPill}>{streetLbl}</div>}
+      {st.maxDraws>1 && !flop && st.phase!=="idle" && st.phase!=="showdown" && (
+        <div style={S.pips}>
+          {[1,2,3].map(n=>(
+            <div key={n} style={{...S.pip,background:n<=st.drawN?"#c9a84c":"rgba(255,255,255,0.1)"}}>
+              {n<=st.drawN&&<span style={{fontSize:8,color:"#0a1a0a",fontWeight:"bold"}}>✓</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {st.phase==="showdown" && (() => {
+        const winNames = (st.winnerIds||[]).map(id => id===0 ? "You" : st.players[id]?.name).filter(Boolean);
+        const youWon = (st.winnerIds||[]).includes(0);
+        const label = youWon
+          ? (winNames.length > 1 ? "🏆 YOU + " + winNames.filter(n=>n!=="You").join(" & ") : "🏆 YOU WIN")
+          : (winNames.length ? winNames.join(" & ") + (winNames.length>1?" SPLIT":" WINS") : "CPU WINS");
+        return (
+          <div style={{...S.resultBanner,
+            background:youWon?"#14532d":"#450a0a",
+            border:`1px solid ${youWon?"#4ade80":"#f87171"}`}}>
+            {label}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// Community card — slightly larger, with its own deal animation
+function BoardCard({ card, idx }) {
+  const isRed = RED.has(card.s);
+  return (
+    <div style={{...S.boardCard, color:isRed?"#b91c1c":"#111827", animation:`dealIn 0.3s cubic-bezier(.34,1.4,.64,1) ${idx*0.08}s backwards`}}>
+      <b style={{fontSize:13,lineHeight:1}}>{card.r}</b>
+      <span style={{fontSize:12,lineHeight:1}}>{card.s}</span>
+    </div>
+  );
+}
+
+// ─── DESKTOP SEAT ────────────────────────────────
+function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid, won, tilt, profile }) {
+  if (!p) return null;
+  const flop = IS_FLOP(gid);
+  const stud = IS_STUD(gid);
+  const dramaha = IS_DRAMAHA(gid);
+  const hs   = flop ? HOLE_SIZE(gid) : HAND_SIZE(gid);
+  let ev = null, lo = null;
+  if (reveal && !p.folded) {
+    if (stud) {
+      ev = gid === "razz" ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
+      lo = gid === "stud8" && p.hand.length>=5 ? bestLow7(p.hand) : null;
+    } else if (dramaha) {
+      ev = board.length>=3 && p.hand.length===hs ? bestOmahaHigh(p.hand, board) : null;
+    } else if (flop) {
+      ev = board.length>=3 ? flopHigh(gid, p.hand, board) : null;
+      lo = IS_HILO(gid) && board.length>=3 ? bestOmahaLow(p.hand, board) : null;
+    } else if (p.hand.length===hs) {
+      ev = evalHand(gid, p.hand);
+    }
+  }
+  const win  = won || p.id === wid;
+  const speaks = won && p.name === "Martin";
+  // A card shows face-up if it's an up-card (stud), or on showdown, never if sitting out.
+  const faceDownOf = c => p.sittingOut ? true : stud ? !(c.up || reveal) : !reveal;
+  const showCards = stud ? p.hand.length > 0 : p.hand.length === hs;
+  return (
+    <div style={{ ...S.seat, ...(p.folded||p.sittingOut?S.seatDim:{}),
+      ...(thinking?S.seatThink:{}), ...(win?S.seatWin:{}) }}>
+      {speaks && <div style={S.bubble}>Not like that<span style={S.bubbleTail}/></div>}
+      <div style={S.seatBar}>
+        {isDealer&&<DBtn/>}
+        <div style={{display:"flex",flexDirection:"column",gap:0}}>
+          <span style={S.seatName}>{p.name}</span>
+          {profile&&<span style={S.seatTag}>{profile.tag}{tilt>0?` 🔥${"!".repeat(Math.min(tilt,3))}`:""}</span>}
+        </div>
+        <span style={S.chips}>${p.chips}</span>
+        {p.lastAct&&<Bdg {...p.lastAct}/>}
+        {thinking&&<Dots/>}
+      </div>
+      <div style={{...S.seatCards,gap:stud?1.5:compact?2:4}}>
+        {showCards
+          ?p.hand.map((c,i)=>(
+            <Card key={`${dealKey}-${i}-${c.r}${c.s}`} card={c} faceDown={faceDownOf(c)}
+              small={compact&&!stud} tiny={stud} dealIdx={i}/>
+          ))
+          :<span style={{...S.emptyH,fontSize:9,letterSpacing:3}}>· · ·</span>}
+      </div>
+      {ev&&!p.folded&&<div style={{fontSize:9.5,color:win?"#4ade80":hColor(ev)}}>{win?"🏆 ":""}{ev.desc}{lo?` · ${lowDesc(lo)}`:""}</div>}
+      {p.folded&&!p.sittingOut&&<div style={{fontSize:7.5,color:"#ef444488",letterSpacing:2}}>FOLDED</div>}
+      {p.sittingOut&&<div style={{fontSize:7.5,color:"#37415160",letterSpacing:1.5}}>SITTING OUT</div>}
+    </div>
+  );
+}
+
+// ─── MOBILE SEAT (compact strip) ─────────────────
+function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt, profile }) {
+  if (!p) return null;
+  const flop = IS_FLOP(gid);
+  const stud = IS_STUD(gid);
+  const dramaha = IS_DRAMAHA(gid);
+  const hs   = flop ? HOLE_SIZE(gid) : HAND_SIZE(gid);
+  let ev = null;
+  if (reveal && !p.folded) {
+    if (stud) ev = gid === "razz" ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
+    else if (dramaha) ev = board.length>=3 && p.hand.length===hs ? bestOmahaHigh(p.hand, board) : null;
+    else if (flop) ev = board.length>=3 ? flopHigh(gid, p.hand, board) : null;
+    else if (p.hand.length===hs) ev = evalHand(gid, p.hand);
+  }
+  const win = won || p.id === wid;
+  const speaks = won && p.name === "Martin";
+  const backCount = p.hand.length > 0 ? p.hand.length : hs;
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3, position:"relative",
+      opacity:p.folded||p.sittingOut?0.3:1,
+      filter:win?"drop-shadow(0 0 7px rgba(74,222,128,0.4))":thinking?"drop-shadow(0 0 5px rgba(201,168,76,0.28))":"none" }}>
+      {speaks && <div style={S.bubbleMobile}>Not like that</div>}
+      {/* Name + chips row */}
+      <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
+        {isDealer&&<DBtn/>}
+        <span style={{fontSize:9,letterSpacing:1.2,color:"#c9a84c"}}>{p.name}</span>
+        <span style={{fontSize:10.5,color:"#e8dfc8",fontFamily:"monospace"}}>${p.chips}</span>
+      </div>
+      {/* Profile tag + tilt */}
+      <span style={{fontSize:6.5,letterSpacing:0.8,color:"#3a2a16"}}>
+        {profile?.tag}{tilt>0?` 🔥${"!".repeat(Math.min(tilt,3))}`:""}</span>
+      {/* Last action */}
+      <div style={{display:"flex",alignItems:"center",gap:3,minHeight:16}}>
+        {p.lastAct&&<Bdg {...p.lastAct}/>}
+        {thinking&&<Dots/>}
+      </div>
+      {/* Cards: stud shows up-cards during play; others show backs until showdown */}
+      {stud && !p.sittingOut ? (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <div style={{display:"flex",gap:1.5}}>
+            {p.hand.map((c,i)=> (c.up||reveal)
+              ? <MicroCard key={i} card={c}/>
+              : <div key={i} style={{width:11,height:16,borderRadius:2,background:"#1a3680",border:"1px solid rgba(201,168,76,0.6)"}}/>)}
+          </div>
+          {ev && <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}</div>}
+          {p.folded && <div style={{fontSize:7,color:"#ef444488",letterSpacing:1.5}}>FOLDED</div>}
+        </div>
+      ) : !reveal || p.folded || p.sittingOut ? (
+        <div style={{display:"flex",gap:2}}>
+          {(p.hand.length>0?p.hand:Array(backCount).fill(0)).map((_,i)=>(
+            <div key={i} style={{width:10,height:14,borderRadius:2,background:"#1a3680",
+              border:"1px solid rgba(201,168,76,0.6)",opacity:p.sittingOut?0.3:1}}/>
+          ))}
+        </div>
+      ) : ev ? (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <div style={{display:"flex",gap:2}}>
+            {p.hand.map((c,i)=><MicroCard key={i} card={c}/>)}
+          </div>
+          <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}</div>
+        </div>
+      ) : (
+        <div style={{fontSize:7,color:p.folded?"#ef444488":"#374151",letterSpacing:1.5}}>
+          {p.folded?"FOLDED":"OUT"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── MICRO CARD (mobile showdown) ────────────────
+function MicroCard({ card }) {
+  const isRed = RED.has(card.s);
+  return (
+    <div style={{width:17,height:24,borderRadius:2,background:"#fefcf6",border:"1px solid #ddd0b8",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+      color:isRed?"#b91c1c":"#111",flexShrink:0}}>
+      <b style={{fontSize:7.5,lineHeight:1}}>{card.r}</b>
+      <span style={{fontSize:6.5,lineHeight:1}}>{card.s}</span>
+    </div>
+  );
+}
+
+// ─── CARD ────────────────────────────────────────
+function Card({ card, faceDown, selected, onClick, interactive, small, tiny, mobile, dealIdx = 0 }) {
+  // Sizing that fits on mobile screens (tiny = stud seats with up to 7 cards)
+  const W = tiny ? 26 : mobile ? 52 : small ? 38 : 60;
+  const H = tiny ? 37 : mobile ? 74 : small ? 54 : 85;
+  // Staggered deal-in: each card animates slightly after the previous one.
+  const dealAnim = `dealIn 0.34s cubic-bezier(.34,1.4,.64,1) ${dealIdx * 0.07}s backwards`;
+  if (!card||faceDown) return (
+    <div style={{...S.cardBack,width:W,height:H,animation:dealAnim}}><div style={S.cbInner}/></div>
+  );
+  const isRed = RED.has(card.s);
+  const fs    = tiny ? 9  : mobile ? 13 : small ? 10 : 13;
+  const fss   = tiny ? 7  : mobile ? 11 : small ? 8  : 11;
+  const fsm   = tiny ? 11 : mobile ? 20 : small ? 14 : 20;
+  return (
+    <div onClick={onClick} style={{
+      ...S.card, width:W, height:H, color:isRed?"#b91c1c":"#111827",
+      cursor:onClick?"pointer":"default",
+      transform:selected?"translateY(-18px) scale(1.06)":"translateY(0)",
+      boxShadow:selected?"0 10px 24px rgba(239,68,68,0.5),0 0 0 2px #ef4444":"0 2px 8px rgba(0,0,0,0.5)",
+      outline:interactive&&!selected?"1.5px dashed rgba(201,168,76,0.28)":"none",
+      animation: selected ? "none" : dealAnim,
+    }}>
+      <div style={S.cTL}>
+        <b style={{fontSize:fs,lineHeight:1}}>{card.r}</b>
+        <span style={{fontSize:fss,lineHeight:1}}>{card.s}</span>
+      </div>
+      <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",fontSize:fsm,lineHeight:1}}>{card.s}</div>
+      <div style={{...S.cTL,alignSelf:"flex-end",transform:"rotate(180deg)"}}>
+        <b style={{fontSize:fs,lineHeight:1}}>{card.r}</b>
+        <span style={{fontSize:fss,lineHeight:1}}>{card.s}</span>
+      </div>
+      {selected&&<div style={S.discardTag}>DISCARD</div>}
+    </div>
+  );
+}
+
+// ─── MICRO COMPONENTS ────────────────────────────
+function Btn({ s, onClick, children }) {
+  const [h,setH]=useState(false);
+  return (
+    <button onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)}
+      style={{...s,filter:h?"brightness(1.18)":"none",transform:h?"translateY(-2px)":"none",transition:"all 0.1s"}}>
+      {children}
+    </button>
+  );
+}
+function Bdg({ text, color }) {
+  return <span style={{fontSize:8.5,fontFamily:"monospace",background:"rgba(0,0,0,0.3)",
+    padding:"1px 5px",borderRadius:8,letterSpacing:0.5,color,whiteSpace:"nowrap"}}>{text}</span>;
+}
+function DBtn() {
+  return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
+    width:14,height:14,borderRadius:"50%",background:"#c9a84c",color:"#000",
+    fontSize:8,fontWeight:"bold",fontFamily:"monospace",flexShrink:0}}>D</span>;
+}
+function Dots() {
+  const [f,setF]=useState(0);
+  useEffect(()=>{const t=setInterval(()=>setF(x=>(x+1)%3),380);return()=>clearInterval(t);},[]);
+  return (
+    <span style={{display:"inline-flex",gap:3,alignItems:"center"}}>
+      {[0,1,2].map(i=><span key={i} style={{width:4,height:4,borderRadius:"50%",background:"#c9a84c",
+        opacity:i===f?1:0.18,transition:"opacity 0.22s",display:"inline-block"}}/>)}
+    </span>
+  );
+}
+
+// ─── STYLES ──────────────────────────────────────
+const S = {
+  root:{minHeight:"100vh",background:"#101725",
+    backgroundImage:"radial-gradient(ellipse 70% 50% at 50% -8%, #1f3454 0%, transparent 60%), radial-gradient(ellipse at 50% 120%, #2a1f10 0%, transparent 55%), linear-gradient(#101725,#0c121e)",
+    display:"flex",flexDirection:"column",alignItems:"center",padding:"12px 8px 26px",gap:8,
+    fontFamily:"'Georgia','Times New Roman',serif",color:"#f1e9d6",userSelect:"none"},
+
+  // Brand lockup
+  brand:{display:"flex",alignItems:"center",gap:9,padding:"2px 0 1px"},
+  brandRule:{width:34,height:1,background:"linear-gradient(90deg,transparent,rgba(201,168,76,0.6))"},
+  brandMark:{color:"#c9a84c",fontSize:13,opacity:0.85},
+  brandText:{fontSize:16,letterSpacing:5,color:"#e8d9b0",fontWeight:"bold",
+    textShadow:"0 1px 0 rgba(0,0,0,0.6)",animation:"brandIn 0.8s ease-out"},
+  brandSub:{fontSize:8.5,letterSpacing:3,color:"#ac9663",textTransform:"uppercase",alignSelf:"flex-end",paddingBottom:3},
+
+  // Selector
+  selWrap:{width:"100%",maxWidth:740,borderRadius:10,padding:8,background:"rgba(255,255,255,0.045)",border:"1px solid rgba(255,255,255,0.09)",
+    display:"flex",flexDirection:"column",gap:7},
+  selSection:{display:"flex",flexDirection:"column",gap:4},
+  selSecTitle:{fontSize:7.5,letterSpacing:2.5,color:"#ac9663",paddingLeft:2,
+    display:"flex",alignItems:"center",gap:6},
+  selGrid:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4},
+  gBtn:{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"#ab966c",
+    padding:"6px 3px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,fontFamily:"Georgia,serif",transition:"all 0.12s",minHeight:42},
+  gOn:{background:"rgba(201,168,76,0.12)",border:"1px solid rgba(201,168,76,0.55)",color:"#f0e0b0",boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15)"},
+  gOff:{opacity:0.3,cursor:"default",borderStyle:"dashed"},
+  gTag:{fontSize:6.5,letterSpacing:1,color:"#9d8659"},
+  gName:{fontSize:9.5,lineHeight:1.2,textAlign:"center"},
+  gSoon:{fontSize:13,color:"#9d8659",lineHeight:1},
+
+  // Stats
+  statsBar:{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,0.05)",
+    borderRadius:8,padding:"3px 12px",border:"1px solid rgba(255,255,255,0.08)"},
+  stat:{fontSize:10,letterSpacing:0.5,color:"#ab966c",fontFamily:"monospace"},
+
+  // Table — brass rail, championship felt
+  shell:{width:"100%",maxWidth:740,borderRadius:"50px / 28px",padding:7,
+    background:"linear-gradient(145deg,#4a2c0e 0%,#7a4a16 18%,#3a2208 50%,#6e4214 82%,#3a2208 100%)",
+    boxShadow:"0 0 0 3px #101725,0 0 0 5px rgba(201,168,76,0.7),0 0 22px rgba(201,168,76,0.14),0 22px 60px rgba(0,0,0,0.7)"},
+  rail:{borderRadius:"45px / 23px",padding:5,
+    background:"linear-gradient(180deg,rgba(255,225,150,0.22) 0%,rgba(0,0,0,0.2) 40%,transparent 70%)",
+    border:"1px solid rgba(255,220,150,0.3)"},
+  felt:{position:"relative",background:"#17402a",
+    backgroundImage:"radial-gradient(ellipse 70% 56% at 50% 42%, rgba(201,168,76,0.2) 0%, transparent 60%), radial-gradient(ellipse 86% 70% at 50% 50%,#2c8a4f 0%,#114a27 100%)",
+    borderRadius:"42px / 20px",padding:"16px 16px 11px",display:"flex",flexDirection:"column",gap:8,
+    border:"1px solid rgba(0,0,0,0.3)",boxShadow:"inset 0 0 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)"},
+
+  // Mobile CPU strip
+  mStrip:{display:"flex",gap:6,justifyContent:"space-between",
+    borderBottom:"1px solid rgba(201,168,76,0.12)",paddingBottom:8},
+
+  // Desktop rows
+  rowTop:{display:"flex",justifyContent:"center"},
+  rowMid:{display:"flex",alignItems:"center",justifyContent:"center",gap:4},
+  sideSeat:{flex:"1 1 0",display:"flex",justifyContent:"center",minWidth:0},
+  botRow:{display:"flex",flexDirection:"column",alignItems:"center",gap:4,
+    borderTop:"1px solid rgba(201,168,76,0.12)",paddingTop:8},
+
+  // Centre
+  centre:{flex:"0 0 auto",display:"flex",flexDirection:"column",alignItems:"center",alignSelf:"center",gap:5,width:182},
+  potBox:{position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",alignItems:"center",
+    background:"linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0.4))",
+    borderRadius:10,padding:"4px 16px",border:"1.5px solid rgba(201,168,76,0.45)",
+    boxShadow:"0 2px 10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,220,150,0.15)"},
+  potLbl:{fontSize:7,letterSpacing:2.5,color:"rgba(201,168,76,0.7)",position:"relative",zIndex:1},
+  potAmt:{fontSize:21,color:"#f3dd9a",fontFamily:"monospace",lineHeight:1.15,position:"relative",zIndex:1,
+    textShadow:"0 0 10px rgba(201,168,76,0.4)"},
+  potShine:{position:"absolute",inset:0,
+    background:"linear-gradient(110deg,transparent 30%,rgba(255,230,170,0.35) 50%,transparent 70%)",
+    backgroundSize:"220% 100%",animation:"potShine 3.5s linear infinite",pointerEvents:"none"},
+
+  // Community board (flop games) — centered row of community cards
+  board:{display:"flex",gap:5,justifyContent:"center",alignItems:"center",width:"100%",marginBottom:3},
+  boardCard:{width:32,height:45,borderRadius:5,
+    background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
+    display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+    boxShadow:"0 2px 7px rgba(0,0,0,0.5)",flexShrink:0},
+  boardSlot:{width:30,height:42,borderRadius:5,
+    background:"rgba(0,0,0,0.18)",border:"1px dashed rgba(201,168,76,0.18)",flexShrink:0},
+  streetPill:{fontSize:8,letterSpacing:1.5,color:"#b6a075",background:"rgba(0,0,0,0.2)",
+    padding:"2px 9px",borderRadius:10,border:"1px solid rgba(255,255,255,0.04)",textAlign:"center"},
+  pips:{display:"flex",gap:5},
+  pip:{width:17,height:17,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+    border:"1px solid rgba(201,168,76,0.2)"},
+  resultBanner:{padding:"3px 12px",borderRadius:10,fontSize:11,letterSpacing:2,color:"#fff",fontWeight:"bold",textAlign:"center"},
+
+  // Desktop seat
+  seat:{display:"flex",flexDirection:"column",alignItems:"center",gap:3},
+  seatDim:{opacity:0.25,pointerEvents:"none"},
+  seatThink:{filter:"drop-shadow(0 0 6px rgba(201,168,76,0.28))"},
+  seatWin:{animation:"winPulse 1.1s ease-in-out infinite"},
+  // Martin's "Not like that" speech bubble
+  bubble:{position:"relative",alignSelf:"center",marginBottom:2,
+    background:"linear-gradient(180deg,#fffdf6,#efe6cf)",color:"#2a1e0e",
+    fontSize:11,fontWeight:"bold",fontFamily:"Georgia,serif",letterSpacing:0.3,
+    padding:"4px 10px",borderRadius:12,border:"1px solid #c9a84c",whiteSpace:"nowrap",
+    boxShadow:"0 3px 10px rgba(0,0,0,0.5)",animation:"dealIn 0.3s ease-out"},
+  bubbleTail:{position:"absolute",bottom:-5,left:"50%",transform:"translateX(-50%)",
+    width:0,height:0,borderLeft:"5px solid transparent",borderRight:"5px solid transparent",
+    borderTop:"6px solid #efe6cf"},
+  bubbleMobile:{position:"absolute",top:-20,left:"50%",transform:"translateX(-50%)",
+    background:"linear-gradient(180deg,#fffdf6,#efe6cf)",color:"#2a1e0e",
+    fontSize:8.5,fontWeight:"bold",fontFamily:"Georgia,serif",
+    padding:"2px 7px",borderRadius:9,border:"1px solid #c9a84c",whiteSpace:"nowrap",
+    boxShadow:"0 2px 7px rgba(0,0,0,0.5)",zIndex:5,animation:"dealIn 0.3s ease-out"},
+  seatBar:{display:"flex",alignItems:"center",gap:5,
+    background:"linear-gradient(180deg,rgba(54,42,20,0.9),rgba(24,18,8,0.9))",
+    borderRadius:18,padding:"3px 8px 3px 7px",
+    border:"1px solid rgba(201,168,76,0.35)",flexWrap:"wrap",
+    boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15), 0 2px 6px rgba(0,0,0,0.4)"},
+  seatName:{fontSize:9.5,letterSpacing:1.5,color:"#e8d9b0",lineHeight:1.2},
+  seatTag:{fontSize:6.5,letterSpacing:0.8,color:"#8a6a38",lineHeight:1},
+  seatCards:{display:"flex",justifyContent:"center",padding:"2px 0 8px"},
+
+  // Player
+  youBar:{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",justifyContent:"center",
+    background:"linear-gradient(180deg,rgba(58,46,22,0.92),rgba(26,20,9,0.92))",borderRadius:20,padding:"4px 12px",
+    border:"1px solid rgba(201,168,76,0.4)",
+    boxShadow:"inset 0 1px 0 rgba(255,220,150,0.18), 0 2px 8px rgba(0,0,0,0.4)"},
+  youName:{fontSize:11,letterSpacing:2,color:"#f3dd9a"},
+  chips:{fontSize:13,color:"#e8dfc8",fontFamily:"monospace",letterSpacing:0.5},
+  evalBdg:{fontSize:9,fontFamily:"monospace",padding:"1px 6px",borderRadius:8,
+    letterSpacing:0.5,whiteSpace:"nowrap",fontWeight:"bold"},
+  myCards:{display:"flex",gap:6,justifyContent:"center",padding:"3px 0 12px",flexWrap:"nowrap"},
+  emptyH:{color:"rgba(255,255,255,0.07)",fontSize:17,letterSpacing:8,padding:"14px 0"},
+  discardNote:{fontSize:9.5,color:"rgba(239,68,68,0.6)",letterSpacing:0.5,marginTop:-6,paddingBottom:4},
+
+  // Action panel
+  panel:{width:"100%",maxWidth:740,background:"rgba(20,28,44,0.92)",borderRadius:12,
+    padding:"10px 12px",border:"1px solid rgba(255,255,255,0.08)",
+    display:"flex",flexDirection:"column",gap:8,transition:"border-color 0.2s,box-shadow 0.2s"},
+  panelOn:{border:"1px solid rgba(201,168,76,0.35)",boxShadow:"0 0 16px rgba(201,168,76,0.1)"},
+  statusLine:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",minHeight:18},
+  stTxt:{fontSize:10.5,color:"#b6a280",letterSpacing:0.5},
+  oddsPill:{fontSize:10.5,color:"#c9a84c",fontFamily:"monospace",background:"rgba(201,168,76,0.07)",
+    padding:"1px 7px",borderRadius:8,letterSpacing:0.5},
+
+  // Buttons
+  btnRow:{display:"flex",alignItems:"center",justifyContent:"center",gap:7,flexWrap:"wrap"},
+  bFold:{background:"linear-gradient(180deg,#a52222,#7a1818)",border:"1px solid #ef5350",color:"#ffd9d9",borderRadius:9,
+    padding:"10px 18px",cursor:"pointer",fontSize:11.5,letterSpacing:1.5,fontFamily:"Georgia,serif",fontWeight:"bold",minWidth:68,
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.18), 0 3px 8px rgba(0,0,0,0.4)"},
+  bCheck:{background:"linear-gradient(180deg,#2a3850,#16202f)",border:"1px solid #5a6b85",color:"#c2d0e2",borderRadius:9,
+    padding:"10px 18px",cursor:"pointer",fontSize:11.5,letterSpacing:1.5,fontFamily:"Georgia,serif",fontWeight:"bold",minWidth:68,
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.12), 0 3px 8px rgba(0,0,0,0.4)"},
+  bCall:{background:"linear-gradient(180deg,#1e54b8,#16307a)",border:"1px solid #5b9bf6",color:"#dbe9ff",borderRadius:9,
+    padding:"10px 18px",cursor:"pointer",fontSize:11.5,letterSpacing:1.5,fontFamily:"Georgia,serif",fontWeight:"bold",minWidth:86,
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.18), 0 3px 8px rgba(0,0,0,0.4)"},
+  bBet:{background:"linear-gradient(180deg,#d9791e,#a8500f)",border:"1px solid #fbbf24",color:"#fff3dc",borderRadius:9,
+    padding:"10px 18px",cursor:"pointer",fontSize:11.5,letterSpacing:1.5,fontFamily:"Georgia,serif",fontWeight:"bold",minWidth:86,
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.25), 0 3px 8px rgba(0,0,0,0.4)"},
+  bDraw:{background:"linear-gradient(180deg,#b8841e,#8a5e12)",border:"1px solid #f3dd9a",color:"#fff6df",
+    borderRadius:10,padding:"11px 34px",cursor:"pointer",fontSize:12,letterSpacing:2,
+    fontFamily:"Georgia,serif",fontWeight:"bold",
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.3), 0 4px 14px rgba(184,132,30,0.35)"},
+  bDeal:{background:"linear-gradient(180deg,#1f7a3e,#155028)",border:"1px solid #6ee79c",
+    color:"#e0ffe9",borderRadius:10,padding:"11px 34px",cursor:"pointer",fontSize:12,letterSpacing:2,
+    fontFamily:"Georgia,serif",fontWeight:"bold",
+    boxShadow:"inset 0 1px 0 rgba(255,255,255,0.28), 0 4px 14px rgba(31,122,62,0.4)"},
+
+  // NL controls
+  nlWrap:{display:"flex",flexDirection:"column",gap:7},
+  preRow:{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"},
+  pre:{background:"rgba(201,168,76,0.05)",border:"1px solid rgba(201,168,76,0.18)",borderRadius:8,
+    padding:"4px 8px",cursor:"pointer",color:"#c9a84c",display:"flex",flexDirection:"column",
+    alignItems:"center",gap:0,fontFamily:"Georgia,serif",transition:"all 0.1s"},
+  preOn:{background:"rgba(201,168,76,0.16)",border:"1px solid rgba(201,168,76,0.5)"},
+  preLbl:{fontSize:7.5,letterSpacing:1,color:"#9d8a62"},
+  preAmt:{fontSize:11,fontFamily:"monospace"},
+  slRow:{display:"flex",alignItems:"center",gap:7,justifyContent:"center"},
+  slEdge:{fontSize:9.5,color:"#9d8a62",minWidth:28,textAlign:"center"},
+  slider:{width:140,accentColor:"#c9a84c",cursor:"pointer"},
+  slVal:{fontSize:10.5,color:"#c9a84c",minWidth:88,letterSpacing:0.5},
+
+  // Cards
+  card:{background:"linear-gradient(160deg,#ffffff 0%,#f6f1e4 100%)",borderRadius:7,
+    border:"1px solid #d8c9ab",padding:"3px 4px",
+    position:"relative",display:"flex",flexDirection:"column",justifyContent:"space-between",
+    flexShrink:0,transition:"transform 0.14s cubic-bezier(.34,1.56,.64,1),box-shadow 0.14s"},
+  cardBack:{background:"linear-gradient(150deg,#243f96 0%,#152663 55%,#0e1a47 100%)",
+    backgroundImage:"repeating-linear-gradient(45deg,rgba(201,168,76,0.14) 0,rgba(201,168,76,0.14) 1px,transparent 0,transparent 7px),repeating-linear-gradient(-45deg,rgba(201,168,76,0.14) 0,rgba(201,168,76,0.14) 1px,transparent 0,transparent 7px)",
+    borderRadius:7,border:"2px solid rgba(201,168,76,0.8)",display:"flex",alignItems:"center",
+    justifyContent:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.1)",flexShrink:0},
+  cbInner:{width:"70%",height:"74%",border:"1px solid rgba(201,168,76,0.4)",borderRadius:4,
+    boxShadow:"inset 0 0 8px rgba(201,168,76,0.2)"},
+  cTL:{display:"flex",flexDirection:"column",alignItems:"flex-start"},
+  discardTag:{position:"absolute",bottom:-13,left:"50%",transform:"translateX(-50%)",
+    fontSize:6.5,color:"#ef4444",letterSpacing:1,whiteSpace:"nowrap",fontFamily:"monospace"},
+
+  foot:{fontSize:10,color:"rgba(216,202,172,0.46)",textAlign:"center",maxWidth:600,lineHeight:1.6},
+
+  // Header row + gear
+  headerRow:{width:"100%",maxWidth:740,display:"flex",alignItems:"stretch",gap:6},
+  gearBtn:{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.25)",
+    borderRadius:10,color:"#c9a84c",fontSize:20,width:46,cursor:"pointer",
+    display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.12s"},
+
+  // Settings overlay + modal
+  overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:50,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(3px)"},
+  modal:{width:"100%",maxWidth:420,background:"#1a2334",borderRadius:16,padding:"18px 18px 16px",
+    border:"1px solid rgba(201,168,76,0.35)",boxShadow:"0 24px 70px rgba(0,0,0,0.6)",
+    display:"flex",flexDirection:"column",gap:10},
+  modalHead:{display:"flex",alignItems:"center",justifyContent:"space-between"},
+  modalTitle:{fontSize:15,color:"#c9a84c",letterSpacing:1},
+  modalClose:{background:"none",border:"none",color:"#9a8862",fontSize:18,cursor:"pointer",padding:4},
+  modalSection:{fontSize:9.5,letterSpacing:2,color:"#b6a075",marginTop:4},
+  modalHint:{fontSize:10.5,color:"#9d8a62",lineHeight:1.5,marginBottom:2},
+  tightRow:{display:"flex",alignItems:"center",gap:10},
+  tightLabel:{display:"flex",flexDirection:"column",minWidth:62},
+  tightSlider:{flex:1,accentColor:"#c9a84c",cursor:"pointer"},
+  tightVal:{fontSize:9.5,color:"#c9a84c",minWidth:66,textAlign:"right",letterSpacing:0.5},
+  modalActions:{display:"flex",gap:6,marginTop:6},
+  presetBtn:{flex:1,background:"rgba(201,168,76,0.06)",border:"1px solid rgba(201,168,76,0.2)",
+    borderRadius:8,padding:"7px 4px",cursor:"pointer",color:"#c9a84c",fontSize:10,
+    fontFamily:"Georgia,serif",letterSpacing:0.5,transition:"all 0.1s"},
+  modalDone:{marginTop:8,background:"linear-gradient(135deg,#1a4a28,#1c5430)",
+    border:"1px solid rgba(74,222,128,0.5)",color:"#bbf7d0",borderRadius:10,
+    padding:"10px",cursor:"pointer",fontSize:12,letterSpacing:2,fontFamily:"Georgia,serif",fontWeight:"bold"},
+
+  // Bet stepper
+  stepBtn:{background:"rgba(201,168,76,0.08)",border:"1px solid rgba(201,168,76,0.28)",
+    borderRadius:7,color:"#c9a84c",fontSize:10.5,padding:"5px 8px",cursor:"pointer",
+    fontFamily:"monospace",letterSpacing:0.5,flexShrink:0,whiteSpace:"nowrap"},
+
+  // Coach tip strip
+  coachBar:{display:"flex",alignItems:"center",gap:9,padding:"6px 10px",borderRadius:10,
+    border:"1px solid",fontFamily:"Georgia,serif",animation:"dealIn 0.25s ease-out"},
+  coachTag:{fontSize:8,letterSpacing:2,fontWeight:"bold",padding:"2px 6px",borderRadius:6,
+    flexShrink:0,fontFamily:"monospace"},
+  coachTxt:{fontSize:11.5,lineHeight:1.4,letterSpacing:0.2,color:"#f0e8d6"},
+  coachTone:{
+    good:{background:"rgba(74,222,128,0.12)", borderColor:"rgba(74,222,128,0.5)"},
+    ok:  {background:"rgba(201,168,76,0.12)", borderColor:"rgba(201,168,76,0.5)"},
+    warn:{background:"rgba(248,113,113,0.12)",borderColor:"rgba(248,113,113,0.5)"},
+  },
+
+  // Toggle switch (settings)
+  toggleRow:{display:"flex",alignItems:"center",justifyContent:"space-between",
+    background:"rgba(255,255,255,0.05)",border:"1px solid rgba(201,168,76,0.25)",
+    borderRadius:10,padding:"9px 12px",cursor:"pointer",width:"100%",transition:"all 0.15s"},
+  toggleRowOn:{background:"rgba(74,222,128,0.1)",border:"1px solid rgba(74,222,128,0.45)"},
+  switch:{width:38,height:21,borderRadius:11,background:"rgba(255,255,255,0.14)",
+    border:"1px solid rgba(255,255,255,0.22)",position:"relative",flexShrink:0,transition:"all 0.18s"},
+  switchOn:{background:"rgba(74,222,128,0.55)",border:"1px solid rgba(74,222,128,0.75)"},
+  knob:{position:"absolute",top:1.5,left:1.5,width:16,height:16,borderRadius:"50%",
+    background:"#efe7d2",boxShadow:"0 1px 3px rgba(0,0,0,0.5)",transition:"all 0.18s"},
+  knobOn:{left:19,background:"#eafff0"},
+
+  // Main-screen control bar
+  ctrlBar:{width:"100%",maxWidth:740,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",
+    justifyContent:"center",padding:"2px 0"},
+  coachChip:{fontFamily:"monospace",fontSize:9.5,letterSpacing:1,fontWeight:"bold",
+    padding:"5px 11px",borderRadius:999,cursor:"pointer",transition:"all 0.15s",
+    background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.14)",color:"#9c8760"},
+  coachChipOn:{background:"rgba(74,222,128,0.16)",border:"1px solid rgba(74,222,128,0.55)",
+    color:"#9ff0bb",boxShadow:"0 0 12px rgba(74,222,128,0.25)"},
+  fmtReadout:{fontFamily:"monospace",fontSize:9.5,letterSpacing:1.5,color:"#c9a84c",
+    padding:"5px 10px",borderRadius:999,background:"rgba(201,168,76,0.08)",
+    border:"1px solid rgba(201,168,76,0.3)"},
+  depthRow:{display:"flex",alignItems:"center",gap:4},
+  depthBtn:{fontFamily:"monospace",fontSize:10,fontWeight:"bold",minWidth:34,padding:"5px 7px",
+    borderRadius:7,cursor:"pointer",transition:"all 0.12s",color:"#9c8760",
+    background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)"},
+  depthBtnOn:{background:"linear-gradient(135deg,rgba(201,168,76,0.3),rgba(201,168,76,0.15))",
+    border:"1px solid rgba(201,168,76,0.7)",color:"#f0e0b0"},
+  depthCap:{fontSize:8,letterSpacing:0.5,color:"#9c8760",marginLeft:2},
+
+  // Segmented control (settings)
+  segRow:{display:"flex",gap:6,width:"100%"},
+  segBtn:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",textAlign:"center",
+    gap:1,padding:"8px 6px",borderRadius:9,cursor:"pointer",transition:"all 0.14s",
+    background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",color:"#b6a075",
+    fontFamily:"Georgia,serif"},
+  segBtnOn:{background:"linear-gradient(135deg,rgba(201,168,76,0.26),rgba(201,168,76,0.12))",
+    border:"1px solid rgba(201,168,76,0.7)",color:"#f0e4c4",boxShadow:"0 0 10px rgba(201,168,76,0.12)"},
+};
+
+
+    const boot = document.getElementById('boot');
+    if (boot) boot.remove();
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
