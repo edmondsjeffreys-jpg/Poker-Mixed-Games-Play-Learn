@@ -29,7 +29,7 @@
   <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
   <script type="text/babel" data-presets="react">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef, useMemo } = React;
 
 // ─── RESPONSIVE HOOK ─────────────────────────────
 function useWidth() {
@@ -896,6 +896,154 @@ function coachBet(st, me, callAmt) {
   if (str >= thinCut)            return { tone:"ok",   text:`${tag}Thin but playable — checking keeps the pot under control.${ex}` };
   return { tone:"warn", text:`Not much here — check and take the free card.` };
 }
+
+// ─── DECISION GRADER (silent answer key for hand history) ──────────
+// Mirrors coachBet's thresholds but returns a discrete recommended action,
+// so we can grade your play even when the live Coach is switched off.
+function coachRecAction(st, me, callAmt) {
+  const facing  = callAmt > 0;
+  const str     = heroStrength(st);
+  const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
+  const mode    = st.coachMode || "gto";
+  let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36;
+  if (mode === "nitty") { raiseCut = 0.83; valueCut = 0.63; thinCut = 0.46; }
+  if (facing) {
+    if (str >= raiseCut)                       return "raise";
+    if (str >= valueCut)                       return "call";   // call/raise both fine
+    if (str >= potOdds + 0.14)                 return "call";
+    if (str >= potOdds && mode !== "nitty")    return "call";
+    return "fold";
+  }
+  if (str >= valueCut) return "bet";
+  return "check";
+}
+const ACT_AGGR = { fold:0, check:1, call:2, bet:3, raise:4 };
+// Grade one betting decision → { category, verdict, dir, severity, rec, action }.
+function gradeDecision(st, action, amount) {
+  const me = st.players[0];
+  const callAmt = Math.max(0, st.currentBet - (me.betSt || 0));
+  const facing  = callAmt > 0;
+  const str  = heroStrength(st);
+  const rec  = coachRecAction(st, me, callAmt);
+  const norm = action === "bet" || action === "raise" ? (facing ? "raise" : "bet") : action;
+  const preflop = st.streetN === 0;
+  const a = ACT_AGGR[norm] ?? 1, r = ACT_AGGR[rec] ?? 1;
+  let category, dir = "ok", verdict = "good", severity = 0;
+  // Exact (or equivalently aggressive) match
+  if (norm === rec || (rec === "call" && norm === "raise") || (rec === "check" && norm === "bet")) {
+    category = preflop ? "Preflop selection" : (a >= 3 ? "Value aggression" : "Solid lines");
+    verdict = "good";
+  } else if (a < r) {
+    // You played too passively vs the recommendation
+    dir = "too_passive"; verdict = "leak";
+    category = (rec === "raise" || rec === "bet") ? "Value aggression"
+             : (rec === "call") ? "Over-folding" : "Solid lines";
+    severity = Math.min(1, 0.35 + str * 0.6);            // folding/checking strength hurts more
+  } else {
+    // You played too aggressively / loosely vs the recommendation
+    dir = "too_loose"; verdict = "leak";
+    category = rec === "fold" ? "Calling discipline" : "Bluff control";
+    const odds = facing ? callAmt / (st.pot + callAmt) : 0.3;
+    severity = Math.min(1, 0.35 + Math.max(0, odds - str) + (a - r) * 0.12);
+  }
+  if (preflop && verdict === "leak") category = "Preflop selection";
+  return { category, verdict, dir, severity:+severity.toFixed(2), rec, action:norm, street:st.streetN, gid:st.gid };
+}
+// Grade a draw (discard set) vs the coach's recommended discards.
+// Grade a draw (discard set) vs the coach's recommended discards.
+function gradeDraw(st, sel) {
+  let plan; try { plan = coachDrawPlan(st, st.players[0]); } catch { plan = null; }
+  if (!plan || !plan.discard) return null;
+  const want = new Set(plan.discard), got = new Set(sel);
+  const uni = new Set([...want, ...got]); let inter = 0;
+  want.forEach(x => { if (got.has(x)) inter++; });
+  const jac = uni.size ? inter / uni.size : 1;          // 1 = identical
+  const verdict = jac >= 0.99 ? "good" : jac >= 0.5 ? "ok" : "leak";
+  return { category:"Draw decisions", verdict, dir: got.size > want.size ? "too_loose" : got.size < want.size ? "too_passive" : "ok",
+           severity:+(1 - jac).toFixed(2), rec:[...want], action:[...got], street:st.streetN, gid:st.gid };
+}
+
+// ─── HAND HISTORY: storage + analysis ─────────────────────────────
+const HS_KEY = "pmg_history_v1";
+const HS_CAP = 3000;                       // effectively "forever" for normal use
+function hsAvail() { try { localStorage.setItem("__t","1"); localStorage.removeItem("__t"); return true; } catch { return false; } }
+function hsLoad()  { try { return JSON.parse(localStorage.getItem(HS_KEY) || "[]"); } catch { return []; } }
+function hsSaveAll(arr) {
+  try { localStorage.setItem(HS_KEY, JSON.stringify(arr)); return true; }
+  catch { try { const t = arr.slice(-Math.floor(arr.length * 0.8)); localStorage.setItem(HS_KEY, JSON.stringify(t)); return true; } catch { return false; } }
+}
+function hsAppend(rec) { const a = hsLoad(); a.push(rec); if (a.length > HS_CAP) a.splice(0, a.length - HS_CAP); hsSaveAll(a); return a.length; }
+function hsClear() { try { localStorage.removeItem(HS_KEY); } catch {} }
+
+const CAT_FIX = {
+  "Preflop selection":  "Tighten your starting hands — fold the marginal ones before committing chips.",
+  "Value aggression":   "Bet and raise your strong hands more often — you're leaving value uncollected.",
+  "Over-folding":       "You fold too often when a call is correct — defend a little wider.",
+  "Calling discipline": "You call too light — let go of hands when the price isn't there.",
+  "Bluff control":      "Ease off betting weak hands into bad spots — pick cleaner bluff spots.",
+  "Draw decisions":     "Revisit which cards you keep — match the recommended draw more often.",
+  "Solid lines":        "Keep taking the standard line on the later streets.",
+};
+const CAT_GOOD = {
+  "Preflop selection":  "Disciplined starting-hand selection.",
+  "Value aggression":   "You bet and raise strong hands well.",
+  "Over-folding":       "You defend the right amount — not too tight.",
+  "Calling discipline": "You don't pay off without a real hand.",
+  "Bluff control":      "You avoid spewing with weak holdings.",
+  "Draw decisions":     "Your draws match the recommended keeps.",
+  "Solid lines":        "Solid, standard lines through the streets.",
+};
+const GAME_LABEL = {
+  single:"2-7 Single", triple:"2-7 Triple", badugi:"Badugi", lhe:"Limit Hold'em",
+  nlhe:"No-Limit Hold'em", omaha8:"Omaha Hi-Lo", plo:"PLO", bigo:"Big O",
+  razz:"Razz", stud:"7-Card Stud", stud8:"Stud Hi-Lo",
+  dramahaH:"Dramaha High", dramaha27:"2-7 Dramaha", dramadugi:"Dramadugi",
+};
+
+// Aggregate raw hand records → dashboard + strengths/opportunities.
+function analyzeHistory(records) {
+  const cats = {}, games = {};
+  let good = 0, ok = 0, leak = 0, decisions = 0;
+  const bump = (o, k) => (o[k] = o[k] || { n:0, good:0, ok:0, leak:0, sev:0, loose:0, passive:0 });
+  records.forEach(r => {
+    const g = bump(games, r.gid); g.hands = (g.hands || 0) + 1;
+    if (r.result === "won") g.wins = (g.wins || 0) + 1;
+    (r.decisions || []).forEach(d => {
+      decisions++;
+      const c = bump(cats, d.category); c.n++;
+      const gd = bump(games, r.gid); gd.dn = (gd.dn || 0) + 1;
+      if (d.verdict === "good") { good++; c.good++; gd.dgood = (gd.dgood || 0) + 1; }
+      else if (d.verdict === "ok") { ok++; c.ok++; }
+      else { leak++; c.leak++; c.sev += d.severity || 0.5; if (d.dir === "too_loose") c.loose++; if (d.dir === "too_passive") c.passive++; }
+    });
+  });
+  const graded = good + ok + leak;
+  const accuracy = graded ? (good + ok * 0.5) / graded : 0;
+  const MIN = 6;
+  const catList = Object.entries(cats).map(([category, c]) => {
+    const tot = c.good + c.ok + c.leak;
+    const goodRate = tot ? (c.good + c.ok * 0.5) / tot : 0;
+    const leakRate = tot ? c.leak / tot : 0;
+    const avgSev = c.leak ? c.sev / c.leak : 0;
+    const dir = c.passive >= c.loose ? "too_passive" : "too_loose";
+    return { category, n:tot, goodRate, leakRate, avgSev, dir };
+  });
+  const strengths = catList.filter(c => c.n >= MIN && c.goodRate >= 0.6)
+    .sort((a, b) => b.goodRate - a.goodRate || b.n - a.n).slice(0, 5)
+    .map(c => ({ ...c, blurb: CAT_GOOD[c.category] || "Solid here." }));
+  const opportunities = catList.filter(c => c.n >= MIN && c.leakRate >= 0.2)
+    .sort((a, b) => (b.leakRate * (0.5 + b.avgSev)) - (a.leakRate * (0.5 + a.avgSev)) || b.n - a.n).slice(0, 5)
+    .map(c => ({ ...c, fix: CAT_FIX[c.category] || "Review this spot." }));
+  const perGame = Object.entries(games).map(([gid, g]) => ({
+    gid, label: GAME_LABEL[gid] || gid, hands: g.hands || 0, wins: g.wins || 0,
+    accuracy: g.dn ? (g.dgood || 0) / g.dn : 0, decisions: g.dn || 0,
+  })).sort((a, b) => b.hands - a.hands);
+  return {
+    hands: records.length, wins: records.filter(r => r.result === "won").length,
+    decisions, accuracy, strengths, opportunities, perGame, enough: decisions >= 20,
+  };
+}
+const cardTxt = c => c ? `${c.r}${c.s}` : "";
 function coachDraw(st, me) {
   const plan    = coachDrawPlan(st, me);
   const sel     = st.sel;
@@ -1568,12 +1716,172 @@ function winnerId(st) {
   return s.map(p => ({ ...p, ev:evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev))[0].id;
 }
 
+// ─── REVIEW SCREEN (hand history + coaching analysis) ─────────────
+function RvStat({ label, val }) {
+  return <div style={S.statCard}><div style={S.statVal}>{val}</div><div style={S.statLbl}>{label}</div></div>;
+}
+function RvCards({ label, cards }) {
+  return (
+    <div style={S.cardsRow}>
+      <span style={S.cardsLbl}>{label}:</span>
+      {(cards || []).map((c, i) =>
+        <span key={i} style={{ fontSize:13, fontWeight:"bold", color: RED.has(c.s) ? "#dc2626" : "#1a1a1a",
+          background:"#f4f1e8", borderRadius:3, padding:"1px 5px", margin:"0 2px" }}>{cardTxt(c)}</span>)}
+    </div>
+  );
+}
+function ReviewScreen({ onClose }) {
+  const [records, setRecords] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  useEffect(() => { setRecords(hsLoad()); }, []);
+  const a = useMemo(() => analyzeHistory(records), [records]);
+  const recent = useMemo(() => records.slice(-40).reverse(), [records]);
+  const pct = x => `${Math.round((x || 0) * 100)}%`;
+  const clearAll = () => { hsClear(); setRecords([]); setConfirmClear(false); setOpen(null); };
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.reviewCard} onClick={e => e.stopPropagation()}>
+        <div style={S.reviewHead}>
+          <span style={S.reviewTitle}>📊 Review</span>
+          <button onClick={onClose} style={S.modalClose}>✕</button>
+        </div>
+
+        {!hsAvail() && <div style={S.reviewNote}>Heads-up: this browser/mode blocks local saving, so history won't persist between visits.</div>}
+
+        {records.length === 0 ? (
+          <div style={S.reviewEmpty}>No hands recorded yet.<br/>Play a few hands — your stats and a coaching breakdown of your strengths and leaks will build up here automatically.</div>
+        ) : (
+          <>
+            <div style={S.dashRow}>
+              <RvStat label="Hands" val={a.hands}/>
+              <RvStat label="Win rate" val={pct(a.hands ? a.wins / a.hands : 0)}/>
+              <RvStat label="Decision acc." val={pct(a.accuracy)}/>
+              <RvStat label="Decisions" val={a.decisions}/>
+            </div>
+
+            {!a.enough && <div style={S.reviewNote}>Play at least 20 decisions to unlock the strengths & opportunities breakdown — {a.decisions} logged so far.</div>}
+
+            {a.enough && (
+              <>
+                <div style={S.reviewSec}>✅ Top strengths</div>
+                {a.strengths.length ? a.strengths.map((s, i) => (
+                  <div key={i} style={{ ...S.leakRow, borderLeft:"3px solid #4ade80" }}>
+                    <div style={S.leakCat}>{s.category}<span style={S.leakPct}>{pct(s.goodRate)} on-line · {s.n}</span></div>
+                    <div style={S.leakFix}>{s.blurb}</div>
+                  </div>
+                )) : <div style={S.reviewNote}>Keep playing to surface clear strengths.</div>}
+
+                <div style={S.reviewSec}>🎯 Top opportunities</div>
+                {a.opportunities.length ? a.opportunities.map((o, i) => (
+                  <div key={i} style={{ ...S.leakRow, borderLeft:"3px solid #fbbf24" }}>
+                    <div style={S.leakCat}>{o.category}<span style={S.leakPct}>{o.dir === "too_loose" ? "too loose" : "too passive"} · {pct(o.leakRate)} off · {o.n}</span></div>
+                    <div style={S.leakFix}>{o.fix}</div>
+                  </div>
+                )) : <div style={S.reviewNote}>No clear leaks yet — nicely balanced.</div>}
+              </>
+            )}
+
+            {a.perGame.length > 0 && (
+              <>
+                <div style={S.reviewSec}>By game</div>
+                {a.perGame.map(g => (
+                  <div key={g.gid} style={S.gameRow}>
+                    <span style={S.gameName}>{g.label}</span>
+                    <span style={S.gameStat}>{g.hands} hands{g.decisions ? ` · ${pct(g.accuracy)} acc` : ""}</span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            <div style={S.reviewSec}>Recent hands</div>
+            {recent.map((r, i) => {
+              const idx = records.length - 1 - i;
+              const col = r.result === "won" ? "#4ade80" : r.result === "lost" ? "#f87171" : "#c9a84c";
+              return (
+                <div key={idx}>
+                  <button onClick={() => setOpen(open === idx ? null : idx)} style={S.handRow}>
+                    <span style={{ color:col, fontWeight:"bold", fontSize:11, width:42 }}>{r.result === "won" ? "WON" : r.result === "lost" ? "LOST" : "CHOP"}</span>
+                    <span style={{ color:"#9d8a62", fontSize:11, flex:1, textAlign:"left" }}>{GAME_LABEL[r.gid] || r.gid}</span>
+                    <span style={{ color:col, fontSize:11 }}>{r.delta > 0 ? "+" : ""}{r.delta}</span>
+                  </button>
+                  {open === idx && (
+                    <div style={S.handDetail}>
+                      <RvCards label="Your cards" cards={r.finalHole}/>
+                      {r.board && r.board.length > 0 && <RvCards label="Board" cards={r.board}/>}
+                      <div style={S.detLine}>{r.msg}</div>
+                      {(r.decisions || []).filter(d => d.verdict === "leak").slice(0, 3).map((d, k) => (
+                        <div key={k} style={S.detLeak}>• {d.category}: {d.dir === "too_loose" ? "too loose/aggressive" : "too passive"}</div>
+                      ))}
+                      <div style={S.detNote}>Full visual replay coming soon.</div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div style={S.clearRow}>
+              {!confirmClear
+                ? <button onClick={() => setConfirmClear(true)} style={S.clearBtn}>Clear history</button>
+                : <>
+                    <span style={S.clearWarn}>Delete all {records.length} hands?</span>
+                    <button onClick={clearAll} style={S.clearYes}>Yes</button>
+                    <button onClick={() => setConfirmClear(false)} style={S.clearNo}>Cancel</button>
+                  </>}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── ROOT ────────────────────────────────────────
 function App() {
   const [st, setSt]   = useState(mkState("single"));
   const [showSettings, setShowSettings] = useState(false);
+  const [showReview, setShowReview] = useState(false);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
+
+  // ── Hand-history logging (silent; works even with Coach off) ──
+  const histRef = useRef({ dealKey:-1, decisions:[], startChips:null, startHole:null });
+  const recordedRef = useRef(-1);
+  // New hand: snapshot starting chips + hole, reset the decision log.
+  useEffect(() => {
+    if (st.phase === "idle" || st.phase === "showdown") return;
+    if (histRef.current.dealKey !== st.dealKey) {
+      histRef.current = {
+        dealKey: st.dealKey, decisions: [],
+        startChips: st.players[0]?.chips ?? null,
+        startHole: (st.players[0]?.hand || []).map(c => ({ r:c.r, s:c.s })),
+      };
+    }
+  }, [st.dealKey, st.phase]);
+  // Hand over: finalize + persist exactly once per hand.
+  useEffect(() => {
+    if (st.phase !== "showdown") return;
+    if (recordedRef.current === st.dealKey) return;
+    recordedRef.current = st.dealKey;
+    try {
+      const h = histRef.current;
+      const me = st.players[0];
+      const delta = (me?.chips ?? 0) - (h.startChips ?? me?.chips ?? 0);
+      hsAppend({
+        ts: Date.now(), gid: st.gid,
+        result: delta > 0 ? "won" : delta < 0 ? "lost" : "chop",
+        delta,
+        startHole: h.startHole || [],
+        finalHole: (me?.hand || []).map(c => ({ r:c.r, s:c.s })),
+        board: (st.board || []).map(c => ({ r:c.r, s:c.s })),
+        decisions: h.decisions || [],
+        msg: st.msg || "",
+      });
+    } catch {}
+  }, [st.phase, st.dealKey]);
+  const logBet = (action, amount) => { try { histRef.current.decisions.push(gradeDecision(st, action, amount)); } catch {} };
+  const logDraw = (sel) => { try { const g = gradeDraw(st, sel); if (g) histRef.current.decisions.push(g); } catch {} };
 
   // CPU auto-acts with realistic delays (tilted CPUs act faster — impulsive)
   useEffect(() => {
@@ -1691,14 +1999,14 @@ function App() {
       msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
   });
 
-  const act   = (action, amount = 0) => setSt(s => applyAction(s, action, amount));
+  const act   = (action, amount = 0) => { logBet(action, amount); setSt(s => applyAction(s, action, amount)); };
   const flip  = i => { if (st.phase !== "drawing") return; setSt(s => {
     if (s.sel.includes(i)) return { ...s, sel:s.sel.filter(x=>x!==i) };
     if (IS_DRAMAHA(s.gid) && s.sel.length >= DRAW_CAP(s.gid)) return s; // dramadugi caps at 3
     return { ...s, sel:[...s.sel, i] };
   }); };
-  const draw  = () => setSt(s => execDraw(s, s.sel, false));
-  const fold  = () => setSt(s => execDraw(s, [], true));  // FIX: fold during draw now works
+  const draw  = () => { logDraw(st.sel); setSt(s => execDraw(s, s.sel, false)); };
+  const fold  = () => { logDraw([]); setSt(s => execDraw(s, [], true)); };  // fold during draw
   const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
   const setCoachMode = m => setSt(s => ({ ...s, coachMode:m }));
@@ -1935,11 +2243,14 @@ function App() {
         </div>
       )}
 
+      {showReview && <ReviewScreen onClose={()=>setShowReview(false)} mobile={mobile}/>}
+
       {/* MAIN CONTROLS — coach toggle, stakes readout, tournament depth */}
       <div style={S.ctrlBar}>
         <button onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
           {st.coach ? "● COACH ON" : "COACH OFF"}
         </button>
+        <button onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
         <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : STK(st).label}</span>
         {st.format==="tourney" && (
           <div style={S.depthRow}>
@@ -2751,6 +3062,51 @@ const S = {
   // Main-screen control bar
   ctrlBar:{width:"100%",maxWidth:740,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",
     justifyContent:"center",padding:"2px 0"},
+  reviewChip:{fontFamily:"monospace",fontSize:9.5,letterSpacing:1,fontWeight:"bold",
+    padding:"5px 11px",borderRadius:999,cursor:"pointer",transition:"all 0.15s",
+    background:"rgba(201,168,76,0.12)",border:"1px solid rgba(201,168,76,0.4)",color:"#d8b65a"},
+
+  // Review screen
+  reviewCard:{backgroundColor:"#101a2b",borderRadius:16,maxWidth:560,width:"94%",
+    maxHeight:"88vh",overflowY:"auto",border:"1px solid rgba(201,168,76,0.25)",
+    boxShadow:"0 20px 60px rgba(0,0,0,0.6)",padding:"16px 16px 22px"},
+  reviewHead:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,
+    position:"sticky",top:-16,background:"#101a2b",paddingTop:4,zIndex:2},
+  reviewTitle:{fontSize:18,fontWeight:"bold",color:"#e8dfc8",letterSpacing:0.5},
+  reviewNote:{fontSize:11.5,color:"#9d8a62",background:"rgba(201,168,76,0.07)",
+    border:"1px solid rgba(201,168,76,0.18)",borderRadius:8,padding:"8px 10px",margin:"8px 0",lineHeight:1.5},
+  reviewEmpty:{fontSize:13,color:"#b8a982",textAlign:"center",lineHeight:1.7,padding:"36px 12px"},
+  reviewSec:{fontSize:11,fontWeight:"bold",letterSpacing:1.5,color:"#c9a84c",
+    margin:"18px 0 8px",textTransform:"uppercase"},
+  dashRow:{display:"flex",gap:8,flexWrap:"wrap"},
+  statCard:{flex:"1 1 22%",minWidth:70,background:"rgba(255,255,255,0.04)",
+    border:"1px solid rgba(255,255,255,0.1)",borderRadius:10,padding:"10px 6px",textAlign:"center"},
+  statVal:{fontSize:18,fontWeight:"bold",color:"#e8dfc8"},
+  statLbl:{fontSize:8.5,letterSpacing:0.8,color:"#8c7c58",textTransform:"uppercase",marginTop:2},
+  leakRow:{background:"rgba(255,255,255,0.035)",borderRadius:"0 8px 8px 0",padding:"9px 11px",marginBottom:7},
+  leakCat:{fontSize:13,fontWeight:"bold",color:"#e8dfc8",display:"flex",justifyContent:"space-between",
+    alignItems:"baseline",gap:8,flexWrap:"wrap"},
+  leakPct:{fontSize:9.5,fontWeight:"normal",color:"#8c7c58",letterSpacing:0.5},
+  leakFix:{fontSize:11.5,color:"#b3a884",marginTop:3,lineHeight:1.45},
+  gameRow:{display:"flex",justifyContent:"space-between",alignItems:"center",
+    padding:"6px 4px",borderBottom:"1px solid rgba(255,255,255,0.05)"},
+  gameName:{fontSize:12,color:"#cdbf99"},
+  gameStat:{fontSize:11,color:"#8c7c58"},
+  handRow:{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 6px",
+    background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,0.05)",cursor:"pointer"},
+  handDetail:{background:"rgba(0,0,0,0.22)",borderRadius:8,padding:"10px 12px",margin:"2px 0 8px"},
+  cardsRow:{display:"flex",alignItems:"center",flexWrap:"wrap",gap:2,margin:"3px 0"},
+  cardsLbl:{fontSize:10,color:"#8c7c58",marginRight:6,minWidth:64,letterSpacing:0.5},
+  detLine:{fontSize:11.5,color:"#cdbf99",marginTop:6,lineHeight:1.5,fontStyle:"italic"},
+  detLeak:{fontSize:11,color:"#e0b35a",marginTop:3},
+  detNote:{fontSize:9.5,color:"#6c5f44",marginTop:7,letterSpacing:0.5},
+  clearRow:{display:"flex",alignItems:"center",gap:8,justifyContent:"center",marginTop:22,flexWrap:"wrap"},
+  clearBtn:{fontSize:11,color:"#9d8a62",background:"none",border:"1px solid rgba(255,255,255,0.16)",
+    borderRadius:8,padding:"7px 14px",cursor:"pointer",letterSpacing:0.5},
+  clearWarn:{fontSize:12,color:"#f0a0a0"},
+  clearYes:{fontSize:11,color:"#fff",background:"#b04444",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:"bold"},
+  clearNo:{fontSize:11,color:"#9d8a62",background:"none",border:"1px solid rgba(255,255,255,0.16)",borderRadius:8,padding:"7px 14px",cursor:"pointer"},
+
   coachChip:{fontFamily:"monospace",fontSize:9.5,letterSpacing:1,fontWeight:"bold",
     padding:"5px 11px",borderRadius:999,cursor:"pointer",transition:"all 0.15s",
     background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.14)",color:"#9c8760"},
@@ -2782,5 +3138,15 @@ const S = {
     if (boot) boot.remove();
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
+
+  <!-- ============================================================
+       Cloudflare Web Analytics (privacy-friendly, cookie-free).
+       To turn on: create a free site at dash.cloudflare.com →
+       Web Analytics → add getmixed.ca → copy the token it gives
+       you and paste it in place of PASTE_YOUR_TOKEN_HERE below.
+       Until then this does nothing (safe to leave as-is).
+       ============================================================ -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token": "PASTE_YOUR_TOKEN_HERE"}'></script>
 </body>
 </html>
