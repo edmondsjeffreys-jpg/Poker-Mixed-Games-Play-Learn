@@ -68,6 +68,11 @@ const SECTIONS = [
     { id:"dramaha27", label:"2-7 Dramaha",   tag:"SPLIT", available:true },
     { id:"dramadugi", label:"Dramadugi",     tag:"SPLIT", available:true },
   ]},
+  { title:"BADUGI SPLITS · TRIPLE DRAW", games:[
+    { id:"badeucey", label:"Badeucey",       tag:"SPLIT", available:true },
+    { id:"badacey",  label:"Badacey",        tag:"SPLIT", available:true },
+    { id:"archie",   label:"Archie",         tag:"SPLIT", available:true },
+  ]},
 ];
 // Flat list for lookups.
 const GAMES = SECTIONS.flatMap(s => s.games);
@@ -81,6 +86,7 @@ const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo";
 // Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
 // from the five hole cards. The "side" is which hand the draw half is scored as.
 const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
+const IS_SPLITDRAW = gid => gid === "badeucey" || gid === "badacey" || gid === "archie";
 const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
 const DRAW_CAP     = gid => gid === "dramadugi" ? 3 : 5;   // max cards a player may draw
 // Betting structure per game: "fl" fixed-limit, "nl" no-limit, "pl" pot-limit.
@@ -214,18 +220,19 @@ function hColor(ev) {
 // suits. More cards beats fewer (4-card beats 3-card beats 2-card). Within the
 // same size, the lower high card wins. Best possible: A-2-3-4 rainbow.
 const BV = v => (v === 14 ? 1 : v); // ace counts as 1 (low) in badugi
-function evalBadugi(cards) {
-  if (!cards || cards.length < 4) return null;   // 4 (badugi) or 5 (dramadugi hole) → best 4-card badugi
+function evalBadugi(cards, aceHigh = false) {
+  if (!cards || cards.length < 4) return null;   // 4 (badugi) or 5 (dramadugi/badX hole) → best 4-card badugi
+  const bv = v => aceHigh ? v : (v === 14 ? 1 : v);   // Baduci/Badeucey: ace plays HIGH (worst)
   // Find the largest subset with unique ranks and unique suits; tie-break lowest.
   let best = null;
   const n = cards.length;
   for (let mask = 1; mask < (1 << n); mask++) {
     const sub = [];
     for (let i = 0; i < n; i++) if (mask & (1 << i)) sub.push(cards[i]);
-    const ranks = new Set(sub.map(c => BV(c.v)));
+    const ranks = new Set(sub.map(c => bv(c.v)));
     const suits = new Set(sub.map(c => c.s));
     if (ranks.size !== sub.length || suits.size !== sub.length) continue; // not valid
-    const vs = sub.map(c => BV(c.v)).sort((a, b) => b - a); // high first
+    const vs = sub.map(c => bv(c.v)).sort((a, b) => b - a); // high first
     const cand = { size: sub.length, vs };
     if (!best) { best = cand; continue; }
     if (cand.size !== best.size) { if (cand.size > best.size) best = cand; continue; }
@@ -234,7 +241,7 @@ function evalBadugi(cards) {
       if (cand.vs[i] !== best.vs[i]) { if (cand.vs[i] < best.vs[i]) best = cand; break; }
     }
   }
-  const RN = {1:"Ace",2:"Deuce",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven",8:"Eight",9:"Nine",10:"Ten",11:"Jack",12:"Queen",13:"King"};
+  const RN = {1:"Ace",2:"Deuce",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven",8:"Eight",9:"Nine",10:"Ten",11:"Jack",12:"Queen",13:"King",14:"Ace"};
   const sizeWord = ["", "1-card", "2-card", "3-card", "Badugi"][best.size];
   const low = RN[best.vs[0]];
   const desc = best.size === 4 ? `${low}-high Badugi` : `${sizeWord} (${low} high)`;
@@ -409,6 +416,7 @@ function cmpHand(gid, a, b) {
 // Keep low unpaired cards, discard the rest — with personality leaks.
 function cpuDrawCards(hand, pr, gid) {
   if (IS_DRAMAHA(gid)) return cpuDrawCardsDramaha(hand, gid);
+  if (IS_SPLITDRAW(gid)) return cpuDrawCardsSplit(hand, gid, pr);
   let discard;
   if (gid === "badugi") {
     // Keep the cards that form the best badugi; discard the rest.
@@ -427,6 +435,35 @@ function cpuDrawCards(hand, pr, gid) {
     return [worst.i];
   }
   if (discard.length > 0 && Math.random() < pr.leak) return discard.slice(0, -1); // misses a discard
+  return discard;
+}
+
+// v1 split-draw bot: keep distinct low ranks (good for the 2-7/A-5 half),
+// preferring distinct suits (good for the badugi half). Archie picks a lane.
+function cpuDrawCardsSplit(hand, gid, pr) {
+  const keep = new Set();
+  if (gid === "archie") {
+    const lv = c => c.v === 14 ? 1 : c.v;
+    const lows = [...new Set(hand.filter(c => lv(c) <= 8).map(lv))];
+    if (lows.length >= 3) {                                   // draw to the low
+      const seen = new Set();
+      hand.forEach((c, i) => { const v = lv(c); if (v <= 8 && !seen.has(v)) { seen.add(v); keep.add(i); } });
+    } else {                                                  // play high: keep pairs+ and top cards
+      const cnt = {}; hand.forEach(c => cnt[c.v] = (cnt[c.v] || 0) + 1);
+      hand.forEach((c, i) => { if (cnt[c.v] >= 2) keep.add(i); });
+      if (keep.size === 0) { const o = hand.map((c, i) => ({ v:c.v, i })).sort((a, b) => b.v - a.v); keep.add(o[0].i); keep.add(o[1].i); }
+    }
+  } else {                                                    // badeucey / badacey
+    const aceHigh = gid === "badeucey";
+    const lv = c => aceHigh ? c.v : (c.v === 14 ? 1 : c.v);   // badeucey: ace high (bad)
+    const order = hand.map((c, i) => ({ c, i, v:lv(c) })).sort((a, b) => a.v - b.v);
+    const ranks = new Set(), suits = new Set();
+    order.forEach(o => { if (!ranks.has(o.v) && !suits.has(o.c.s)) { ranks.add(o.v); suits.add(o.c.s); keep.add(o.i); } });
+    order.forEach(o => { if (keep.size < 5 && !ranks.has(o.v) && o.v <= (aceHigh ? 7 : 8)) { ranks.add(o.v); keep.add(o.i); } });
+  }
+  let discard = hand.map((_, i) => i).filter(i => !keep.has(i));
+  if (discard.length === 1 && Math.random() < pr.standPat) return [];
+  if (discard.length > 0 && Math.random() < pr.leak) return discard.slice(0, -1);
   return discard;
 }
 
@@ -1163,7 +1200,7 @@ const mkState = (gid, prev = null) => {
   return {
   gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[],
   pot:0, currentBet:0, queue:[], streetN:0, drawN:0, seq:0,
-  maxDraws:(gid === "triple" || gid === "badugi") ? 3 : 1, nlBet:40,
+  maxDraws:(gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid)) ? 3 : 1, nlBet:40,
   dealerIdx:Math.floor(Math.random() * 4), reveal:false,
   msg:"Press Deal to start", result:null, sel:[],
   cpuTilt: prev?.cpuTilt || { 1:0, 2:0, 3:0 },
@@ -1171,7 +1208,7 @@ const mkState = (gid, prev = null) => {
   // Per-bot tightness (0 loose .. 100 tight). Defaults loosened from old behaviour.
   botTight: prev?.botTight || { 1:62, 2:18, 3:38 },
   // Coach mode: surface live strategy tips on the player's turn.
-  coach: prev?.coach ?? false,
+  coach: prev?.coach ?? true,
   coachMode: prev?.coachMode ?? "gto",           // "nitty" | "gto" | "exploit"
   // Stakes & format.
   format, stakeIdx, bbDepth,
@@ -1353,6 +1390,7 @@ function nextPhase(st) {
     return { ...st, players, currentBet:0, phase:"drawing", sel:[],
       msg: max > 1 ? `Draw ${n} of ${max} — tap cards to discard, then Draw` : "Tap cards to discard, then click Draw" };
   }
+  if (IS_SPLITDRAW(st.gid)) return showdownSplitDraw({ ...st, players });
   return showdown({ ...st, players });
 }
 
@@ -1676,6 +1714,78 @@ function dramahaRunout(st) {
   return showdownDramaha({ ...st, deck, board });
 }
 
+// ─── A-5 LOWBALL (5-card, ace low, straights/flushes ignored) ─────
+function evalA5(cards) {
+  const vals = cards.map(c => c.v === 14 ? 1 : c.v);
+  const cnt = {}; vals.forEach(v => cnt[v] = (cnt[v] || 0) + 1);
+  const groups = Object.entries(cnt).map(([v, c]) => ({ v:+v, c:+c })).sort((a, b) => b.c - a.c || b.v - a.v);
+  const pattern = groups.map(g => g.c).join("");
+  const catOrder = { "11111":0, "2111":1, "221":2, "311":3, "32":4, "41":5, "5":6 };
+  const cat = catOrder[pattern] ?? 0;                       // 0 = no pair (best low)
+  const tb = groups.flatMap(g => Array(g.c).fill(g.v));      // count desc, value desc
+  const LN = {1:"A",2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8",9:"9",10:"T",11:"J",12:"Q",13:"K"};
+  const descCards = vals.slice().sort((a, b) => b - a).map(v => LN[v]).join("-");
+  const desc = cat === 0 ? `${descCards} low` : `${descCards} (paired)`;
+  return { cat, tb, desc, hi: Math.max(...vals) };
+}
+function cmpA5(a, b) {                       // <0 ⇒ a is the better (lower) hand
+  if (!a || !b) return 0;
+  if (a.cat !== b.cat) return a.cat < b.cat ? -1 : 1;       // no-pair beats any pair
+  for (let i = 0; i < a.tb.length; i++) if (a.tb[i] !== b.tb[i]) return a.tb[i] < b.tb[i] ? -1 : 1;
+  return 0;
+}
+const a5Qualifies = e => e && e.cat === 0 && e.tb[0] <= 8;   // 8-or-better
+const highQualifies = e => e && (e.cat >= 2 || (e.cat === 1 && e.tb[0] >= 9)); // pair of 9s+
+
+// ─── SPLIT-DRAW SHOWDOWN (Badeucey / Badacey / Archie) ────────────
+function splitSides(gid) {
+  if (gid === "badeucey") return {
+    A:{ ev:h=>evalBadugi(h, true), cmp:cmpBadugi, q:()=>true, name:"badugi" },
+    B:{ ev:h=>eval27(h),           cmp:cmp27,     q:()=>true, name:"2-7" } };
+  if (gid === "badacey") return {
+    A:{ ev:h=>evalBadugi(h),       cmp:cmpBadugi, q:()=>true, name:"badugi" },
+    B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:()=>true, name:"A-5 low" } };
+  return { // archie: high (pair 9s+) / A-5 low (8-or-better); best hand wins if none qualify
+    A:{ ev:h=>evalHigh5(h),        cmp:cmpHigh,   q:highQualifies, name:"high" },
+    B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:a5Qualifies,   name:"low" } };
+}
+function showdownSplitDraw(st) {
+  const gid = st.gid, { A, B } = splitSides(gid);
+  const still = st.players.filter(live);
+  const ev = still.map(p => ({ p, a:A.ev(p.hand), b:B.ev(p.hand) }));
+  const winners = (side, k) => {
+    const q = ev.filter(e => side.q(e[k]));
+    if (!q.length) return [];
+    let best = q[0][k]; q.forEach(e => { if (side.cmp(e[k], best) < 0) best = e[k]; });
+    return q.filter(e => side.cmp(e[k], best) === 0);
+  };
+  const aWin = winners(A, "a"), bWin = winners(B, "b");
+  const pot = st.pot, award = {};
+  const give = (w, share) => { if (!w.length) return; const per = Math.floor(share / w.length);
+    w.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? share - per * w.length : 0)); };
+  const nm = e => e.p.id === 0 ? "You" : e.p.name;
+
+  let msg;
+  if (aWin.length && bWin.length) {
+    const hiShare = Math.floor(pot / 2), loShare = pot - hiShare;
+    give(aWin, hiShare); give(bWin, loShare);
+    const scoop = aWin.length === 1 && bWin.length === 1 && aWin[0].p.id === bWin[0].p.id;
+    msg = scoop
+      ? `${nm(aWin[0])} scoop${aWin[0].p.id === 0 ? "" : "s"} $${pot} — ${aWin[0].a.desc} (${A.name}) + ${bWin[0].b.desc} (${B.name}).`
+      : `${aWin.map(nm).join(" & ")} take the ${A.name} (${aWin[0].a.desc}); ${bWin.map(nm).join(" & ")} take the ${B.name} (${bWin[0].b.desc}).`;
+  } else if (aWin.length) { give(aWin, pot); msg = `${aWin.map(nm).join(" & ")} scoop $${pot} — only the ${A.name} qualified (${aWin[0].a.desc}).`; }
+  else if (bWin.length) { give(bWin, pot); msg = `${bWin.map(nm).join(" & ")} scoop $${pot} — only the ${B.name} qualified (${bWin[0].b.desc}).`; }
+  else {
+    let best = ev[0]; ev.forEach(e => { if (cmpHigh(evalHigh5(e.p.hand), evalHigh5(best.p.hand)) < 0) best = e; });
+    const tied = ev.filter(e => cmpHigh(evalHigh5(e.p.hand), evalHigh5(best.p.hand)) === 0);
+    give(tied, pot);
+    msg = `No qualifier — ${tied.map(nm).join(" & ")} win $${pot} with the best hand (${evalHigh5(best.p.hand).desc}).`;
+  }
+  const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
+  const youWon = (award[0] || 0) > 0;
+  return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
+}
+
 function settle(st, players, potWon, result, msg, winnerIds = []) {
   // Tilt system: losing CPUs tilt; tilt decays on CPU wins
   const cpuTilt = { ...st.cpuTilt };
@@ -1837,11 +1947,59 @@ function ReviewScreen({ onClose }) {
   );
 }
 
+// ─── FEEDBACK (posts to Formspree; endpoint pasted in by owner) ───
+const FORMSPREE_ENDPOINT = "PASTE_FORMSPREE_ENDPOINT";
+function FeedbackScreen({ onClose }) {
+  const [msg, setMsg] = useState("");
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("idle");
+  const ready = FORMSPREE_ENDPOINT.indexOf("https://") === 0;
+  const send = async () => {
+    if (!msg.trim()) return;
+    if (!ready) { setStatus("noendpoint"); return; }
+    setStatus("sending");
+    try {
+      const r = await fetch(FORMSPREE_ENDPOINT, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "Accept":"application/json" },
+        body: JSON.stringify({ message: msg, email, source: "getmixed.ca" }),
+      });
+      setStatus(r.ok ? "done" : "error");
+    } catch { setStatus("error"); }
+  };
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.fbCard} onClick={e => e.stopPropagation()}>
+        <div style={S.reviewHead}>
+          <span style={S.reviewTitle}>💬 Feedback</span>
+          <button onClick={onClose} style={S.modalClose}>✕</button>
+        </div>
+        {status === "done" ? (
+          <div style={S.fbThanks}>Thanks — your feedback was sent. 🙏</div>
+        ) : (
+          <>
+            <div style={S.fbLabel}>Found a bug or have an idea? Tell me about it:</div>
+            <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={5} style={S.fbArea} placeholder="What's on your mind?" />
+            <input value={email} onChange={e => setEmail(e.target.value)} style={S.fbInput} placeholder="Your email (optional, for a reply)" />
+            {status === "error" && <div style={S.fbErr}>Couldn't send just now — please try again in a moment.</div>}
+            {status === "noendpoint" && <div style={S.fbErr}>Feedback isn't connected yet — the form endpoint still needs to be added.</div>}
+            <button onClick={send} disabled={status === "sending" || !msg.trim()}
+              style={{ ...S.fbSend, opacity:(status === "sending" || !msg.trim()) ? 0.5 : 1 }}>
+              {status === "sending" ? "Sending…" : "Send feedback"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── ROOT ────────────────────────────────────────
 function App() {
   const [st, setSt]   = useState(mkState("single"));
   const [showSettings, setShowSettings] = useState(false);
   const [showReview, setShowReview] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
 
@@ -1993,7 +2151,7 @@ function App() {
     const queue = startQueue(players, dealer);
     const nx    = queue[0];
     return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, pot, queue,
-      phase:"acting", maxDraws:(s.gid === "triple" || s.gid === "badugi") ? 3 : 1, dealerIdx:dealer,
+      phase:"acting", maxDraws:(s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx:dealer,
       nlBet:Math.max(40, Math.floor(pot * 0.65)),
       dealKey:(s.dealKey || 0) + 1, seq:(s.seq||0)+1,  // bumps to replay deal animation
       msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
@@ -2054,7 +2212,12 @@ function App() {
     ? (me.hand.length === HAND_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaHigh(me.hand, st.board) : null)
     : flop
     ? (me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? flopHigh(st.gid, me.hand, st.board) : null)
-    : (me.hand.length === HAND_SIZE(st.gid) ? evalHand(st.gid, me.hand) : null);
+    : (me.hand.length === HAND_SIZE(st.gid) && !IS_SPLITDRAW(st.gid) ? evalHand(st.gid, me.hand) : null);
+  // Split-draw (Badeucey/Badacey/Archie): show both halves of your hand.
+  const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid) : null;
+  const mySplitTxt = mySplit
+    ? `${mySplit.A.name}: ${mySplit.A.ev(me.hand).desc}  ·  ${mySplit.B.name}: ${mySplit.B.ev(me.hand).desc}`
+    : null;
   // Dramaha draw-side hand (made from the five hole cards), shown alongside the Omaha high.
   const myDraw   = dramaha && me.hand.length === HAND_SIZE(st.gid) ? drawSideEval(st.gid, me.hand) : null;
   const myDrawTxt = myDraw ? (DRAMAHA_SIDE(st.gid) === "27" ? `2-7: ${myDraw.desc}`
@@ -2244,6 +2407,7 @@ function App() {
       )}
 
       {showReview && <ReviewScreen onClose={()=>setShowReview(false)} mobile={mobile}/>}
+      {showFeedback && <FeedbackScreen onClose={()=>setShowFeedback(false)}/>}
 
       {/* MAIN CONTROLS — coach toggle, stakes readout, tournament depth */}
       <div style={S.ctrlBar}>
@@ -2251,6 +2415,7 @@ function App() {
           {st.coach ? "● COACH ON" : "COACH OFF"}
         </button>
         <button onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
+        <button onClick={()=>setShowFeedback(true)} style={S.reviewChip}>💬 FEEDBACK</button>
         <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : STK(st).label}</span>
         {st.format==="tourney" && (
           <div style={S.depthRow}>
@@ -2336,14 +2501,19 @@ function App() {
                     {myDrawTxt}
                   </span>
                 )}
+                {mySplitTxt && (
+                  <span style={{...S.evalBdg,color:"#e3c87a",background:"#e3c87a18",border:"1px solid #e3c87a44"}}>
+                    {mySplitTxt}
+                  </span>
+                )}
               </div>
               <div style={S.myCards}>
                 {stud
                   ? (me.hand.length > 0
                       ? me.hand.map((c,i) => (
-                          <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                          <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginTop:c.up?0:18,transition:"margin 0.2s"}}>
                             <Card card={c} mobile={mobile} dealIdx={i}/>
-                            <span style={{fontSize:6.5,letterSpacing:1,color:c.up?"#c9a84c88":"#4a3a28"}}>{c.up?"UP":"DOWN"}</span>
+                            <span style={{fontSize:6.5,letterSpacing:1,color:c.up?"#c9a84c88":"#6f5a3a"}}>{c.up?"UP":"DOWN"}</span>
                           </div>
                         ))
                       : <span style={S.emptyH}>· · ·</span>)
@@ -2530,6 +2700,15 @@ function App() {
         ) : st.gid==="dramadugi" ? (
           <><b style={{color:"#c9a84c44"}}>DRAMADUGI</b>
           {" · Omaha high splits with best 4-card Badugi (from your 5 hole cards) · draw 0–3 after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="badeucey" ? (
+          <><b style={{color:"#c9a84c44"}}>BADEUCEY</b>
+          {" · triple draw · best Badugi (ace HIGH) splits with best 2-7 lowball · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="badacey" ? (
+          <><b style={{color:"#c9a84c44"}}>BADACEY</b>
+          {" · triple draw · best Badugi (ace low) splits with best A-5 lowball · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="archie" ? (
+          <><b style={{color:"#c9a84c44"}}>ARCHIE</b>
+          {" · triple draw · best high (pair of 9s+ to qualify) splits with best A-5 low (8-or-better) · no qualifier ⇒ best hand wins · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="single" ? (
           <><b style={{color:"#c9a84c44"}}>2-7 LOWBALL</b>
           {" · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · No-Limit"}</>
@@ -2933,7 +3112,7 @@ const S = {
   chips:{fontSize:13,color:"#e8dfc8",fontFamily:"monospace",letterSpacing:0.5},
   evalBdg:{fontSize:9,fontFamily:"monospace",padding:"1px 6px",borderRadius:8,
     letterSpacing:0.5,whiteSpace:"nowrap",fontWeight:"bold"},
-  myCards:{display:"flex",gap:6,justifyContent:"center",padding:"3px 0 12px",flexWrap:"nowrap"},
+  myCards:{display:"flex",gap:6,justifyContent:"center",alignItems:"flex-start",padding:"3px 0 12px",flexWrap:"nowrap"},
   emptyH:{color:"rgba(255,255,255,0.07)",fontSize:17,letterSpacing:8,padding:"14px 0"},
   discardNote:{fontSize:9.5,color:"rgba(239,68,68,0.6)",letterSpacing:0.5,marginTop:-6,paddingBottom:4},
 
@@ -3106,6 +3285,21 @@ const S = {
   clearWarn:{fontSize:12,color:"#f0a0a0"},
   clearYes:{fontSize:11,color:"#fff",background:"#b04444",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:"bold"},
   clearNo:{fontSize:11,color:"#9d8a62",background:"none",border:"1px solid rgba(255,255,255,0.16)",borderRadius:8,padding:"7px 14px",cursor:"pointer"},
+  // Feedback
+  fbCard:{backgroundColor:"#101a2b",borderRadius:16,maxWidth:460,width:"92%",
+    border:"1px solid rgba(201,168,76,0.25)",boxShadow:"0 20px 60px rgba(0,0,0,0.6)",padding:"16px 16px 20px"},
+  fbLabel:{fontSize:13,color:"#cdbf99",margin:"6px 0 10px",lineHeight:1.5},
+  fbArea:{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.05)",
+    border:"1px solid rgba(255,255,255,0.16)",borderRadius:10,color:"#e8dfc8",fontSize:14,
+    padding:"10px 12px",resize:"vertical",fontFamily:"inherit"},
+  fbInput:{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.05)",
+    border:"1px solid rgba(255,255,255,0.16)",borderRadius:10,color:"#e8dfc8",fontSize:13,
+    padding:"10px 12px",marginTop:8,fontFamily:"inherit"},
+  fbErr:{fontSize:11.5,color:"#f0a0a0",marginTop:8},
+  fbSend:{width:"100%",marginTop:12,background:"#c9a84c",color:"#1a1208",border:"none",
+    borderRadius:10,padding:"12px",fontSize:14,fontWeight:"bold",cursor:"pointer"},
+  fbThanks:{fontSize:15,color:"#86efac",textAlign:"center",padding:"30px 12px",lineHeight:1.6},
+
 
   coachChip:{fontFamily:"monospace",fontSize:9.5,letterSpacing:1,fontWeight:"bold",
     padding:"5px 11px",borderRadius:999,cursor:"pointer",transition:"all 0.15s",
