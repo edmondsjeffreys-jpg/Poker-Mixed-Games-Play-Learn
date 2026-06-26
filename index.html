@@ -7,6 +7,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Get Mixed</title>
+<!-- Google Analytics 4 -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-FCYV1NGPS6"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-FCYV1NGPS6');
+</script>
 <style>
   html, body { margin:0; padding:0; background:#101725; color:#e8dfc8;
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
@@ -1213,7 +1221,7 @@ const mkState = (gid, prev = null) => {
   const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
   return {
   gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[], board2:[],
-  pot:0, currentBet:0, queue:[], streetN:0, drawN:0, seq:0,
+  pot:0, currentBet:0, betCount:0, queue:[], streetN:0, drawN:0, seq:0,
   maxDraws:(gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid)) ? 3 : 1, nlBet:40,
   dealerIdx:Math.floor(Math.random() * 4), reveal:false,
   msg:"Press Deal to start", result:null, sel:[],
@@ -1245,6 +1253,7 @@ function applyAction(st, action, amount = 0) {
   const idx     = st.queue[0];
   const players = st.players.map(p => ({ ...p, hand:[...p.hand] }));
   let { pot, currentBet } = st;
+  let betCount = st.betCount || 0;
   let newQ;
   const a = players[idx];
 
@@ -1267,6 +1276,18 @@ function applyAction(st, action, amount = 0) {
     }
     case "bet":
     case "raise": {
+      // Fixed-limit games cap betting at 4 bets per round (a bet + 3 raises). This is a real
+      // rule and it prevents bots from re-raising each other forever in a limit game.
+      const cap = BET_MODE(st.gid) === "fl" ? 4 : 99;
+      const raiseLocked = st.currentBet > 0 && (st.betCount || 0) >= cap;
+      if (raiseLocked) {
+        // No more raises allowed this round → treat the action as a call.
+        const c = Math.min(currentBet - a.betSt, a.chips);
+        a.chips -= c; a.betSt += c; pot += c;
+        a.lastAct = { text: c > 0 ? `Call $${c}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
+        newQ = st.queue.slice(1);
+        break;
+      }
       // amount = intended TOTAL street bet for this player. A player can never
       // wager below what they've already put in, and never more than their stack.
       const want = Math.max(amount, a.betSt);
@@ -1278,6 +1299,7 @@ function applyAction(st, action, amount = 0) {
         currentBet = a.betSt;
         a.lastAct  = { text:`${verb} $${put}`, color:"#fbbf24" };
         newQ = reQueue(players, idx);
+        betCount = (st.currentBet === 0 ? 0 : (st.betCount || 0)) + 1;  // opening bet resets the count to 1
       } else {
         // All-in short, or no real increase → behaves like a call/check, no re-open.
         a.lastAct = put > 0 ? { text:`Call $${put}`, color:"#60a5fa" }
@@ -1302,7 +1324,7 @@ function applyAction(st, action, amount = 0) {
   if (newQ.length === 0) return nextPhase({ ...st, players, pot, currentBet, queue:[] });
 
   const nx = newQ[0];
-  return { ...st, players, pot, currentBet, queue:newQ, seq:(st.seq||0)+1,
+  return { ...st, players, pot, currentBet, betCount, queue:newQ, seq:(st.seq||0)+1,
     msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
 }
 
@@ -2112,7 +2134,7 @@ function FeedbackScreen({ onClose }) {
 
 // ─── ROOT ────────────────────────────────────────
 function App() {
-  const [st, setSt]   = useState(mkState("single"));
+  const [st, setSt]   = useState(mkState("triple"));
   const [showSettings, setShowSettings] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -2467,7 +2489,7 @@ function App() {
             {curGame?.tag && <span style={S.menuTrigTag}>{curGame.tag}</span>}
             <span style={S.menuTrigName}>{curGame?.label || "Choose a game"}</span>
           </span>
-          <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#c9a84c",fontSize:11}}>▾</span>
+          <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#e0bd5e",fontSize:16,fontWeight:"bold",lineHeight:1,marginLeft:6}}>▾</span>
         </button>
         {menuOpen && (
           <>
@@ -2693,7 +2715,9 @@ function App() {
                 )}
               </div>
               <div style={S.myCards}>
-                {stud
+                {me.folded
+                  ? <span style={{...S.emptyH,opacity:0.5,letterSpacing:2}}>FOLDED</span>
+                  : stud
                   ? (me.hand.length > 0
                       ? me.hand.map((c,i) => (
                           <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginTop:c.up?0:14,transition:"margin 0.2s"}}>
@@ -2852,9 +2876,11 @@ function App() {
             {canCheck
               ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
               :<Btn s={S.bCall}  onClick={()=>act("call")}>CALL ${callAmt}</Btn>}
-            <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+fb)}>
-              {st.currentBet>0?`RAISE $${fb}`:`BET $${fb}`}
-            </Btn>
+            {!(st.currentBet>0 && (st.betCount||0) >= 4) && (
+              <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+fb)}>
+                {st.currentBet>0?`RAISE $${fb}`:`BET $${fb}`}
+              </Btn>
+            )}
           </div>
         )}
 
@@ -2975,18 +3001,18 @@ function CentreInfo({ st, streetLbl }) {
           <div style={S.dblBoards}>
             <div style={S.dblBoardWrap}>
               <span style={S.dblBoardTag}>TOP BOARD</span>
-              <div style={S.board}>
+              <div style={S.boardSm}>
                 {[0,1,2,3,4].map(i => st.board[i]
-                  ? <BoardCard key={`a-${st.boardKey}-${i}`} card={st.board[i]} idx={i}/>
-                  : <div key={`a${i}`} style={S.boardSlot}/>)}
+                  ? <BoardCard key={`a-${st.boardKey}-${i}`} card={st.board[i]} idx={i} small/>
+                  : <div key={`a${i}`} style={S.boardSlotSm}/>)}
               </div>
             </div>
             <div style={S.dblBoardWrap}>
               <span style={S.dblBoardTag}>BOTTOM BOARD</span>
-              <div style={S.board}>
+              <div style={S.boardSm}>
                 {[0,1,2,3,4].map(i => (st.board2||[])[i]
-                  ? <BoardCard key={`b-${st.boardKey}-${i}`} card={st.board2[i]} idx={i}/>
-                  : <div key={`b${i}`} style={S.boardSlot}/>)}
+                  ? <BoardCard key={`b-${st.boardKey}-${i}`} card={st.board2[i]} idx={i} small/>
+                  : <div key={`b${i}`} style={S.boardSlotSm}/>)}
               </div>
             </div>
           </div>
@@ -3035,12 +3061,12 @@ function CentreInfo({ st, streetLbl }) {
 }
 
 // Community card — slightly larger, with its own deal animation
-function BoardCard({ card, idx }) {
+function BoardCard({ card, idx, small }) {
   const isRed = RED.has(card.s);
   return (
-    <div style={{...S.boardCard, color:isRed?"#b91c1c":"#111827", animation:`dealIn 0.3s cubic-bezier(.34,1.4,.64,1) ${idx*0.08}s backwards`}}>
-      <b style={{fontSize:13,lineHeight:1}}>{card.r}</b>
-      <span style={{fontSize:12,lineHeight:1}}>{card.s}</span>
+    <div style={{...(small?S.boardCardSm:S.boardCard), color:isRed?"#b91c1c":"#111827", animation:`dealIn 0.3s cubic-bezier(.34,1.4,.64,1) ${idx*0.08}s backwards`}}>
+      <b style={{fontSize:small?11:13,lineHeight:1}}>{card.r}</b>
+      <span style={{fontSize:small?10:12,lineHeight:1}}>{card.s}</span>
     </div>
   );
 }
@@ -3275,12 +3301,12 @@ const S = {
   // Selector
   menuBar:{position:"relative",width:"100%",maxWidth:740,zIndex:50},
   menuTrigger:{width:"100%",boxSizing:"border-box",display:"flex",alignItems:"center",justifyContent:"space-between",
-    background:"rgba(255,255,255,0.05)",border:"1px solid rgba(201,168,76,0.28)",borderRadius:10,
+    background:"rgba(255,255,255,0.09)",border:"1px solid rgba(201,168,76,0.45)",borderRadius:10,
     padding:"9px 14px",cursor:"pointer",transition:"all 0.12s"},
-  menuTriggerOpen:{borderColor:"rgba(201,168,76,0.6)",background:"rgba(201,168,76,0.08)"},
+  menuTriggerOpen:{borderColor:"rgba(201,168,76,0.75)",background:"rgba(201,168,76,0.13)"},
   menuTrigCur:{display:"flex",alignItems:"center",gap:8},
-  menuTrigTag:{fontSize:7,letterSpacing:1,color:"#9d8659",border:"1px solid rgba(201,168,76,0.3)",borderRadius:4,padding:"2px 5px"},
-  menuTrigName:{fontSize:13,color:"#e8d9b0",fontFamily:"Georgia,serif",letterSpacing:0.5},
+  menuTrigTag:{fontSize:7,letterSpacing:1,color:"#c2a35c",border:"1px solid rgba(201,168,76,0.4)",borderRadius:4,padding:"2px 5px"},
+  menuTrigName:{fontSize:13,color:"#f2e6c2",fontFamily:"Georgia,serif",letterSpacing:0.5},
   menuBackdrop:{position:"fixed",inset:0,zIndex:49,background:"transparent"},
   menuDropdown:{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,zIndex:51,
     borderRadius:10,padding:9,background:"#13141c",border:"1px solid rgba(201,168,76,0.3)",
@@ -3343,14 +3369,21 @@ const S = {
 
   // Community board (flop games) — centered row of community cards
   board:{display:"flex",gap:5,justifyContent:"center",alignItems:"center",width:"100%",marginBottom:3},
-  dblBoards:{display:"flex",flexDirection:"column",gap:6,width:"100%",marginBottom:3},
-  dblBoardWrap:{display:"flex",flexDirection:"column",alignItems:"center",gap:2},
-  dblBoardTag:{fontSize:6.5,letterSpacing:1.5,color:"#c9a84c99"},
+  dblBoards:{display:"flex",flexDirection:"column",gap:3,width:"100%",marginBottom:2},
+  dblBoardWrap:{display:"flex",flexDirection:"column",alignItems:"center",gap:1},
+  dblBoardTag:{fontSize:6,letterSpacing:1.5,color:"#c9a84c99"},
+  boardSm:{display:"flex",gap:4,justifyContent:"center",alignItems:"center",width:"100%"},
   boardCard:{width:32,height:45,borderRadius:5,
     background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
     display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
     boxShadow:"0 2px 7px rgba(0,0,0,0.5)",flexShrink:0},
   boardSlot:{width:30,height:42,borderRadius:5,
+    background:"rgba(0,0,0,0.18)",border:"1px dashed rgba(201,168,76,0.18)",flexShrink:0},
+  boardCardSm:{width:26,height:36,borderRadius:4,
+    background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
+    display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+    boxShadow:"0 1px 5px rgba(0,0,0,0.5)",flexShrink:0},
+  boardSlotSm:{width:24,height:34,borderRadius:4,
     background:"rgba(0,0,0,0.18)",border:"1px dashed rgba(201,168,76,0.18)",flexShrink:0},
   streetPill:{fontSize:8,letterSpacing:1.5,color:"#b6a075",background:"rgba(0,0,0,0.2)",
     padding:"2px 9px",borderRadius:10,border:"1px solid rgba(255,255,255,0.04)",textAlign:"center"},
