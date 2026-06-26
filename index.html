@@ -60,6 +60,8 @@ const SECTIONS = [
     { id:"nlhe",   label:"No-Limit Hold'em", tag:"NO LIMIT",  available:true  },
     { id:"plo",    label:"Pot-Limit Omaha",  tag:"POT LIMIT", available:true  },
     { id:"bigo",   label:"Big O",            tag:"POT LIMIT", available:true  },
+    { id:"crazyp", label:"Crazy Pineapple",  tag:"POT LIMIT", available:true  },
+    { id:"dbcrazyp", label:"Double Board Crazy Pineapple", tag:"POT LIMIT", available:true  },
     { id:"soon1",  label:"More soon",        tag:"",          available:false },
   ]},
   { title:"SPLIT-POT DRAW GAMES", games:[
@@ -76,11 +78,14 @@ const GAMES = SECTIONS.flatMap(s => s.games);
 
 // Game families
 const IS_DRAW  = gid => gid === "single" || gid === "triple" || gid === "badugi";
-const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo";
+const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp";
 const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud";
 const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo";
 const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud";
 const IS_STUD8 = gid => gid === "stud8" || gid === "superstud";   // hi-lo 8-or-better stud
+// Crazy Pineapple: 3 hole cards, discard 1 after the flop, then Hold'em construction.
+const IS_PINEAPPLE = gid => gid === "crazyp" || gid === "dbcrazyp";
+const IS_DOUBLE    = gid => gid === "dbcrazyp";   // two boards, split between them
 // Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
 // from the five hole cards. The "side" is which hand the draw half is scored as.
 const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
@@ -89,10 +94,10 @@ const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "
 const DRAW_CAP     = gid => gid === "dramadugi" ? 3 : 5;   // max cards a player may draw
 // Betting structure per game: "fl" fixed-limit, "nl" no-limit, "pl" pot-limit.
 const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
-                       : (gid === "plo" || gid === "bigo")   ? "pl" : "fl";
+                       : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid)) ? "pl" : "fl";
 // Cards dealt per player for draw games.
 const HAND_SIZE = gid => (gid === "badugi" ? 4 : 5);
-const HOLE_SIZE = gid => (gid === "bigo" ? 5 : IS_OMAHA(gid) ? 4 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
+const HOLE_SIZE = gid => (gid === "bigo" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
 
 // ─── CONSTANTS ───────────────────────────────────
 const SUITS = ["♠","♥","♦","♣"];
@@ -340,7 +345,16 @@ function lowDesc(lo) { return lo ? lo.map(v => LOWNAME[v]).join("-") + " low" : 
 
 // Best high hand for a flop game (dispatches Hold'em vs Omaha)
 function flopHigh(gid, hole, board) {
-  return IS_OMAHA(gid) ? bestOmahaHigh(hole, board) : bestHoldemHigh(hole, board);
+  return IS_OMAHA(gid) ? bestOmahaHigh(hole, board)
+       : IS_PINEAPPLE(gid) ? bestPineHigh(hole, board)
+       : bestHoldemHigh(hole, board);
+}
+// Crazy Pineapple: Hold'em construction, but pre-discard you hold 3 cards — use the best 2-card subset.
+function bestPineHigh(hole, board) {
+  if (!hole || hole.length <= 2) return bestHoldemHigh(hole, board);
+  let best = null;
+  for (const pair of kCombos(hole, 2)) { const e = bestHoldemHigh(pair, board); if (e && (!best || cmpHigh(e, best) < 0)) best = e; }
+  return best;
 }
 
 // ─── STUD EVALUATORS ─────────────────────────────
@@ -1196,7 +1210,7 @@ const mkState = (gid, prev = null) => {
   const stk      = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
   const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
   return {
-  gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[],
+  gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[], board2:[],
   pot:0, currentBet:0, queue:[], streetN:0, drawN:0, seq:0,
   maxDraws:(gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid)) ? 3 : 1, nlBet:40,
   dealerIdx:Math.floor(Math.random() * 4), reveal:false,
@@ -1366,27 +1380,42 @@ function nextPhase(st) {
 
   // ── Flop games: deal the next board segment, then a new betting round ──
   if (IS_FLOP(st.gid)) {
-    if (st.streetN >= 3) return showdownFlop({ ...st, players });
+    if (st.streetN >= 3) return IS_DOUBLE(st.gid) ? showdownDoubleBoard({ ...st, players }) : showdownFlop({ ...st, players });
+    // Crazy Pineapple: discard 1 of 3 after the flop, before the turn.
+    if (IS_PINEAPPLE(st.gid) && st.streetN === 1 && !st.discardDone) {
+      const canAct = players.filter(p => live(p) && p.chips > 0).length;
+      if (canAct >= 2) {
+        if (!live(players[0])) return execPineDiscard({ ...st, players }, -1);  // hero out → auto-discard bots
+        return { ...st, players, phase:"pineDiscard", sel:[], currentBet:0, seq:(st.seq||0)+1,
+          msg:"Discard 1 of your 3 cards — tap one, then Discard" };
+      }
+    }
     const deck    = [...st.deck];
     const board   = [...st.board];
-    if (st.streetN === 0)      { deck.shift(); board.push(deck.shift(), deck.shift(), deck.shift()); } // burn + flop
-    else                       { deck.shift(); board.push(deck.shift()); }                              // burn + turn/river
+    const board2  = [...(st.board2 || [])];
+    if (st.streetN === 0) {                                  // burn + flop(s)
+      deck.shift(); board.push(deck.shift(), deck.shift(), deck.shift());
+      if (IS_DOUBLE(st.gid)) { deck.shift(); board2.push(deck.shift(), deck.shift(), deck.shift()); }
+    } else {                                                 // burn + turn/river
+      deck.shift(); board.push(deck.shift());
+      if (IS_DOUBLE(st.gid)) { deck.shift(); board2.push(deck.shift()); }
+    }
     const streetN = st.streetN + 1;
-    const queue   = startQueue(players, st.dealerIdx); // postflop: first live seat left of button
-    // If fewer than 2 players can still act (e.g. all-in), run the board out to showdown.
+    const queue   = startQueue(players, st.dealerIdx);
     const canAct = players.filter(p => live(p) && p.chips > 0).length;
     if (canAct < 2) {
-      let s2 = { ...st, players, deck, board, streetN, currentBet:0 };
+      let s2 = { ...st, players, deck, board, board2, streetN, currentBet:0 };
       while (s2.streetN < 3) {
-        const d = [...s2.deck], bd = [...s2.board];
+        const d = [...s2.deck], bd = [...s2.board], bd2 = [...(s2.board2 || [])];
         d.shift(); bd.push(d.shift());
-        s2 = { ...s2, deck:d, board:bd, streetN:s2.streetN + 1 };
+        if (IS_DOUBLE(s2.gid)) { d.shift(); bd2.push(d.shift()); }
+        s2 = { ...s2, deck:d, board:bd, board2:bd2, streetN:s2.streetN + 1 };
       }
-      return showdownFlop(s2);
+      return IS_DOUBLE(st.gid) ? showdownDoubleBoard(s2) : showdownFlop(s2);
     }
     const nx      = queue[0];
     const lbl     = ["", "the flop", "the turn", "the river"][streetN];
-    return { ...st, players, deck, board, streetN, queue, currentBet:0, phase:"acting",
+    return { ...st, players, deck, board, board2, streetN, queue, currentBet:0, phase:"acting",
       boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
       msg: nx === 0 ? `Your action on ${lbl} — Pot $${st.pot}` : `${players[nx].name} acts on ${lbl}…` };
   }
@@ -1445,6 +1474,29 @@ function execDraw(st, playerDiscards, playerFolds = false) {
 
   return { ...st, players, deck, drawN, streetN, queue, currentBet:0, phase:"acting", sel:[], seq:(st.seq||0)+1,
     msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx].name} is thinking…` };
+}
+
+// Crazy Pineapple: which of 3 cards to pitch — the one whose removal leaves the strongest 2-card hand.
+function worstPineIdx(hand, board) {
+  if (!hand || hand.length <= 2) return -1;
+  let bestIdx = 0, bestEv = null;
+  for (let i = 0; i < hand.length; i++) {
+    const keep = hand.filter((_, j) => j !== i);
+    const e = bestHoldemHigh(keep, board || []);
+    if (e && (!bestEv || cmpHigh(e, bestEv) < 0)) { bestEv = e; bestIdx = i; }
+  }
+  return bestIdx;
+}
+// Remove the discard (hero's pick, bots' worst), then deal the turn(s) and resume betting.
+function execPineDiscard(st, heroIdx) {
+  const players = st.players.map(p => {
+    if (p.sittingOut || p.folded) return { ...p };
+    let idx;
+    if (p.id === 0) idx = (heroIdx >= 0 && heroIdx < p.hand.length) ? heroIdx : worstPineIdx(p.hand, st.board);
+    else idx = worstPineIdx(p.hand, st.board);
+    return { ...p, hand: p.hand.filter((_, i) => i !== idx), lastAct:{ text:"Discarded", color:"#94a3b8" } };
+  });
+  return nextPhase({ ...st, players, discardDone:true });
 }
 
 // Super Stud: remove 2 face-down cards (keep 3), then deal 4th street and resume betting.
@@ -1549,6 +1601,30 @@ function showdownFlop(st) {
 
   const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
   const youWon  = (award[0] || 0) > 0;
+  return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
+}
+
+// Double Board Crazy Pineapple: split between the best hand on each board.
+function showdownDoubleBoard(st) {
+  const still = st.players.filter(live);
+  const A = st.board, B = st.board2 || [];
+  const evA = still.map(p => ({ p, hi: bestPineHigh(p.hand, A) }));
+  const evB = still.map(p => ({ p, hi: bestPineHigh(p.hand, B) }));
+  const winnersOf = ev => { let best = null; ev.forEach(e => { if (!best || cmpHigh(e.hi, best) < 0) best = e.hi; });
+    return { best, w: ev.filter(e => cmpHigh(e.hi, best) === 0) }; };
+  const a = winnersOf(evA), b = winnersOf(evB);
+  const pot = st.pot, award = {};
+  const give = (w, share) => { const per = Math.floor(share / w.length);
+    w.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? share - per * w.length : 0)); };
+  const topShare = Math.floor(pot / 2), botShare = pot - topShare;
+  give(a.w, topShare); give(b.w, botShare);
+  const nm = e => e.p.id === 0 ? "You" : e.p.name;
+  const scoop = a.w.length === 1 && b.w.length === 1 && a.w[0].p.id === b.w[0].p.id;
+  const msg = scoop
+    ? `${nm(a.w[0])} scoop${a.w[0].p.id === 0 ? "" : "s"} both boards — ${a.best.desc} (top) & ${b.best.desc} (bottom).`
+    : `Top: ${a.w.map(nm).join(" & ")} (${a.best.desc}).  Bottom: ${b.w.map(nm).join(" & ")} (${b.best.desc}).`;
+  const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
+  const youWon = (award[0] || 0) > 0;
   return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
 }
 
@@ -2221,6 +2297,9 @@ function App() {
     return { ...s, sel:[...s.sel, i] };
   }); };
   const discardGo = () => { if (st.sel.length !== 2) return; setSt(s => execDiscard(s, s.sel)); };
+  // Crazy Pineapple discard: tap exactly 1 hole card to pitch.
+  const flipPine = i => { if (st.phase !== "pineDiscard") return; setSt(s => ({ ...s, sel: s.sel.includes(i) ? [] : [i] })); };
+  const pineDiscardGo = () => { if (st.sel.length !== 1) return; setSt(s => execPineDiscard(s, s.sel[0])); };
   const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
   const setCoachMode = m => setSt(s => ({ ...s, coachMode:m }));
@@ -2243,6 +2322,7 @@ function App() {
   const myTurn   = st.phase === "acting" && st.queue[0] === 0;
   const drawing  = st.phase === "drawing";
   const discarding = st.phase === "discarding";
+  const pineDiscarding = st.phase === "pineDiscard";
   const cpuTurn  = st.phase === "acting" && st.queue.length > 0 && st.queue[0] !== 0;
   const callAmt  = myTurn ? Math.min(st.currentBet - me.betSt, me.chips) : 0;
   const canCheck = myTurn && st.currentBet === me.betSt;
@@ -2268,8 +2348,11 @@ function App() {
     : dramaha
     ? (me.hand.length === HAND_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaHigh(me.hand, st.board) : null)
     : flop
-    ? (me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? flopHigh(st.gid, me.hand, st.board) : null)
+    ? ((IS_PINEAPPLE(st.gid) ? me.hand.length >= 2 : me.hand.length === HOLE_SIZE(st.gid)) && st.board.length >= 3 ? flopHigh(st.gid, me.hand, st.board) : null)
     : (me.hand.length === HAND_SIZE(st.gid) && !IS_SPLITDRAW(st.gid) ? evalHand(st.gid, me.hand) : null);
+  // Double Board: second readout for the bottom board.
+  const myEval2 = IS_DOUBLE(st.gid) && me.hand.length >= 2 && (st.board2||[]).length >= 3
+    ? bestPineHigh(me.hand, st.board2) : null;
   // Split-draw (Badeucey/Badacey/Archie): show both halves of your hand.
   const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid) : null;
   const mySplitTxt = mySplit
@@ -2558,7 +2641,12 @@ function App() {
                 {me.lastAct && <Bdg {...me.lastAct}/>}
                 {myEval && (
                   <span style={{...S.evalBdg,color:hColor(myEval),background:hColor(myEval)+"18",border:`1px solid ${hColor(myEval)}44`}}>
-                    {myEval.desc}
+                    {IS_DOUBLE(st.gid) ? "Top: " : ""}{myEval.desc}
+                  </span>
+                )}
+                {myEval2 && (
+                  <span style={{...S.evalBdg,color:hColor(myEval2),background:hColor(myEval2)+"18",border:`1px solid ${hColor(myEval2)}44`}}>
+                    Bot: {myEval2.desc}
                   </span>
                 )}
                 {myLow && (
@@ -2590,12 +2678,12 @@ function App() {
                           </div>
                         ))
                       : <span style={S.emptyH}>· · ·</span>)
-                  : me.hand.length === (flop ? HOLE_SIZE(st.gid) : HAND_SIZE(st.gid))
+                  : me.hand.length > 0
                   ? me.hand.map((c,i) => (
                       <Card key={`${st.dealKey}-${c.r}${c.s}`} card={c}
-                        selected={st.sel.includes(i)}
-                        onClick={drawing ? () => flip(i) : null}
-                        interactive={drawing}
+                        selected={(drawing||pineDiscarding) && st.sel.includes(i)}
+                        onClick={drawing ? () => flip(i) : pineDiscarding ? () => flipPine(i) : null}
+                        interactive={drawing || pineDiscarding}
                         mobile={mobile}
                         dealIdx={i}/>
                     ))
@@ -2613,7 +2701,7 @@ function App() {
       </div>{/* /shell */}
 
       {/* ── ACTION PANEL ── */}
-      <div style={{...S.panel,...((myTurn||drawing||discarding)?S.panelOn:{})}}>
+      <div style={{...S.panel,...((myTurn||drawing||discarding||pineDiscarding)?S.panelOn:{})}}>
 
         {/* Phase / status line */}
         <div style={S.statusLine}>
@@ -2646,6 +2734,12 @@ function App() {
                 :st.sel.length===1?"Tap one more — pick 2 to discard":"Ready — tap Discard 2"}
             </span></>
           )}
+          {pineDiscarding && meActive && (
+            <><span style={{...S.stTxt,color:"#c9a84c88",letterSpacing:2,fontSize:9}}>CRAZY PINEAPPLE — DISCARD</span>
+            <span style={S.stTxt}>
+              {st.sel.length===0?"Tap 1 card to discard (keep 2)":"Ready — tap Discard"}
+            </span></>
+          )}
           {st.phase==="showdown" && <span style={S.stTxt}>{st.msg}</span>}
           {st.phase==="idle"     && <span style={S.stTxt}>Press Deal to begin</span>}
         </div>
@@ -2675,6 +2769,15 @@ function App() {
           <div style={S.btnRow}>
             <Btn s={{...S.bDraw, opacity:st.sel.length===2?1:0.45}} onClick={st.sel.length===2?discardGo:null}>
               {st.sel.length===2?"DISCARD 2 →":`SELECT ${2-st.sel.length} MORE`}
+            </Btn>
+          </div>
+        )}
+
+        {/* CRAZY PINEAPPLE DISCARD */}
+        {pineDiscarding && meActive && (
+          <div style={S.btnRow}>
+            <Btn s={{...S.bDraw, opacity:st.sel.length===1?1:0.45}} onClick={st.sel.length===1?pineDiscardGo:null}>
+              {st.sel.length===1?"DISCARD →":"SELECT 1 CARD"}
             </Btn>
           </div>
         )}
@@ -2783,6 +2886,12 @@ function App() {
         ) : st.gid==="bigo" ? (
           <><b style={{color:"#c9a84c44"}}>BIG O</b>
           {" · 5 hole cards, use exactly 2 · high & qualifying low (8-or-better) split · pot-limit · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="crazyp" ? (
+          <><b style={{color:"#c9a84c44"}}>CRAZY PINEAPPLE</b>
+          {" · 3 hole cards · discard one after the flop · Hold'em hand (use any of your 2 cards) · pot-limit · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="dbcrazyp" ? (
+          <><b style={{color:"#c9a84c44"}}>DOUBLE BOARD CRAZY PINEAPPLE</b>
+          {" · 3 cards, discard one after the flop · two boards run out · pot splits between best hand on each board (scoop both to win it all) · pot-limit · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
         ) : st.gid==="dramahaH" ? (
           <><b style={{color:"#c9a84c44"}}>DRAMAHA HIGH</b>
           {" · 5-card Omaha high (exactly 2 hole + 3 board) splits with best 5-card-draw high · one draw after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
@@ -2832,14 +2941,35 @@ function CentreInfo({ st, streetLbl }) {
     <div style={S.centre}>
       {/* Community board for flop & dramaha games */}
       {(flop || dramaha) && st.phase !== "idle" && (
-        <div style={S.board}>
-          {[0,1,2,3,4].map(i => {
-            const c = st.board[i];
-            return c
-              ? <BoardCard key={`${st.boardKey}-${i}`} card={c} idx={i}/>
-              : <div key={i} style={S.boardSlot}/>;
-          })}
-        </div>
+        IS_DOUBLE(st.gid) ? (
+          <div style={S.dblBoards}>
+            <div style={S.dblBoardWrap}>
+              <span style={S.dblBoardTag}>TOP BOARD</span>
+              <div style={S.board}>
+                {[0,1,2,3,4].map(i => st.board[i]
+                  ? <BoardCard key={`a-${st.boardKey}-${i}`} card={st.board[i]} idx={i}/>
+                  : <div key={`a${i}`} style={S.boardSlot}/>)}
+              </div>
+            </div>
+            <div style={S.dblBoardWrap}>
+              <span style={S.dblBoardTag}>BOTTOM BOARD</span>
+              <div style={S.board}>
+                {[0,1,2,3,4].map(i => (st.board2||[])[i]
+                  ? <BoardCard key={`b-${st.boardKey}-${i}`} card={st.board2[i]} idx={i}/>
+                  : <div key={`b${i}`} style={S.boardSlot}/>)}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={S.board}>
+            {[0,1,2,3,4].map(i => {
+              const c = st.board[i];
+              return c
+                ? <BoardCard key={`${st.boardKey}-${i}`} card={c} idx={i}/>
+                : <div key={i} style={S.boardSlot}/>;
+            })}
+          </div>
+        )
       )}
       <div style={S.potBox}>
         <div style={S.potShine}/>
@@ -3094,7 +3224,7 @@ function Dots() {
 const S = {
   root:{minHeight:"100vh",background:"#101725",
     backgroundImage:"radial-gradient(ellipse 70% 50% at 50% -8%, #1f3454 0%, transparent 60%), radial-gradient(ellipse at 50% 120%, #2a1f10 0%, transparent 55%), linear-gradient(#101725,#0c121e)",
-    display:"flex",flexDirection:"column",alignItems:"center",padding:"12px 8px 26px",gap:8,
+    display:"flex",flexDirection:"column",alignItems:"center",padding:"9px 8px 14px",gap:6,
     fontFamily:"'Georgia','Times New Roman',serif",color:"#f1e9d6",userSelect:"none"},
 
   // Brand lockup
@@ -3154,7 +3284,7 @@ const S = {
     border:"1px solid rgba(255,220,150,0.3)"},
   felt:{position:"relative",background:"#17402a",
     backgroundImage:"radial-gradient(ellipse 70% 56% at 50% 42%, rgba(201,168,76,0.2) 0%, transparent 60%), radial-gradient(ellipse 86% 70% at 50% 50%,#2c8a4f 0%,#114a27 100%)",
-    borderRadius:"42px / 20px",padding:"16px 16px 11px",display:"flex",flexDirection:"column",gap:8,
+    borderRadius:"42px / 20px",padding:"12px 14px 9px",display:"flex",flexDirection:"column",gap:6,
     border:"1px solid rgba(0,0,0,0.3)",boxShadow:"inset 0 0 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)"},
 
   // Mobile CPU strip
@@ -3183,6 +3313,9 @@ const S = {
 
   // Community board (flop games) — centered row of community cards
   board:{display:"flex",gap:5,justifyContent:"center",alignItems:"center",width:"100%",marginBottom:3},
+  dblBoards:{display:"flex",flexDirection:"column",gap:6,width:"100%",marginBottom:3},
+  dblBoardWrap:{display:"flex",flexDirection:"column",alignItems:"center",gap:2},
+  dblBoardTag:{fontSize:6.5,letterSpacing:1.5,color:"#c9a84c99"},
   boardCard:{width:32,height:45,borderRadius:5,
     background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
     display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
