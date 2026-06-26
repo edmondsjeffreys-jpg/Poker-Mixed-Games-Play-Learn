@@ -62,6 +62,7 @@ const SECTIONS = [
     { id:"bigo",   label:"Big O",            tag:"POT LIMIT", available:true  },
     { id:"crazyp", label:"Crazy Pineapple",  tag:"POT LIMIT", available:true  },
     { id:"dbcrazyp", label:"Double Board Crazy Pineapple", tag:"POT LIMIT", available:true  },
+    { id:"dbbomb", label:"Double Board Bomb Pot", tag:"POT LIMIT", available:true  },
     { id:"soon1",  label:"More soon",        tag:"",          available:false },
   ]},
   { title:"SPLIT-POT DRAW GAMES", games:[
@@ -78,14 +79,16 @@ const GAMES = SECTIONS.flatMap(s => s.games);
 
 // Game families
 const IS_DRAW  = gid => gid === "single" || gid === "triple" || gid === "badugi";
-const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp";
+const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp" || gid === "dbbomb";
 const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud";
-const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo";
+const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo" || gid === "dbbomb";
 const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud";
 const IS_STUD8 = gid => gid === "stud8" || gid === "superstud";   // hi-lo 8-or-better stud
 // Crazy Pineapple: 3 hole cards, discard 1 after the flop, then Hold'em construction.
 const IS_PINEAPPLE = gid => gid === "crazyp" || gid === "dbcrazyp";
-const IS_DOUBLE    = gid => gid === "dbcrazyp";   // two boards, split between them
+const IS_DOUBLE    = gid => gid === "dbcrazyp" || gid === "dbbomb";   // two boards, split between them
+const IS_BOMB      = gid => gid === "dbbomb";   // bomb pot: ante, no preflop, straight to the flop
+const BOMB_ANTE_BB = 3;   // each player antes this many big blinds in a bomb pot
 // Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
 // from the five hole cards. The "side" is which hand the draw half is scored as.
 const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
@@ -94,7 +97,7 @@ const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "
 const DRAW_CAP     = gid => gid === "dramadugi" ? 3 : 5;   // max cards a player may draw
 // Betting structure per game: "fl" fixed-limit, "nl" no-limit, "pl" pot-limit.
 const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
-                       : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid)) ? "pl" : "fl";
+                       : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb") ? "pl" : "fl";
 // Cards dealt per player for draw games.
 const HAND_SIZE = gid => (gid === "badugi" ? 4 : 5);
 const HOLE_SIZE = gid => (gid === "bigo" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
@@ -610,24 +613,23 @@ function flopStrength(st, pl) {
     if (vs.includes(14) && vs.includes(2)) s += 0.05; // low potential
     return Math.max(0, Math.min(1, s));
   }
-  // Postflop: made hand strength
-  const hi = flopHigh(gid, hole, board);
-  let s = 0;
-  if (hi) {
-    s = [0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1][hi.cat] || 0.2;
-    // top-pair-ish bump handled by category already
+  // Postflop: made-hand strength. Double Board → average across both boards (you win half per board).
+  const scoreBoard = bd => {
+    const hi = flopHigh(gid, hole, bd);
+    let s = hi ? ([0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1][hi.cat] || 0.2) : 0;
+    if (gid === "lhe" && bd.length < 5) {
+      const allSuits = {}; [...hole, ...bd].forEach(c => allSuits[c.s] = (allSuits[c.s]||0)+1);
+      if (Math.max(...Object.values(allSuits)) === 4) s = Math.max(s, 0.55);
+    }
+    if (IS_HILO(gid)) { const lo = bestOmahaLow(hole, bd); if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03); }
+    return s;
+  };
+  if (IS_DOUBLE(gid)) {
+    const b2 = st.board2 || [];
+    const s = b2.length >= 3 ? (scoreBoard(board) + scoreBoard(b2)) / 2 : scoreBoard(board);
+    return Math.max(0, Math.min(1, s));
   }
-  // Draw equity bump (Hold'em only, simple): flush/oesd on the turn
-  if (gid === "lhe" && board.length < 5) {
-    const allSuits = {}; [...hole, ...board].forEach(c => allSuits[c.s] = (allSuits[c.s]||0)+1);
-    if (Math.max(...Object.values(allSuits)) === 4) s = Math.max(s, 0.55); // flush draw
-  }
-  // Hi-lo flop games (Omaha-8, Big O): having a made/likely low adds value
-  if (IS_HILO(gid)) {
-    const lo = bestOmahaLow(hole, board);
-    if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03);
-  }
-  return Math.max(0, Math.min(1, s));
+  return Math.max(0, Math.min(1, scoreBoard(board)));
 }
 // Pot-limit cap: the largest TOTAL street bet a player may make.
 function potLimitMaxTotal(st, pl) {
@@ -1381,11 +1383,11 @@ function nextPhase(st) {
   // ── Flop games: deal the next board segment, then a new betting round ──
   if (IS_FLOP(st.gid)) {
     if (st.streetN >= 3) return IS_DOUBLE(st.gid) ? showdownDoubleBoard({ ...st, players }) : showdownFlop({ ...st, players });
-    // Crazy Pineapple: discard 1 of 3 after the flop, before the turn.
+    // Crazy Pineapple: discard 1 of 3 after the flop, before the turn (happens even on all-in runouts).
     if (IS_PINEAPPLE(st.gid) && st.streetN === 1 && !st.discardDone) {
-      const canAct = players.filter(p => live(p) && p.chips > 0).length;
-      if (canAct >= 2) {
-        if (!live(players[0])) return execPineDiscard({ ...st, players }, -1);  // hero out → auto-discard bots
+      const liveCount = players.filter(live).length;
+      if (liveCount >= 2) {
+        if (!live(players[0]) || players[0].chips === 0) return execPineDiscard({ ...st, players }, -1); // hero out/all-in → auto
         return { ...st, players, phase:"pineDiscard", sel:[], currentBet:0, seq:(st.seq||0)+1,
           msg:"Discard 1 of your 3 cards — tap one, then Discard" };
       }
@@ -1608,8 +1610,8 @@ function showdownFlop(st) {
 function showdownDoubleBoard(st) {
   const still = st.players.filter(live);
   const A = st.board, B = st.board2 || [];
-  const evA = still.map(p => ({ p, hi: bestPineHigh(p.hand, A) }));
-  const evB = still.map(p => ({ p, hi: bestPineHigh(p.hand, B) }));
+  const evA = still.map(p => ({ p, hi: flopHigh(st.gid, p.hand, A) }));
+  const evB = still.map(p => ({ p, hi: flopHigh(st.gid, p.hand, B) }));
   const winnersOf = ev => { let best = null; ev.forEach(e => { if (!best || cmpHigh(e.hi, best) < 0) best = e.hi; });
     return { best, w: ev.filter(e => cmpHigh(e.hi, best) === 0) }; };
   const a = winnersOf(evA), b = winnersOf(evB);
@@ -2230,6 +2232,31 @@ function App() {
         msg: nx === 0 ? `Your action on 3rd street — Pot $${pot}` : `${players[nx].name} acts on 3rd street…` };
     }
 
+    // ── BOMB POT: everyone antes, no preflop, deal both flops, action starts on the flop ──
+    if (IS_BOMB(s.gid)) {
+      const hs = HOLE_SIZE(s.gid);          // Omaha: 4 hole cards
+      const ante = stk.bblind * BOMB_ANTE_BB;
+      let cursor = 0;
+      let players = mkPs(s.players).map(p => {
+        if (p.chips < ante)
+          return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
+        const hand = deck.slice(cursor, cursor + hs); cursor += hs;
+        return { ...p, sittingOut:false, folded:false, hand, betSt:0,
+          chips:p.chips - ante, lastAct:{ text:`Ante $${ante}`, color:"#475569" } };
+      });
+      const pot = players.filter(p => !p.sittingOut).length * ante;
+      // Deal both flops immediately (burn + 3 each).
+      cursor++; const board  = deck.slice(cursor, cursor + 3); cursor += 3;
+      cursor++; const board2 = deck.slice(cursor, cursor + 3); cursor += 3;
+      // Flop betting starts left of the button; button acts last.
+      const queue = startQueue(players, dealer);
+      const nx = queue[0];
+      return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, board, board2, pot,
+        currentBet:0, queue, phase:"acting", dealerIdx:dealer, streetN:1, discardDone:true,
+        dealKey:(s.dealKey||0)+1, boardKey:(s.boardKey||0)+1, seq:(s.seq||0)+1,
+        msg: nx === 0 ? `Bomb pot! Your action on the flop — Pot $${pot}` : `Bomb pot! ${players[nx].name} acts on the flop…` };
+    }
+
     // ── FLOP & DRAMAHA GAMES: blinds + hole cards, board comes later ──
     if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
       const hs = HOLE_SIZE(s.gid);
@@ -2352,7 +2379,7 @@ function App() {
     : (me.hand.length === HAND_SIZE(st.gid) && !IS_SPLITDRAW(st.gid) ? evalHand(st.gid, me.hand) : null);
   // Double Board: second readout for the bottom board.
   const myEval2 = IS_DOUBLE(st.gid) && me.hand.length >= 2 && (st.board2||[]).length >= 3
-    ? bestPineHigh(me.hand, st.board2) : null;
+    ? flopHigh(st.gid, me.hand, st.board2) : null;
   // Split-draw (Badeucey/Badacey/Archie): show both halves of your hand.
   const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid) : null;
   const mySplitTxt = mySplit
@@ -2892,6 +2919,9 @@ function App() {
         ) : st.gid==="dbcrazyp" ? (
           <><b style={{color:"#c9a84c44"}}>DOUBLE BOARD CRAZY PINEAPPLE</b>
           {" · 3 cards, discard one after the flop · two boards run out · pot splits between best hand on each board (scoop both to win it all) · pot-limit · "}{`Blinds $${stk.sblind}/$${stk.bblind}`}</>
+        ) : st.gid==="dbbomb" ? (
+          <><b style={{color:"#c9a84c44"}}>DOUBLE BOARD BOMB POT</b>
+          {` · everyone antes ${BOMB_ANTE_BB} BB, no preflop — straight to two flops · Omaha high (use exactly 2 of 4) · pot splits between best hand on each board, scoop both to win it all · pot-limit`}</>
         ) : st.gid==="dramahaH" ? (
           <><b style={{color:"#c9a84c44"}}>DRAMAHA HIGH</b>
           {" · 5-card Omaha high (exactly 2 hole + 3 board) splits with best 5-card-draw high · one draw after the flop · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
