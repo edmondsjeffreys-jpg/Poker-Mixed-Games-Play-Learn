@@ -1633,7 +1633,7 @@ function showdownFlop(st) {
     } else {
       const hiNames = hiWinners.map(nm).join(" & ");
       const loNames = loWinners.map(nm).join(" & ");
-      msg = `${hiNames} ${verb(hiWinners)} the high (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low (${lowDesc(bestLo)}).`;
+      msg = `${hiNames} ${verb(hiWinners)} the high for $${hiShare} (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low for $${loShare} (${lowDesc(bestLo)}).`;
     }
   } else {
     // High scoops (no qualifying low, or non-hi-lo game)
@@ -1667,8 +1667,8 @@ function showdownDoubleBoard(st) {
   const nm = e => e.p.id === 0 ? "You" : e.p.name;
   const scoop = a.w.length === 1 && b.w.length === 1 && a.w[0].p.id === b.w[0].p.id;
   const msg = scoop
-    ? `${nm(a.w[0])} scoop${a.w[0].p.id === 0 ? "" : "s"} both boards — ${a.best.desc} (top) & ${b.best.desc} (bottom).`
-    : `Top: ${a.w.map(nm).join(" & ")} (${a.best.desc}).  Bottom: ${b.w.map(nm).join(" & ")} (${b.best.desc}).`;
+    ? `${nm(a.w[0])} scoop${a.w[0].p.id === 0 ? "" : "s"} $${pot} — both boards (${a.best.desc} top & ${b.best.desc} bottom).`
+    : `Top board: ${a.w.map(nm).join(" & ")} win${a.w.length===1?"s":""} $${topShare} (${a.best.desc}).  Bottom board: ${b.w.map(nm).join(" & ")} win${b.w.length===1?"s":""} $${botShare} (${b.best.desc}).`;
   const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
   const youWon = (award[0] || 0) > 0;
   return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
@@ -1716,7 +1716,7 @@ function showdownStud(st) {
         const who = nm(hiWinners[0].p);
         msg = `${who} scoop${who==="You"?"":"s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
       } else {
-        msg = `${hiWinners.map(e=>nm(e.p)).join(" & ")} ${verb(hiWinners)} the high (${bestHi.desc}); ${loWinners.map(e=>nm(e.p)).join(" & ")} ${verb(loWinners)} the low (${lowDesc(bestLo)}).`;
+        msg = `${hiWinners.map(e=>nm(e.p)).join(" & ")} ${verb(hiWinners)} the high for $${hiShare} (${bestHi.desc}); ${loWinners.map(e=>nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${loShare} (${lowDesc(bestLo)}).`;
       }
     } else {
       const per = Math.floor(pot/hiWinners.length);
@@ -1902,7 +1902,7 @@ function splitSides(gid) {
   if (gid === "badacey") return {
     A:{ ev:h=>evalBadugi(h),       cmp:cmpBadugi, q:()=>true, name:"badugi" },
     B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:()=>true, name:"A-5 low" } };
-  return { // archie: high (pair 9s+) / A-5 low (8-or-better); best hand wins if none qualify
+  return { // archie: high (pair 9s+) / A-5 low (8-or-better); no qualifier ⇒ chop among remaining
     A:{ ev:h=>evalHigh5(h),        cmp:cmpHigh,   q:highQualifies, name:"high" },
     B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:a5Qualifies,   name:"low" } };
 }
@@ -1929,14 +1929,13 @@ function showdownSplitDraw(st) {
     const scoop = aWin.length === 1 && bWin.length === 1 && aWin[0].p.id === bWin[0].p.id;
     msg = scoop
       ? `${nm(aWin[0])} scoop${aWin[0].p.id === 0 ? "" : "s"} $${pot} — ${aWin[0].a.desc} (${A.name}) + ${bWin[0].b.desc} (${B.name}).`
-      : `${aWin.map(nm).join(" & ")} take the ${A.name} (${aWin[0].a.desc}); ${bWin.map(nm).join(" & ")} take the ${B.name} (${bWin[0].b.desc}).`;
+      : `${aWin.map(nm).join(" & ")} take the ${A.name} for $${hiShare} (${aWin[0].a.desc}); ${bWin.map(nm).join(" & ")} take the ${B.name} for $${loShare} (${bWin[0].b.desc}).`;
   } else if (aWin.length) { give(aWin, pot); msg = `${aWin.map(nm).join(" & ")} scoop $${pot} — only the ${A.name} qualified (${aWin[0].a.desc}).`; }
   else if (bWin.length) { give(bWin, pot); msg = `${bWin.map(nm).join(" & ")} scoop $${pot} — only the ${B.name} qualified (${bWin[0].b.desc}).`; }
   else {
-    let best = ev[0]; ev.forEach(e => { if (cmpHigh(evalHigh5(e.p.hand), evalHigh5(best.p.hand)) < 0) best = e; });
-    const tied = ev.filter(e => cmpHigh(evalHigh5(e.p.hand), evalHigh5(best.p.hand)) === 0);
-    give(tied, pot);
-    msg = `No qualifier — ${tied.map(nm).join(" & ")} win $${pot} with the best hand (${evalHigh5(best.p.hand).desc}).`;
+    // No one qualified for high or low → chop the pot among all remaining (non-folded) players.
+    give(ev, pot);
+    msg = `No qualifier — pot chopped among ${ev.length} remaining player${ev.length > 1 ? "s" : ""} ($${pot}).`;
   }
   const players = st.players.map(p => award[p.id] ? { ...p, chips:p.chips + award[p.id] } : p);
   const youWon = (award[0] || 0) > 0;
@@ -2462,8 +2461,8 @@ function App() {
 
   // Bet-size presets (pot-limit caps at the pot; no-limit allows all-in)
   const presets = (mode === "pl"
-    ? [ { lbl:"½ Pot", v:Math.floor(st.pot*.5) }, { lbl:"¾ Pot", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:nlMax } ]
-    : [ { lbl:"½ Pot", v:Math.floor(st.pot*.5) }, { lbl:"⅔ Pot", v:Math.floor(st.pot*.67) }, { lbl:"Pot", v:st.pot }, { lbl:"All In", v:nlMax } ]
+    ? [ { lbl:"¼", v:Math.floor(st.pot*.25) }, { lbl:"⅓", v:Math.floor(st.pot/3) }, { lbl:"½", v:Math.floor(st.pot*.5) }, { lbl:"¾", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:nlMax } ]
+    : [ { lbl:"¼", v:Math.floor(st.pot*.25) }, { lbl:"⅓", v:Math.floor(st.pot/3) }, { lbl:"½", v:Math.floor(st.pot*.5) }, { lbl:"¾", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:st.pot }, { lbl:"All In", v:nlMax } ]
   ).map(p => ({ ...p, v:Math.max(nlMin, Math.min(p.v, nlMax)) }))
    .filter((p,i,a) => p.v > 0 && a.findIndex(x => x.v === p.v) === i);
 
@@ -2987,7 +2986,7 @@ function App() {
           {" · triple draw · best Badugi (ace low) splits with best A-5 lowball · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="archie" ? (
           <><b style={{color:"#c9a84c44"}}>ARCHIE</b>
-          {" · triple draw · best high (pair of 9s+ to qualify) splits with best A-5 low (8-or-better) · no qualifier ⇒ best hand wins · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+          {" · triple draw · best high (pair of 9s+ to qualify) splits with best A-5 low (8-or-better) · no qualifier ⇒ pot chopped among remaining players · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="single" ? (
           <><b style={{color:"#c9a84c44"}}>2-7 LOWBALL</b>
           {" · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · No-Limit"}</>
