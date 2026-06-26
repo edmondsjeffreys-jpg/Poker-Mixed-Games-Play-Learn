@@ -2569,8 +2569,8 @@ function App() {
                 {stud
                   ? (me.hand.length > 0
                       ? me.hand.map((c,i) => (
-                          <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginTop:c.up?0:18,transition:"margin 0.2s"}}>
-                            <Card card={c} mobile={mobile} dealIdx={i}
+                          <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginTop:c.up?0:14,transition:"margin 0.2s"}}>
+                            <Card card={c} small mobile={false} dealIdx={i}
                               selected={discarding && st.sel.includes(i)}
                               onClick={discarding && !c.up ? () => flipDiscard(i) : null}
                               interactive={discarding && !c.up}/>
@@ -3098,9 +3098,9 @@ const S = {
   selSection:{display:"flex",flexDirection:"column",gap:4},
   selSecTitle:{fontSize:7.5,letterSpacing:2.5,color:"#ac9663",paddingLeft:2,
     display:"flex",alignItems:"center",gap:6},
-  selGrid:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4},
+  selGrid:{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:5},
   gBtn:{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"#ab966c",
-    padding:"6px 3px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,fontFamily:"Georgia,serif",transition:"all 0.12s",minHeight:42},
+    width:80,flex:"0 0 auto",padding:"7px 4px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,fontFamily:"Georgia,serif",transition:"all 0.12s",minHeight:46},
   gOn:{background:"rgba(201,168,76,0.12)",border:"1px solid rgba(201,168,76,0.55)",color:"#f0e0b0",boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15)"},
   gOff:{opacity:0.3,cursor:"default",borderStyle:"dashed"},
   gTag:{fontSize:6.5,letterSpacing:1,color:"#9d8659"},
