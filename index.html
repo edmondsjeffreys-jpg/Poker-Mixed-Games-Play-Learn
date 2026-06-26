@@ -2338,17 +2338,20 @@ function App() {
         }
       `}</style>
 
-      {/* BRAND LOCKUP */}
-      <div style={S.brand}>
-        <span style={S.brandRule}/>
-        <span style={S.brandMark}>♠</span>
-        <span style={S.brandText}>GET MIXED</span>
-        <span style={S.brandSub}>mixed game trainer</span>
-        <span style={S.brandMark}>♠</span>
-        <span style={S.brandRule}/>
+      {/* BRAND LOCKUP (+ settings gear, top-right) */}
+      <div style={S.brandRow}>
+        <div style={S.brand}>
+          <span style={S.brandRule}/>
+          <span style={S.brandMark}>♠</span>
+          <span style={S.brandText}>GET MIXED</span>
+          <span style={S.brandSub}>mixed game trainer</span>
+          <span style={S.brandMark}>♠</span>
+          <span style={S.brandRule}/>
+        </div>
+        <button onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
 
-      {/* HEADER: selector + gear */}
+      {/* HEADER: game selector (full width) */}
       <div style={S.headerRow}>
         <div style={{...S.selWrap, flex:1}}>
           {SECTIONS.map(sec => (
@@ -2365,7 +2368,6 @@ function App() {
             </div>
           ))}
         </div>
-        <button onClick={()=>setShowSettings(true)} style={S.gearBtn} title="Settings">⚙</button>
       </div>
 
       {/* SETTINGS OVERLAY */}
@@ -3084,6 +3086,11 @@ const S = {
 
   // Brand lockup
   brand:{display:"flex",alignItems:"center",gap:9,padding:"2px 0 1px"},
+  brandRow:{position:"relative",width:"100%",maxWidth:740,display:"flex",alignItems:"center",justifyContent:"center"},
+  gearBtnTop:{position:"absolute",right:0,top:"50%",transform:"translateY(-50%)",
+    background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.25)",borderRadius:9,
+    color:"#c9a84c",fontSize:17,width:32,height:32,cursor:"pointer",
+    display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.12s"},
   brandRule:{width:34,height:1,background:"linear-gradient(90deg,transparent,rgba(201,168,76,0.6))"},
   brandMark:{color:"#c9a84c",fontSize:13,opacity:0.85},
   brandText:{fontSize:16,letterSpacing:5,color:"#e8d9b0",fontWeight:"bold",
