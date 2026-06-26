@@ -61,8 +61,6 @@ const SECTIONS = [
     { id:"plo",    label:"Pot-Limit Omaha",  tag:"POT LIMIT", available:true  },
     { id:"bigo",   label:"Big O",            tag:"POT LIMIT", available:true  },
     { id:"soon1",  label:"More soon",        tag:"",          available:false },
-    { id:"soon2",  label:"More soon",        tag:"",          available:false },
-    { id:"soon3",  label:"More soon",        tag:"",          available:false },
   ]},
   { title:"SPLIT-POT DRAW GAMES", games:[
     { id:"dramahaH",  label:"Dramaha High",  tag:"SPLIT", available:true },
@@ -2040,8 +2038,10 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
+  const curGame       = GAMES.find(g => g.id === st.gid);
 
   // ── Hand-history logging (silent; works even with Coach off) ──
   const histRef = useRef({ dealKey:-1, decisions:[], startChips:null, startHole:null });
@@ -2341,31 +2341,46 @@ function App() {
       {/* BRAND LOCKUP (+ settings gear, top-right) */}
       <div style={S.brandRow}>
         <div style={S.brandStack}>
+          <div style={S.suitRow}>
+            <span style={S.suitB}>♠</span><span style={S.suitR}>♥</span><span style={S.suitR}>♦</span><span style={S.suitB}>♣</span>
+          </div>
           <span style={S.brandText}>GET MIXED</span>
           <span style={S.brandSub}>mixed game play and learn</span>
         </div>
         <button onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
 
-      {/* HEADER: game selector (full width) */}
-      <div style={S.headerRow}>
-        <div style={{...S.selWrap, flex:1}}>
-          {SECTIONS.map(sec => (
-            <div key={sec.title} style={S.selSection}>
-              <div style={S.selSecTitle}>{sec.title}</div>
-              <div style={S.selGrid}>
-                {sec.games.map(g => (
-                  <button key={g.id} onClick={()=>switchGame(g)} disabled={!g.available}
-                    style={{...S.gBtn,...(g.id===st.gid?S.gOn:{}),...(!g.available?S.gOff:{})}}>
-                    {g.tag && <span style={{...S.gTag,...(g.id===st.gid?{color:"#c9a84c"}:{})}}>{g.tag}</span>}
-                    <span style={S.gName}>{g.label}</span>
-                    {!g.available && <span style={S.gSoon}>＋</span>}
-                  </button>
-                ))}
-              </div>
+      {/* GAME PICKER — collapsible dropdown */}
+      <div style={S.menuBar}>
+        <button onClick={()=>setMenuOpen(o=>!o)} style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{})}}>
+          <span style={S.menuTrigCur}>
+            {curGame?.tag && <span style={S.menuTrigTag}>{curGame.tag}</span>}
+            <span style={S.menuTrigName}>{curGame?.label || "Choose a game"}</span>
+          </span>
+          <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#c9a84c",fontSize:11}}>▾</span>
+        </button>
+        {menuOpen && (
+          <>
+            <div style={S.menuBackdrop} onClick={()=>setMenuOpen(false)}/>
+            <div style={S.menuDropdown}>
+              {SECTIONS.map(sec => (
+                <div key={sec.title} style={S.selSection}>
+                  <div style={S.selSecTitle}>{sec.title}</div>
+                  <div style={S.selGrid}>
+                    {sec.games.map(g => (
+                      <button key={g.id} onClick={()=>{ if(g.available){ switchGame(g); setMenuOpen(false); } }} disabled={!g.available}
+                        style={{...S.gBtn,...(g.id===st.gid?S.gOn:{}),...(!g.available?S.gOff:{})}}>
+                        {g.tag && <span style={{...S.gTag,...(g.id===st.gid?{color:"#c9a84c"}:{})}}>{g.tag}</span>}
+                        <span style={S.gName}>{g.label}</span>
+                        {!g.available && <span style={S.gSoon}>＋</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
 
       {/* SETTINGS OVERLAY */}
@@ -2471,7 +2486,7 @@ function App() {
           {st.coach ? "● COACH ON" : "COACH OFF"}
         </button>
         <button onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
-        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : STK(st).label}</span>
+        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : "STAKES " + STK(st).label}</span>
         {st.format==="tourney" && (
           <div style={S.depthRow}>
             {BB_DEPTHS.map(d => (
@@ -3086,6 +3101,9 @@ const S = {
   brand:{display:"flex",alignItems:"center",gap:9,padding:"2px 0 1px"},
   brandRow:{position:"relative",width:"100%",maxWidth:740,display:"flex",alignItems:"center",justifyContent:"center",padding:"2px 0 4px"},
   brandStack:{display:"flex",flexDirection:"column",alignItems:"center",gap:1},
+  suitRow:{display:"flex",gap:6,marginBottom:1,fontSize:10,letterSpacing:1},
+  suitB:{color:"#c9a84c",opacity:0.85},
+  suitR:{color:"#c07a72",opacity:0.9},
   gearBtnTop:{position:"absolute",right:0,top:"50%",transform:"translateY(-50%)",
     background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.25)",borderRadius:9,
     color:"#c9a84c",fontSize:17,width:32,height:32,cursor:"pointer",
@@ -3095,6 +3113,19 @@ const S = {
   brandSub:{fontSize:8.5,letterSpacing:2.5,color:"#ac9663",textTransform:"uppercase"},
 
   // Selector
+  menuBar:{position:"relative",width:"100%",maxWidth:740,zIndex:50},
+  menuTrigger:{width:"100%",boxSizing:"border-box",display:"flex",alignItems:"center",justifyContent:"space-between",
+    background:"rgba(255,255,255,0.05)",border:"1px solid rgba(201,168,76,0.28)",borderRadius:10,
+    padding:"9px 14px",cursor:"pointer",transition:"all 0.12s"},
+  menuTriggerOpen:{borderColor:"rgba(201,168,76,0.6)",background:"rgba(201,168,76,0.08)"},
+  menuTrigCur:{display:"flex",alignItems:"center",gap:8},
+  menuTrigTag:{fontSize:7,letterSpacing:1,color:"#9d8659",border:"1px solid rgba(201,168,76,0.3)",borderRadius:4,padding:"2px 5px"},
+  menuTrigName:{fontSize:13,color:"#e8d9b0",fontFamily:"Georgia,serif",letterSpacing:0.5},
+  menuBackdrop:{position:"fixed",inset:0,zIndex:49,background:"transparent"},
+  menuDropdown:{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,zIndex:51,
+    borderRadius:10,padding:9,background:"#13141c",border:"1px solid rgba(201,168,76,0.3)",
+    boxShadow:"0 18px 50px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",gap:6,
+    maxHeight:"66vh",overflowY:"auto"},
   selWrap:{width:"100%",maxWidth:740,borderRadius:10,padding:7,background:"rgba(255,255,255,0.045)",border:"1px solid rgba(255,255,255,0.09)",
     display:"flex",flexDirection:"column",gap:5},
   selSection:{display:"flex",flexDirection:"column",gap:3},
