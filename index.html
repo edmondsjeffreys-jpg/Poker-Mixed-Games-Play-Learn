@@ -704,6 +704,8 @@ function studStrength(st, pl) {
   // stud / stud8 high
   const hi = studHigh(pl.hand.length >= 5 ? pl.hand : pad5(pl.hand));
   let s = hi ? ([0.16,0.40,0.58,0.72,0.82,0.88,0.94,0.98,1][hi.cat] || 0.2) : 0.2;
+  // A bare pair is only as good as its rank — a pair of deuces is near the bottom.
+  if (hi && hi.cat === 1) { const pr = hi.tb[0] || 0; s = pr >= 13 ? 0.46 : pr >= 11 ? 0.42 : pr >= 8 ? 0.36 : pr >= 5 ? 0.30 : 0.24; }
   // early streets: reward pairs/high cards / three to a flush or straight
   if (n < 5) {
     const vs = pl.hand.map(c => c.v);
@@ -771,8 +773,14 @@ function heroDrawStrength(st, me) {
   const future = Math.max(0, dl - 1);    // draws after the current betting round
   if (st.gid === "badugi") {
     if (ev && ev.size === 4) return ev.vs[0] <= 7 ? 0.92 : ev.vs[0] <= 9 ? 0.76 : 0.6;
-    const keep = badugiKeepIndices(me.hand).size;
-    const base = keep >= 3 ? 0.5 : keep >= 2 ? 0.32 : 0.16;
+    const keepIdx = [...badugiKeepIndices(me.hand)];
+    const keep = keepIdx.length;
+    // How low is the partial badugi? A 3-card headed by a Queen is far weaker than one headed by a 4.
+    const topB = keep ? Math.max(...keepIdx.map(i => BV(me.hand[i].v))) : 13; // 1=A … 13=K
+    let base;
+    if (keep >= 3)      base = topB <= 7 ? 0.50 : topB <= 10 ? 0.40 : 0.30;   // smooth vs rough 3-card
+    else if (keep >= 2) base = topB <= 7 ? 0.32 : 0.26;
+    else                base = 0.15;
     return Math.min(0.9, base + future * 0.04 * (keep >= 3 ? 1 : 0.5));
   }
   if (ev && ev.cat === 0) {               // made 2-7 low: no pair/straight/flush
@@ -819,14 +827,19 @@ function plan27(hand, drawsLeft) {
       const keep = sevens.map(x => x.i);            // rough eight (8-7…): break the 8
       return mk(keep, "draw 1", `That's a rough ${ev.desc}. With ${drawsLeft} draws left, break the 8 and draw one to a seven (${keepLabel(hand, keep)}).`, "ok");
     }
-    if (made === 9 && last && second <= 6)
-      return mk(all, "stand pat", `A smooth nine is a marginal pat on the final draw — fine heads-up, break it if several players are still drawing.`, "ok");
-    // made ten+, or a nine we're breaking → fall through to draw logic
+    if (made === 9 && last)
+      return mk(all, "stand pat", second <= 6
+        ? `A smooth ${ev.desc} — stand pat on the final draw. Breaking a made nine to chase a seven is a losing play here.`
+        : `A made ${ev.desc} — still stand pat on the final draw. You're far likelier to make a worse hand or pair than to improve.`, "ok");
+    // early (triple-draw) rough nine → may break; fall through to draw logic
   }
 
   // Drawing: pick the best low draw
   if (sevens.length >= 4) {
     const keep = sevens.slice(0, 4).map(x => x.i);
+    const rk = keep.map(i => hand[i].v).sort((a, b) => a - b);
+    if (rk[3] - rk[0] === 3)   // four consecutive (e.g. 4-5-6-7) → straight-prone, weak
+      return mk(keep, "draw 1", `Four to a seven, but they run consecutively (${keepLabel(hand, keep)}) — straight-prone, so essentially only a deuce makes your seven. Drawable, but don't overrate it as premium.`, "ok");
     return mk(keep, "draw 1", `Keep four to a seven (${keepLabel(hand, keep)}) — the premium one-card draw.`, "good");
   }
   if (sevens.length === 3) {
@@ -943,11 +956,17 @@ function coachBet(st, me, callAmt) {
     else if (r.loose <= 0.40) { valueCut += 0.04; ex = " Tight table — they over-fold, so keep applying pressure with bets."; }
     else if (r.aggro >= 0.60) { ex = " Aggressive table — let them bet your strong hands and call down a bit lighter."; }
   }
+  const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
+  const mwAdj = nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1;   // your share of equity shrinks multiway
+  const callEq = str * mwAdj;
   if (facing) {
     if (str >= raiseCut)         return { tone:"good", text:`${tag}Strong hand — raise for value. You're well ahead of ${oddsTxt} pot odds.${ex}` };
     if (str >= valueCut)         return { tone:"good", text:`${tag}Solid holding. Calling is standard; a raise is fine.${ex}` };
-    if (str >= potOdds + 0.14)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
-    if (str >= potOdds && mode !== "nitty") return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
+    // Don't pay off a weak holding that's facing action — pot odds overstate a thin hand's real equity.
+    if (nOpp >= 2 && str < 0.34 && potOdds > 0.08)
+      return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}, and you'll often pay more on later streets. Fold.` };
+    if (callEq >= potOdds + 0.16)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
+    if (callEq >= potOdds + 0.04 && mode !== "nitty") return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
     return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. ${mode === "nitty" ? "Fold — don't pay off without a real holding." : "Folding is usually best here."}` };
   }
   if (str >= raiseCut)           return { tone:"good", text:`${tag}Big hand — bet for value, don't give a free card.${ex}` };
@@ -967,10 +986,13 @@ function coachRecAction(st, me, callAmt) {
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36;
   if (mode === "nitty") { raiseCut = 0.83; valueCut = 0.63; thinCut = 0.46; }
   if (facing) {
+    const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
+    const callEq = str * (nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1);
     if (str >= raiseCut)                       return "raise";
     if (str >= valueCut)                       return "call";   // call/raise both fine
-    if (str >= potOdds + 0.14)                 return "call";
-    if (str >= potOdds && mode !== "nitty")    return "call";
+    if (nOpp >= 2 && str < 0.34 && potOdds > 0.08) return "fold";
+    if (callEq >= potOdds + 0.16)              return "call";
+    if (callEq >= potOdds + 0.04 && mode !== "nitty") return "call";
     return "fold";
   }
   if (str >= valueCut) return "bet";
