@@ -53,6 +53,7 @@ const SECTIONS = [
     { id:"razz",   label:"Razz",             tag:"STUD",    available:true  },
     { id:"stud",   label:"7-Card Stud",      tag:"STUD",    available:true  },
     { id:"stud8",  label:"Stud Hi-Lo",       tag:"STUD 8",  available:true  },
+    { id:"superstud", label:"Super Stud 8",  tag:"STUD 8",  available:true  },
   ]},
   { title:"BIG BET GAMES", games:[
     { id:"single", label:"2-7 Single Draw",  tag:"NO LIMIT",  available:true  },
@@ -78,9 +79,10 @@ const GAMES = SECTIONS.flatMap(s => s.games);
 // Game families
 const IS_DRAW  = gid => gid === "single" || gid === "triple" || gid === "badugi";
 const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo";
-const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8";
+const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud";
 const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo";
-const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo";
+const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud";
+const IS_STUD8 = gid => gid === "stud8" || gid === "superstud";   // hi-lo 8-or-better stud
 // Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
 // from the five hole cards. The "side" is which hand the draw half is scored as.
 const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
@@ -689,7 +691,7 @@ function studStrength(st, pl) {
     const suits = {}; pl.hand.forEach(c => suits[c.s]=(suits[c.s]||0)+1);
     if (Math.max(...Object.values(suits)) >= 3) s += 0.08; // 3-flush
   }
-  if (gid === "stud8") {
+  if (IS_STUD8(gid)) {
     const lo = bestLow7(pl.hand);
     if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03);
     else if (n < 5) { // low draw potential
@@ -1149,7 +1151,7 @@ function bringInSeat(players, gid) {
   const seats = players.filter(live).filter(p => upCards(p).length);
   if (!seats.length) return players.findIndex(live);
   const score = p => { const c = upCards(p)[0]; return c.v * 10 + SUIT_RANK[c.s]; };
-  if (gid === "razz") return seats.reduce((a, b) => score(b) > score(a) ? b : a).id; // highest brings in
+  if (gid === "razz" || gid === "superstud") return seats.reduce((a, b) => score(b) > score(a) ? b : a).id; // highest brings in
   return seats.reduce((a, b) => score(b) < score(a) ? b : a).id;                       // lowest brings in
 }
 // First to act on 4th+ street: best showing hand acts first (Stud/Stud-8 high),
@@ -1211,6 +1213,7 @@ const mkState = (gid, prev = null) => {
   // Stakes & format.
   format, stakeIdx, bbDepth,
   drawDone:false,                                // dramaha: has the single mid-hand draw happened?
+  discardDone:false,                             // super stud: has the 3rd-street discard happened?
   };
 };
 
@@ -1295,6 +1298,15 @@ function nextPhase(st) {
 
   // ── Stud games: deal one card to each live player, recompute first to act ──
   if (IS_STUD(st.gid)) {
+    // Super Stud: after 3rd-street betting, each player discards 2 (keeps 3) before 4th street.
+    if (st.gid === "superstud" && st.streetN === 0 && !st.discardDone) {
+      const canAct = players.filter(p => live(p) && p.chips > 0).length;
+      if (canAct >= 2) {
+        if (!live(players[0])) return execDiscard({ ...st, players }, []);   // hero folded → auto-resolve
+        return { ...st, players, phase:"discarding", sel:[], currentBet:0, seq:(st.seq||0)+1,
+          msg:"Discard 2 of your 4 face-down cards (keep 3) — tap two, then Discard" };
+      }
+    }
     if (st.streetN >= 4) return showdownStud({ ...st, players });
     const dealUp = st.streetN < 3; // 4th,5th,6th up (streetN 1,2,3); 7th down (streetN 4)
     const deal1 = (ps, deck) => ps.map(p => {
@@ -1435,6 +1447,33 @@ function execDraw(st, playerDiscards, playerFolds = false) {
 
   return { ...st, players, deck, drawN, streetN, queue, currentBet:0, phase:"acting", sel:[], seq:(st.seq||0)+1,
     msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx].name} is thinking…` };
+}
+
+// Super Stud: remove 2 face-down cards (keep 3), then deal 4th street and resume betting.
+function execDiscard(st, playerDiscards) {
+  const worst2Down = hand => hand.map((c, i) => ({ c, i })).filter(o => !o.c.up)
+    .sort((a, b) => b.c.v - a.c.v).slice(0, 2).map(o => o.i);   // 2 highest down-cards (worst for low)
+  let players = st.players.map(p => {
+    if (p.sittingOut || p.folded) return { ...p };
+    let toss;
+    if (p.id === 0) {
+      const downSel = (playerDiscards || []).filter(i => p.hand[i] && !p.hand[i].up);
+      toss = downSel.length === 2 ? downSel : worst2Down(p.hand);   // guard: always exactly 2 down cards
+    } else {
+      toss = worst2Down(p.hand);
+    }
+    const tset = new Set(toss);
+    return { ...p, hand:p.hand.filter((_, i) => !tset.has(i)), betSt:0, lastAct:{ text:"Discarded 2", color:"#94a3b8" } };
+  });
+  // Deal 4th street (up) and resume betting.
+  const deck = [...st.deck];
+  players = players.map(p => live(p) ? { ...p, hand:[...p.hand, { ...deck.shift(), up:true }] } : p);
+  const first = firstToActStud(players, st.gid);
+  const queue = queueFromSeat(players, first);
+  const nx = queue[0];
+  return { ...st, players, deck, streetN:1, discardDone:true, queue, currentBet:0, phase:"acting", sel:[],
+    boardKey:(st.boardKey||0)+1, seq:(st.seq||0)+1,
+    msg: nx === 0 ? `Your action on 4th street — Pot $${st.pot}` : `${players[nx].name} acts on 4th street…` };
 }
 
 // Showdown: lowest hand wins, split ties
@@ -1946,7 +1985,10 @@ function ReviewScreen({ onClose }) {
 }
 
 // ─── FEEDBACK (posts to Formspree; endpoint pasted in by owner) ───
-const FORMSPREE_ENDPOINT = "PASTE_FORMSPREE_ENDPOINT";
+const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
+// Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
+// in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
+const SUPPORT_URL = "PASTE_SUPPORT_LINK";
 function FeedbackScreen({ onClose }) {
   const [msg, setMsg] = useState("");
   const [email, setEmail] = useState("");
@@ -2079,11 +2121,19 @@ function App() {
       let players = mkPs(s.players).map(p => {
         if (p.chips < stk.studAnte + 1)
           return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
-        const hole = [
-          { ...deck[cursor++], up:false },
-          { ...deck[cursor++], up:false },
-          { ...deck[cursor++], up:true },   // door card (3rd street up-card)
-        ];
+        const hole = s.gid === "superstud"
+          ? [
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:true },   // door card (3rd street up-card)
+            ]
+          : [
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:false },
+              { ...deck[cursor++], up:true },   // door card (3rd street up-card)
+            ];
         return { ...p, sittingOut:false, folded:false, hand:hole, betSt:0,
           chips:p.chips - stk.studAnte, lastAct:{ text:`Ante $${stk.studAnte}`, color:"#475569" } };
       });
@@ -2163,6 +2213,14 @@ function App() {
   }); };
   const draw  = () => { logDraw(st.sel); setSt(s => execDraw(s, s.sel, false)); };
   const fold  = () => { logDraw([]); setSt(s => execDraw(s, [], true)); };  // fold during draw
+  // Super Stud discard: tap up to 2 face-down cards, then Discard.
+  const flipDiscard = i => { if (st.phase !== "discarding") return; setSt(s => {
+    if (s.players[0].hand[i]?.up) return s;            // can't discard the up-card
+    if (s.sel.includes(i)) return { ...s, sel:s.sel.filter(x => x !== i) };
+    if (s.sel.length >= 2) return s;                   // exactly two
+    return { ...s, sel:[...s.sel, i] };
+  }); };
+  const discardGo = () => { if (st.sel.length !== 2) return; setSt(s => execDiscard(s, s.sel)); };
   const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
   const setCoachMode = m => setSt(s => ({ ...s, coachMode:m }));
@@ -2184,6 +2242,7 @@ function App() {
   const meActive = !me.folded && !me.sittingOut;
   const myTurn   = st.phase === "acting" && st.queue[0] === 0;
   const drawing  = st.phase === "drawing";
+  const discarding = st.phase === "discarding";
   const cpuTurn  = st.phase === "acting" && st.queue.length > 0 && st.queue[0] !== 0;
   const callAmt  = myTurn ? Math.min(st.currentBet - me.betSt, me.chips) : 0;
   const canCheck = myTurn && st.currentBet === me.betSt;
@@ -2222,7 +2281,7 @@ function App() {
                             : DRAMAHA_SIDE(st.gid) === "badugi" ? myDraw.desc
                             : `Draw: ${myDraw.desc}`) : null;
   const myLow    = stud
-    ? (st.gid === "stud8" && me.hand.length >= 5 ? bestLow7(me.hand) : null)
+    ? (IS_STUD8(st.gid) && me.hand.length >= 5 ? bestLow7(me.hand) : null)
     : (IS_HILO(st.gid) && me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaLow(me.hand, st.board) : null);
   const minLive  = stud ? (stk.studAnte + 1) : (flop || dramaha) ? stk.bblind : stk.ante;
   const isOver   = st.phase === "idle" || st.phase === "showdown";
@@ -2238,6 +2297,7 @@ function App() {
     : ["Pre-Draw Betting","After Draw 1","After Draw 2","After Draw 3"];
   const streetLbl = st.phase === "showdown" ? "Showdown"
     : (dramaha && st.phase === "drawing") ? "The Draw"
+    : st.phase === "discarding" ? "The Discard"
     : (SLBL[st.streetN] || "");
 
   // Coach advice (only when coach mode is on and it's your move)
@@ -2510,7 +2570,10 @@ function App() {
                   ? (me.hand.length > 0
                       ? me.hand.map((c,i) => (
                           <div key={`${st.dealKey}-${i}-${c.r}${c.s}`} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginTop:c.up?0:18,transition:"margin 0.2s"}}>
-                            <Card card={c} mobile={mobile} dealIdx={i}/>
+                            <Card card={c} mobile={mobile} dealIdx={i}
+                              selected={discarding && st.sel.includes(i)}
+                              onClick={discarding && !c.up ? () => flipDiscard(i) : null}
+                              interactive={discarding && !c.up}/>
                             <span style={{fontSize:6.5,letterSpacing:1,color:c.up?"#c9a84c88":"#6f5a3a"}}>{c.up?"UP":"DOWN"}</span>
                           </div>
                         ))
@@ -2538,7 +2601,7 @@ function App() {
       </div>{/* /shell */}
 
       {/* ── ACTION PANEL ── */}
-      <div style={{...S.panel,...((myTurn||drawing)?S.panelOn:{})}}>
+      <div style={{...S.panel,...((myTurn||drawing||discarding)?S.panelOn:{})}}>
 
         {/* Phase / status line */}
         <div style={S.statusLine}>
@@ -2564,6 +2627,13 @@ function App() {
               {st.maxDraws>1 && ` · Draw ${st.drawN+1} of ${st.maxDraws}`}
             </span></>
           )}
+          {discarding && meActive && (
+            <><span style={{...S.stTxt,color:"#c9a84c88",letterSpacing:2,fontSize:9}}>DISCARD PHASE</span>
+            <span style={S.stTxt}>
+              {st.sel.length===0?"Tap 2 of your face-down cards to discard (keep 3)"
+                :st.sel.length===1?"Tap one more — pick 2 to discard":"Ready — tap Discard 2"}
+            </span></>
+          )}
           {st.phase==="showdown" && <span style={S.stTxt}>{st.msg}</span>}
           {st.phase==="idle"     && <span style={S.stTxt}>Press Deal to begin</span>}
         </div>
@@ -2584,6 +2654,15 @@ function App() {
             <Btn s={S.bFold} onClick={fold}>FOLD</Btn>
             <Btn s={S.bDraw} onClick={draw}>
               {st.sel.length===0?"STAND PAT →":`DRAW ${st.sel.length} →`}
+            </Btn>
+          </div>
+        )}
+
+        {/* SUPER STUD DISCARD */}
+        {discarding && meActive && (
+          <div style={S.btnRow}>
+            <Btn s={{...S.bDraw, opacity:st.sel.length===2?1:0.45}} onClick={st.sel.length===2?discardGo:null}>
+              {st.sel.length===2?"DISCARD 2 →":`SELECT ${2-st.sel.length} MORE`}
             </Btn>
           </div>
         )}
@@ -2676,6 +2755,9 @@ function App() {
         ) : st.gid==="stud8" ? (
           <><b style={{color:"#c9a84c44"}}>STUD HI-LO 8</b>
           {" · 7-card stud · high & qualifying low (8-or-better) split · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="superstud" ? (
+          <><b style={{color:"#c9a84c44"}}>SUPER STUD HI-LO 8</b>
+          {" · dealt 4 down + 1 up · high card brings in · discard 2 after 3rd street · then plays as Stud Hi-Lo 8 · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="badugi" ? (
           <><b style={{color:"#c9a84c44"}}>BADUGI</b>
           {" · Aces low · 4 distinct ranks & suits = a Badugi · Nuts: A-2-3-4 rainbow · "}
@@ -2720,6 +2802,9 @@ function App() {
       {/* CONTACT */}
       <div style={S.contact}>
         <a href="mailto:hello@getmixed.ca" style={S.contactLink}>hello@getmixed.ca</a>
+        {SUPPORT_URL.indexOf("https://") === 0 && (
+          <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" style={{...S.contactLink, marginLeft:14, color:"#c9a84c99", borderBottomColor:"#c9a84c44"}}>♥ Support this project</a>
+        )}
       </div>
 
     </div>
@@ -2798,7 +2883,7 @@ function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid
   if (reveal && !p.folded) {
     if (stud) {
       ev = gid === "razz" ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
-      lo = gid === "stud8" && p.hand.length>=5 ? bestLow7(p.hand) : null;
+      lo = IS_STUD8(gid) && p.hand.length>=5 ? bestLow7(p.hand) : null;
     } else if (dramaha) {
       ev = board.length>=3 && p.hand.length===hs ? bestOmahaHigh(p.hand, board) : null;
     } else if (flop) {
