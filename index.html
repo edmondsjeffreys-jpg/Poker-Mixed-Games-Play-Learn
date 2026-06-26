@@ -2358,9 +2358,7 @@ function App() {
                 {sec.games.map(g => (
                   <button key={g.id} onClick={()=>switchGame(g)} disabled={!g.available}
                     style={{...S.gBtn,...(g.id===st.gid?S.gOn:{}),...(!g.available?S.gOff:{})}}>
-                    {g.tag && <span style={{...S.gTag,...(g.id===st.gid?{color:"#c9a84c"}:{})}}>{g.tag}</span>}
                     <span style={S.gName}>{g.label}</span>
-                    {!g.available && <span style={S.gSoon}>＋</span>}
                   </button>
                 ))}
               </div>
@@ -3093,18 +3091,18 @@ const S = {
   brandSub:{fontSize:8.5,letterSpacing:3,color:"#ac9663",textTransform:"uppercase",alignSelf:"flex-end",paddingBottom:3},
 
   // Selector
-  selWrap:{width:"100%",maxWidth:740,borderRadius:10,padding:8,background:"rgba(255,255,255,0.045)",border:"1px solid rgba(255,255,255,0.09)",
-    display:"flex",flexDirection:"column",gap:7},
-  selSection:{display:"flex",flexDirection:"column",gap:4},
-  selSecTitle:{fontSize:7.5,letterSpacing:2.5,color:"#ac9663",paddingLeft:2,
+  selWrap:{width:"100%",maxWidth:740,borderRadius:10,padding:7,background:"rgba(255,255,255,0.045)",border:"1px solid rgba(255,255,255,0.09)",
+    display:"flex",flexDirection:"column",gap:5},
+  selSection:{display:"flex",flexDirection:"column",gap:3},
+  selSecTitle:{fontSize:7,letterSpacing:2.5,color:"#ac9663",paddingLeft:2,
     display:"flex",alignItems:"center",gap:6},
-  selGrid:{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:5},
-  gBtn:{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:7,color:"#ab966c",
-    width:80,flex:"0 0 auto",padding:"7px 4px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,fontFamily:"Georgia,serif",transition:"all 0.12s",minHeight:46},
-  gOn:{background:"rgba(201,168,76,0.12)",border:"1px solid rgba(201,168,76,0.55)",color:"#f0e0b0",boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15)"},
+  selGrid:{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:4},
+  gBtn:{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:999,color:"#b6a071",
+    padding:"4px 11px",cursor:"pointer",fontFamily:"Georgia,serif",lineHeight:1.3,transition:"all 0.12s",whiteSpace:"nowrap"},
+  gOn:{background:"rgba(201,168,76,0.16)",border:"1px solid rgba(201,168,76,0.6)",color:"#f0e0b0",boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15)"},
   gOff:{opacity:0.3,cursor:"default",borderStyle:"dashed"},
   gTag:{fontSize:6.5,letterSpacing:1,color:"#9d8659"},
-  gName:{fontSize:9.5,lineHeight:1.2,textAlign:"center"},
+  gName:{fontSize:10.5,letterSpacing:0.2},
   gSoon:{fontSize:13,color:"#9d8659",lineHeight:1},
 
   // Stats
