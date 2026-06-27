@@ -2104,6 +2104,13 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
+// First-run guided tour: spotlight these elements in order.
+const TOUR = [
+  { id:"tour-menu",   title:"Pick your game",  text:"Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
+  { id:"tour-gear",   title:"Settings",        text:"Stakes, cash or tournament, the bot personalities, and the coach dial all live here." },
+  { id:"tour-coach",  title:"Live coaching",   text:"Real-time strategy advice as you play. Tap any time to toggle it on or off." },
+  { id:"tour-review", title:"Track your play", text:"Review logs every decision and grades it, so you can spot leaks over time." },
+];
 function FeedbackScreen({ onClose }) {
   const [msg, setMsg] = useState("");
   const [email, setEmail] = useState("");
@@ -2156,6 +2163,8 @@ function App() {
   const [showReview, setShowReview] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [tourStep, setTourStep] = useState(-1);   // -1 = off; 0..N = spotlight step
+  const [tourRect, setTourRect] = useState(null);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
   const curGame       = GAMES.find(g => g.id === st.gid);
@@ -2369,6 +2378,21 @@ function App() {
   const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
   const setExploitDial = v => setSt(s => ({ ...s, exploitDial:v }));
+
+  // First-run tour: start it once per device, measure the spotlight target each step.
+  useEffect(() => { try { if (!localStorage.getItem("pmg_onboarded")) setTourStep(0); } catch {} }, []);
+  useEffect(() => {
+    if (tourStep < 0) return;
+    const measure = () => { const el = document.getElementById(TOUR[tourStep].id); if (el) setTourRect(el.getBoundingClientRect()); };
+    measure();
+    const t = setTimeout(measure, 60);   // re-measure after layout settles
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => { clearTimeout(t); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true); };
+  }, [tourStep]);
+  const endTour    = () => { try { localStorage.setItem("pmg_onboarded", "1"); } catch {} setTourStep(-1); };
+  const nextTour   = () => { if (tourStep >= TOUR.length - 1) endTour(); else setTourStep(s => s + 1); };
+  const replayTour = () => { setShowSettings(false); setMenuOpen(false); setTourStep(0); };
   // Changing format/stake/depth resets the table to fresh, equal stacks (can't change mid-hand).
   const applyStakeChange = (s, patch) => {
     const ns  = { ...s, ...patch };
@@ -2501,12 +2525,12 @@ function App() {
           <span style={S.brandText}>GET MIXED</span>
           <span style={S.brandSub}>mixed game play and learn</span>
         </div>
-        <button onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
+        <button id="tour-gear" onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
 
       {/* GAME PICKER — collapsible dropdown */}
       <div style={S.menuBar}>
-        <button onClick={()=>setMenuOpen(o=>!o)} style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{})}}>
+        <button id="tour-menu" onClick={()=>setMenuOpen(o=>!o)} style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{})}}>
           <span style={S.menuTrigCur}>
             {curGame?.tag && <span style={S.menuTrigTag}>{curGame.tag}</span>}
             <span style={S.menuTrigName}>{curGame?.label || "Choose a game"}</span>
@@ -2626,6 +2650,7 @@ function App() {
               </div>
             )}
 
+            <button onClick={replayTour} style={{...S.tourSkip, display:"block", margin:"14px auto 0", color:"#9d8659", textDecoration:"underline"}}>Replay the intro tour</button>
             <button onClick={()=>setShowSettings(false)} style={S.modalDone}>DONE</button>
           </div>
         </div>
@@ -2634,12 +2659,36 @@ function App() {
       {showReview && <ReviewScreen onClose={()=>setShowReview(false)} mobile={mobile}/>}
       {showFeedback && <FeedbackScreen onClose={()=>setShowFeedback(false)}/>}
 
+      {/* FIRST-RUN SPOTLIGHT TOUR */}
+      {tourStep >= 0 && tourRect && (() => {
+        const r = tourRect, pad = 8;
+        const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+        const below = r.top < vh * 0.5;   // caption goes below a top-half target, above a bottom-half one
+        return (
+          <div style={S.tourLayer} onClick={endTour}>
+            <div style={{ position:"fixed", top:r.top - pad, left:r.left - pad, width:r.width + pad*2, height:r.height + pad*2,
+              borderRadius:12, boxShadow:"0 0 0 9999px rgba(8,10,16,0.84)", border:"2px solid #e0bd5e",
+              pointerEvents:"none", transition:"top .25s,left .25s,width .25s,height .25s" }}/>
+            <div style={{ ...S.tourCard, ...(below ? { top:r.bottom + 16 } : { bottom: vh - r.top + 16 }) }}
+              onClick={e=>e.stopPropagation()}>
+              <div style={S.tourStepNo}>{tourStep + 1} / {TOUR.length}</div>
+              <div style={S.tourTitle}>{TOUR[tourStep].title}</div>
+              <div style={S.tourText}>{TOUR[tourStep].text}</div>
+              <div style={S.tourBtns}>
+                <button onClick={endTour} style={S.tourSkip}>Skip</button>
+                <button onClick={nextTour} style={S.tourNext}>{tourStep >= TOUR.length - 1 ? "Got it" : "Next →"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* MAIN CONTROLS — coach toggle, stakes readout, tournament depth */}
       <div style={S.ctrlBar}>
-        <button onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
+        <button id="tour-coach" onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
           {st.coach ? "● COACH ON" : "COACH OFF"}
         </button>
-        <button onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
+        <button id="tour-review" onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
         <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : "STAKES " + STK(st).label}</span>
         {st.format==="tourney" && (
           <div style={S.depthRow}>
@@ -3330,6 +3379,18 @@ const S = {
   menuTrigTag:{fontSize:7,letterSpacing:1,color:"#c2a35c",border:"1px solid rgba(201,168,76,0.4)",borderRadius:4,padding:"2px 5px"},
   menuTrigName:{fontSize:13,color:"#f2e6c2",fontFamily:"Georgia,serif",letterSpacing:0.5},
   menuBackdrop:{position:"fixed",inset:0,zIndex:49,background:"transparent"},
+  tourLayer:{position:"fixed",inset:0,zIndex:9999},
+  tourCard:{position:"fixed",left:"50%",transform:"translateX(-50%)",width:"min(330px,90vw)",
+    background:"linear-gradient(160deg,#1b1d27,#13141c)",border:"1px solid rgba(201,168,76,0.4)",
+    borderRadius:14,padding:"15px 16px 13px",boxShadow:"0 20px 60px rgba(0,0,0,0.7)",
+    fontFamily:"Georgia,serif",zIndex:10000},
+  tourStepNo:{fontSize:9,letterSpacing:1.5,color:"#9d8659"},
+  tourTitle:{fontSize:16,color:"#f0e0b0",fontWeight:"bold",marginTop:3,marginBottom:5},
+  tourText:{fontSize:12.5,lineHeight:1.5,color:"#cdbf9e"},
+  tourBtns:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:13},
+  tourSkip:{background:"none",border:"none",color:"#8a7c5a",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",padding:"6px 4px"},
+  tourNext:{background:"linear-gradient(160deg,#d8b551,#bb8f33)",border:"none",color:"#1a1206",
+    fontWeight:"bold",fontSize:13,borderRadius:9,padding:"9px 18px",cursor:"pointer",fontFamily:"Georgia,serif"},
   menuDropdown:{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,zIndex:51,
     borderRadius:10,padding:9,background:"#13141c",border:"1px solid rgba(201,168,76,0.3)",
     boxShadow:"0 18px 50px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",gap:6,
