@@ -945,16 +945,16 @@ function coachBet(st, me, callAmt) {
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
   const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
-  const mode    = st.coachMode || "gto";
-  // Strictness shifts the action thresholds; exploit also tilts to the table read.
+  const k = Math.max(0, Math.min(1, (st.exploitDial || 0) / 100));   // 0 = pure GTO, 1 = full exploit
+  // Baseline (GTO) thresholds; the dial tilts them toward exploiting the table read.
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36, tag = "", ex = "";
-  if (mode === "nitty") { raiseCut = 0.83; valueCut = 0.63; thinCut = 0.46; tag = "[Nitty] "; }
-  if (mode === "exploit") {
-    tag = "[Exploit] ";
+  if (k > 0) {
     const r = tableRead(st);
-    if (r.loose >= 0.55)      { valueCut -= 0.07; thinCut -= 0.06; ex = " These players call too much — value-bet thinner and skip bluffs."; }
-    else if (r.loose <= 0.40) { valueCut += 0.04; ex = " Tight table — they over-fold, so keep applying pressure with bets."; }
+    if (r.loose >= 0.55)      { valueCut -= 0.07 * k; thinCut -= 0.06 * k; ex = " These players call too much — value-bet thinner and skip bluffs."; }
+    else if (r.loose <= 0.40) { valueCut += 0.04 * k; ex = " Tight table — they over-fold, so keep applying pressure with bets."; }
     else if (r.aggro >= 0.60) { ex = " Aggressive table — let them bet your strong hands and call down a bit lighter."; }
+    if (k < 0.25) ex = "";                 // dial too low to give a confident read
+    if (k >= 0.45) tag = "[Exploit] ";     // flag when the coach is leaning on reads
   }
   const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
   const mwAdj = nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1;   // your share of equity shrinks multiway
@@ -966,8 +966,8 @@ function coachBet(st, me, callAmt) {
     if (nOpp >= 2 && str < 0.34 && potOdds > 0.08)
       return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}, and you'll often pay more on later streets. Fold.` };
     if (callEq >= potOdds + 0.16)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
-    if (callEq >= potOdds + 0.04 && mode !== "nitty") return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
-    return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. ${mode === "nitty" ? "Fold — don't pay off without a real holding." : "Folding is usually best here."}` };
+    if (callEq >= potOdds + 0.04)   return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
+    return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. Folding is usually best here.` };
   }
   if (str >= raiseCut)           return { tone:"good", text:`${tag}Big hand — bet for value, don't give a free card.${ex}` };
   if (str >= valueCut)           return { tone:"good", text:`${tag}Good holding — a bet pressures weaker hands.${ex}` };
@@ -982,9 +982,7 @@ function coachRecAction(st, me, callAmt) {
   const facing  = callAmt > 0;
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
-  const mode    = st.coachMode || "gto";
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36;
-  if (mode === "nitty") { raiseCut = 0.83; valueCut = 0.63; thinCut = 0.46; }
   if (facing) {
     const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
     const callEq = str * (nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1);
@@ -992,7 +990,7 @@ function coachRecAction(st, me, callAmt) {
     if (str >= valueCut)                       return "call";   // call/raise both fine
     if (nOpp >= 2 && str < 0.34 && potOdds > 0.08) return "fold";
     if (callEq >= potOdds + 0.16)              return "call";
-    if (callEq >= potOdds + 0.04 && mode !== "nitty") return "call";
+    if (callEq >= potOdds + 0.04)              return "call";
     return "fold";
   }
   if (str >= valueCut) return "bet";
@@ -1128,14 +1126,12 @@ const cardTxt = c => c ? `${c.r}${c.s}` : "";
 function coachDraw(st, me) {
   const plan    = coachDrawPlan(st, me);
   const sel     = st.sel;
-  const mode    = st.coachMode || "gto";
+  const k       = Math.max(0, Math.min(1, (st.exploitDial || 0) / 100));
   const matches = plan.discard.length === sel.length && plan.discard.every(i => sel.includes(i));
-  // Strictness nudge on weak/marginal draws.
+  // Exploit nudge on weak/marginal draws, scaled by the dial.
   let nudge = "";
-  if (plan.tone === "warn") {
-    if (mode === "nitty") nudge = " Nitty line: just fold these — don't draw at trash.";
-    else if (mode === "exploit" && tableRead(st).loose >= 0.55) nudge = " Loose table: avoid drawing thin into a field of callers.";
-  }
+  if (plan.tone === "warn" && k >= 0.35 && tableRead(st).loose >= 0.55)
+    nudge = " Loose table: avoid drawing thin into a field of callers.";
   // Affirm when the player's current selection already matches the recommended play.
   if (matches) {
     const lead = plan.pat
@@ -1253,7 +1249,7 @@ const mkState = (gid, prev = null) => {
   botTight: prev?.botTight || { 1:62, 2:18, 3:38 },
   // Coach mode: surface live strategy tips on the player's turn.
   coach: prev?.coach ?? true,
-  coachMode: prev?.coachMode ?? "gto",           // "nitty" | "gto" | "exploit"
+  exploitDial: prev?.exploitDial ?? 0,           // 0 = GTO … 100 = full exploit
   // Stakes & format.
   format, stakeIdx, bbDepth,
   drawDone:false,                                // dramaha: has the single mid-hand draw happened?
@@ -2372,7 +2368,7 @@ function App() {
   const pineDiscardGo = () => { if (st.sel.length !== 1) return; setSt(s => execPineDiscard(s, s.sel[0])); };
   const setTight = (id, v) => setSt(s => ({ ...s, botTight:{ ...s.botTight, [id]:v } }));
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
-  const setCoachMode = m => setSt(s => ({ ...s, coachMode:m }));
+  const setExploitDial = v => setSt(s => ({ ...s, exploitDial:v }));
   // Changing format/stake/depth resets the table to fresh, equal stacks (can't change mid-hand).
   const applyStakeChange = (s, patch) => {
     const ns  = { ...s, ...patch };
@@ -2582,20 +2578,20 @@ function App() {
               </span>
             </button>
 
-            {/* Coaching strictness */}
-            <div style={S.modalHint}>Strictness sets the baseline the coach grades you against.</div>
-            <div style={S.segRow}>
-              {[
-                ["nitty","Nitty","Tight & low-risk — only premium spots"],
-                ["gto","GTO","Balanced, theoretically sound baseline"],
-                ["exploit","Exploit","Adjusts to how these opponents play"],
-              ].map(([id,label,desc])=>(
-                <button key={id} onClick={()=>setCoachMode(id)}
-                  style={{...S.segBtn,...(st.coachMode===id?S.segBtnOn:{})}}>
-                  <span style={{fontSize:11,fontWeight:"bold"}}>{label}</span>
-                  <span style={{fontSize:8,lineHeight:1.25,marginTop:2,opacity:0.8}}>{desc}</span>
-                </button>
-              ))}
+            {/* Coach style: GTO ↔ Exploit dial */}
+            <div style={S.modalHint}>How much the coach adjusts to the opponents you've set up. GTO ignores them and plays theoretically sound; Exploit leans on their tendencies (the bot dials above).</div>
+            <div style={S.tightRow}>
+              <span style={{...S.tightLabel, color:"#9d8a62", fontSize:10}}>GTO</span>
+              <input type="range" min={0} max={100} step={5} value={st.exploitDial ?? 0}
+                onChange={e=>setExploitDial(+e.target.value)} style={S.tightSlider}/>
+              <span style={{...S.tightLabel, color:"#9d8a62", fontSize:10, textAlign:"right"}}>Exploit</span>
+            </div>
+            <div style={{...S.modalHint, textAlign:"center", marginTop:2}}>
+              {(() => { const d = st.exploitDial ?? 0;
+                return d === 0 ? "Pure GTO — opponent-agnostic, textbook advice."
+                  : d <= 30 ? "Mostly GTO, with a light read on the table."
+                  : d <= 70 ? "Balanced — blends solid play with table reads."
+                  : "Full exploit — advice leans hard on how these players play."; })()}
             </div>
 
             {/* Stakes & format */}
