@@ -2456,9 +2456,14 @@ function App() {
     : null;
 
   // Bet-size presets (pot-limit caps at the pot; no-limit allows all-in)
+  // Pot-fraction sizing done right: an opening bet is fraction×pot; a raise is
+  // call + fraction×(pot AFTER the call) — which is what "½-pot raise" actually means.
+  const potAdd = f => st.currentBet === 0
+    ? Math.floor(st.pot * f)
+    : toCallNow + Math.floor((st.pot + toCallNow) * f);
   const presets = (mode === "pl"
-    ? [ { lbl:"¼", v:Math.floor(st.pot*.25) }, { lbl:"⅓", v:Math.floor(st.pot/3) }, { lbl:"½", v:Math.floor(st.pot*.5) }, { lbl:"¾", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:nlMax } ]
-    : [ { lbl:"¼", v:Math.floor(st.pot*.25) }, { lbl:"⅓", v:Math.floor(st.pot/3) }, { lbl:"½", v:Math.floor(st.pot*.5) }, { lbl:"¾", v:Math.floor(st.pot*.75) }, { lbl:"Pot", v:st.pot }, { lbl:"All In", v:nlMax } ]
+    ? [ { lbl:"¼", v:potAdd(.25) }, { lbl:"⅓", v:potAdd(1/3) }, { lbl:"½", v:potAdd(.5) }, { lbl:"¾", v:potAdd(.75) }, { lbl:"Pot", v:potAdd(1) } ]
+    : [ { lbl:"¼", v:potAdd(.25) }, { lbl:"⅓", v:potAdd(1/3) }, { lbl:"½", v:potAdd(.5) }, { lbl:"¾", v:potAdd(.75) }, { lbl:"Pot", v:potAdd(1) }, { lbl:"All In", v:nlMax } ]
   ).map(p => ({ ...p, v:Math.max(nlMin, Math.min(p.v, nlMax)) }))
    .filter((p,i,a) => p.v > 0 && a.findIndex(x => x.v === p.v) === i);
 
