@@ -452,7 +452,12 @@ function cpuDrawCards(hand, pr, gid) {
       else discard.push(i);
     });
   }
-  if (discard.length === 1 && Math.random() < pr.standPat) return [];          // stands pat with one draw
+  if (discard.length === 1 && Math.random() < pr.standPat) {
+    // Only stand pat on a credible made hand (a 9-low or better). Otherwise it's a pure snow
+    // with trash — do that rarely instead of patting every obvious fold into the field.
+    const credible = gid !== "badugi" && eval27(hand).cat === 0 && eval27(hand).vs[0] <= 9;
+    if (credible || Math.random() < 0.18) return [];
+  }
   if (discard.length === 0 && Math.random() < pr.over) {                        // brain fade: draws when pat
     const worst = hand.reduce((w, c, i) => c.v > w.v ? { v:c.v, i } : w, { v:0, i:0 });
     return [worst.i];
@@ -526,9 +531,10 @@ function cpuDecide(st, idx) {
   const L     = (100 - tight) / 100;   // "exploit factor": higher = more aggression/bluffs
 
   // Looser bots bet/bluff/call far more; tilt amplifies on top of that.
-  const looseMul = 0.55 + L * 1.15;            // ~0.55 (nit) .. ~1.70 (maniac-loose)
-  const effAggr  = Math.min(0.97, pr.aggr  * looseMul * (1 + tilt * 0.40));
-  const effBluff = Math.min(0.80, pr.bluff * looseMul * (1 + tilt * 0.55));
+  // Draw games reward more disciplined aggression, so bluffing is scaled below the generic curve.
+  const looseMul = 0.55 + L * 1.05;            // ~0.55 (nit) .. ~1.60 (maniac-loose)
+  const effAggr  = Math.min(0.95, pr.aggr  * looseMul * (1 + tilt * 0.40));
+  const effBluff = Math.min(0.60, pr.bluff * looseMul * 0.75 * (1 + tilt * 0.55));
   const effCry   = Math.min(0.70, pr.cry   * looseMul * (1 + tilt * 0.50));
   const effSlow  = tilt > 0 ? 0 : pr.slow;
 
