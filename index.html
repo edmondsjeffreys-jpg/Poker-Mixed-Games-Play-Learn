@@ -940,7 +940,84 @@ function tableRead(st) {
   const aggro = opp.reduce((a, p) => a + (PROF[p.id]?.aggr ?? 0.5), 0) / opp.length;
   return { loose: 1 - tight / 100, aggro, n: opp.length };
 }
+// ── DRAW-GAME BETTING COACH ──────────────────────────────────
+// Thinks like a draw player: made-vs-draw, smooth-vs-rough, draws left, and —
+// most importantly — reads opponents' draw counts and pat-player aggression,
+// instead of leaning on hold'em pot-odds. Covers 2-7 (single/triple) and badugi.
+const PURE_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi";
+function heroMade(gid, ev) {
+  if (gid === "badugi") return { made: !!(ev && ev.size === 4), top: ev && ev.size === 4 ? ev.vs[0] : 99, txt: ev && ev.size === 4 ? `a ${ev.desc} badugi` : "an incomplete badugi" };
+  // In 2-7, a Jack-low or worse isn't a hand you stand on — you'd break it and draw, so treat it as a draw.
+  const made = !!(ev && ev.cat === 0 && ev.vs[0] <= 10);
+  return { made, top: made ? ev.vs[0] : 99, txt: made ? `a pat ${ev.desc}` : "a draw" };
+}
+function coachDrawBet(st, me, callAmt) {
+  const facing = callAmt > 0, gid = st.gid;
+  const ev  = evalHand(gid, me.hand);
+  const str = heroDrawStrength(st, me);
+  const dl  = drawsLeftOf(st);
+  const predraw = (st.drawN || 0) === 0;     // before the first draw — no draw reads yet
+  const last    = dl <= 1;                    // final betting round
+  const M = heroMade(gid, ev);
+  const goodTop = gid === "badugi" ? 9 : 8;   // "good enough" made-hand ceiling
+  const smoothTop = gid === "badugi" ? 7 : 8;
+
+  const opps = st.players.filter(p => p.id !== 0 && live(p));
+  const pats = opps.filter(p => p.drewLast === 0);
+  const heavy = opps.filter(p => p.drewLast >= 2);
+  const patBetting = facing && pats.length > 0;   // a pat opponent is driving the action
+
+  // PRE-FIRST-DRAW: judge the starting hand; there are no draws to read yet.
+  if (predraw) {
+    if (str >= 0.7)  return { tone:"good", text:`Premium start — ${M.txt}. Raise to build the pot and take the lead.` };
+    if (str >= 0.45) return { tone:"good", text:`Strong holding or smooth one-card draw. Call, and raise in position to thin the field.` };
+    if (str >= 0.3)  return facing
+      ? { tone:"ok", text:`Playable but rough. One bet is fine; let it go if it gets raised behind you.` }
+      : { tone:"ok", text:`Marginal — playable, but be cautious out of position.` };
+    return facing
+      ? { tone:"warn", text:`Too rough to call a bet — a weak draw plays badly from here. Fold.` }
+      : { tone:"warn", text:`Weak holding — don't draw two or three into a field. Fold the worst of these.` };
+  }
+
+  // AFTER A DRAW: the reads are everything.
+  if (patBetting) {
+    if (M.made && M.top <= goodTop)
+      return { tone:"good", text:`${pats.length} stood pat, but you hold ${M.txt} — good enough to continue. Call down, and raise the end with a smooth one.` };
+    if (M.made)
+      return { tone:"warn", text:`A player stood pat and is betting — that reps a made hand that beats ${M.txt}. Snap-fold; pot odds don't save a hand that's drawing thin to the lead.` };
+    return { tone:"warn", text:`You're still drawing into a pat bettor — you're chasing to beat a made hand. Continue only with a strong one-card draw at a fair price.${last ? " On the last draw, that's usually a fold." : ""}` };
+  }
+
+  // No pat aggression shown — play your own made/draw strength.
+  if (facing) {
+    if (M.made && M.top <= goodTop)
+      return { tone:"good", text:`You hold ${M.txt} and nobody has shown a pat hand${heavy.length ? `; ${heavy.length} drew multiple cards, so they're weak` : ""}. Raise for value.` };
+    if (str >= 0.5) return { tone:"ok", text:`Decent ${M.made ? "made hand" : "draw"} with no pat pressure. Call; raise if you improve.` };
+    return { tone:"warn", text:`Thin ${M.made ? "made hand" : "draw"} facing a bet. Without a read they're weak, folding is fine.` };
+  }
+  if (M.made && M.top <= goodTop)
+    return { tone:"good", text:`Bet ${M.txt} for value${heavy.length ? ` — players who drew ${heavy[0].drewLast} are unlikely to beat you` : ""}. Don't give a free draw.` };
+  if (str >= 0.4) return { tone:"ok", text:`Reasonable ${M.made ? "hand" : "draw"} — betting to deny free cards is fine, especially against opponents who drew multiple.` };
+  return { tone:"warn", text:`Not enough to bet. Check; ${last ? "give up cheaply if you bricked." : "take the free draw and try to improve."}` };
+}
+// Discrete grader for draw games — mirrors coachDrawBet so history grades line up.
+function coachDrawRec(st, me, callAmt) {
+  const facing = callAmt > 0, gid = st.gid;
+  const ev = evalHand(gid, me.hand);
+  const str = heroDrawStrength(st, me);
+  const predraw = (st.drawN || 0) === 0;
+  const M = heroMade(gid, ev);
+  const goodTop = gid === "badugi" ? 9 : 8, smoothTop = gid === "badugi" ? 7 : 8;
+  const pats = st.players.filter(p => p.id !== 0 && live(p) && p.drewLast === 0);
+  const patBetting = facing && pats.length > 0;
+  if (predraw) { if (str >= 0.7) return facing ? "raise" : "bet"; if (str >= 0.3) return facing ? "call" : "check"; return facing ? "fold" : "check"; }
+  if (patBetting) return (M.made && M.top <= smoothTop) ? "call" : "fold";
+  if (facing) { if (M.made && M.top <= goodTop) return "raise"; if (str >= 0.5) return "call"; return "fold"; }
+  return (M.made && M.top <= goodTop) || str >= 0.4 ? "bet" : "check";
+}
+
 function coachBet(st, me, callAmt) {
+  if (PURE_DRAW(st.gid)) return coachDrawBet(st, me, callAmt);
   const facing  = callAmt > 0;
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
@@ -979,6 +1056,7 @@ function coachBet(st, me, callAmt) {
 // Mirrors coachBet's thresholds but returns a discrete recommended action,
 // so we can grade your play even when the live Coach is switched off.
 function coachRecAction(st, me, callAmt) {
+  if (PURE_DRAW(st.gid)) return coachDrawRec(st, me, callAmt);
   const facing  = callAmt > 0;
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
@@ -1482,12 +1560,12 @@ function execDraw(st, playerDiscards, playerFolds = false) {
       if (playerFolds) return { ...p, folded:true, lastAct:{ text:"Fold", color:"#f87171" } };
       if (p.folded)    return { ...p };   // already folded earlier — don't re-deal
       const hand = p.hand.map((c, i) => playerDiscards.includes(i) ? deck.shift() : c);
-      return { ...p, hand, betSt:0, lastAct:null };
+      return { ...p, hand, betSt:0, lastAct:null, drewLast:playerDiscards.length };
     }
     if (p.folded) return { ...p };
     const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid);
     const hand = p.hand.map((c, i) => disc.includes(i) ? deck.shift() : c);
-    return { ...p, hand, betSt:0,
+    return { ...p, hand, betSt:0, drewLast:disc.length,
       lastAct:{ text:disc.length === 0 ? "Stands Pat" : `Drew ${disc.length}`, color:"#94a3b8" } };
   });
 
@@ -2335,21 +2413,29 @@ function App() {
         msg: nx === 0 ? `Your action preflop — Pot $${pot}` : `${players[nx].name} acts preflop…` };
     }
 
-    // ── DRAW GAMES: antes + full hands ──
+    // ── DRAW GAMES: blinds + full hands (forced bet pre-draw, like real limit draw) ──
     const hs = HAND_SIZE(s.gid);
     let cursor = 0;
-    const players = mkPs(s.players).map(p => {
-      if (p.chips < stk.ante)  // sit out broke players
+    let players = mkPs(s.players).map(p => {
+      if (p.chips < stk.bblind)  // sit out players who can't post the big blind
         return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
       const hand = deck.slice(cursor, cursor + hs);
       cursor += hs;
-      return { ...p, sittingOut:false, folded:false, hand, chips:p.chips - stk.ante, betSt:0,
-        lastAct:{ text:`Ante $${stk.ante}`, color:"#475569" } };
+      return { ...p, sittingOut:false, folded:false, hand, betSt:0, lastAct:null };
     });
-    const pot   = players.filter(p => !p.sittingOut).length * stk.ante;
-    const queue = startQueue(players, dealer);
+    // Limit draw games are played with blinds (not antes) so the first round has a forced bet.
+    const order = liveFromDealer(players, dealer);
+    const sbId = order[0], bbId = order[1] ?? order[0];
+    let pot = 0;
+    players = players.map(p => {
+      if (p.id === sbId) { const amt = Math.min(stk.sblind, p.chips); pot += amt; return { ...p, chips:p.chips-amt, betSt:amt, lastAct:{ text:`SB $${amt}`, color:"#475569" } }; }
+      if (p.id === bbId) { const amt = Math.min(stk.bblind, p.chips); pot += amt; return { ...p, chips:p.chips-amt, betSt:amt, lastAct:{ text:`BB $${amt}`, color:"#475569" } }; }
+      return p;
+    });
+    const queue = queueFrom(players, (bbId + 1) % 4);  // action starts left of the big blind
     const nx    = queue[0];
     return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, pot, queue,
+      currentBet:stk.bblind,
       phase:"acting", maxDraws:(s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx:dealer,
       nlBet:Math.max(40, Math.floor(pot * 0.65)),
       dealKey:(s.dealKey || 0) + 1, seq:(s.seq||0)+1,  // bumps to replay deal animation
@@ -2456,7 +2542,7 @@ function App() {
   const myLow    = stud
     ? (IS_STUD8(st.gid) && me.hand.length >= 5 ? bestLow7(me.hand) : null)
     : (IS_HILO(st.gid) && me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaLow(me.hand, st.board) : null);
-  const minLive  = stud ? (stk.studAnte + 1) : (flop || dramaha) ? stk.bblind : stk.ante;
+  const minLive  = stud ? (stk.studAnte + 1) : (flop || dramaha) ? stk.bblind : stk.bblind;
   const isOver   = st.phase === "idle" || st.phase === "showdown";
   const ableCount = st.players.filter(p => p.chips >= minLive).length;
   const meBroke  = isOver && me.chips < minLive;
