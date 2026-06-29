@@ -905,10 +905,68 @@ function planBadugi(hand, drawsLeft) {
   const draws = hand.length - keepSet.size;
   return mk(keep, `draw ${draws}`, `Keep your ${keepSet.size}-card base (${keepLabel(hand, keep, true)}) and draw the duplicate rank/suit card${draws > 1 ? "s" : ""}.`, keepSet.size >= 3 ? "ok" : "warn");
 }
+// Two-way plan for Badeucey (2-7 + badugi) and Badacey (A-5 + badugi):
+// keep low cards with distinct ranks AND distinct suits — they build both the badugi
+// and the lowball half at once — then fill toward five distinct lows for the lowball side.
+function planSplitTwoWay(hand, gid, drawsLeft) {
+  const all = hand.map((_, i) => i);
+  const aceHigh = gid === "badeucey";                       // 2-7: ace is high (bad). badacey A-5: ace low (good)
+  const lv = c => aceHigh ? c.v : (c.v === 14 ? 1 : c.v);
+  const order = hand.map((c, i) => ({ c, i, v: lv(c) })).sort((a, b) => a.v - b.v);
+  const ranks = new Set(), suits = new Set(), keep = new Set();
+  order.forEach(o => { if (!ranks.has(o.v) && !suits.has(o.c.s)) { ranks.add(o.v); suits.add(o.c.s); keep.add(o.i); } }); // badugi-valid lows
+  order.forEach(o => { if (keep.size < 5 && !ranks.has(o.v) && o.v <= 8) { ranks.add(o.v); keep.add(o.i); } });          // extra lows for the lowball half
+  const keepArr = [...keep].sort((a, b) => a - b);
+  const discard = all.filter(i => !keep.has(i));
+  const { A, B } = splitSides(gid);
+  const bSize = (A.ev(hand).size) || 0;                     // badugi cards currently made
+  const pat = discard.length === 0;
+  let tone, why;
+  if (pat && bSize >= 4)            { tone = "good"; why = `Pat both ways — a made badugi and a low. Stand pat.`; }
+  else if (bSize >= 4)              { tone = "good"; why = `Strong two-way: a made badugi plus ${keepArr.length} low cards. Draw ${discard.length} to sharpen the ${B.name} half.`; }
+  else if (keep.size >= 3)          { tone = "ok";   why = `Keep your low, distinct-suit cards — each one builds both the badugi and the ${B.name} low. Draw ${discard.length}.`; }
+  else                              { tone = "warn"; why = `Rough two-way holding — few cards help both halves. Draw ${discard.length}, or fold to a raise.`; }
+  return { keep: keepArr, discard, pat, head: pat ? "stand pat" : `draw ${discard.length}`, why, tone };
+}
+// Archie (high vs A-5 low, triple draw): pick the lane the hand is actually built for.
+function planArchie(hand, drawsLeft) {
+  const all = hand.map((_, i) => i);
+  const lv = c => c.v === 14 ? 1 : c.v;
+  const lowRanks = [...new Set(hand.filter(c => lv(c) <= 8).map(c => lv(c)))];
+  const keep = new Set();
+  if (lowRanks.length >= 3) {                               // build the A-5 low (8-or-better qualifier)
+    const seen = new Set();
+    hand.forEach((c, i) => { const v = lv(c); if (v <= 8 && !seen.has(v)) { seen.add(v); keep.add(i); } });
+    const keepArr = [...keep].sort((a, b) => a - b), discard = all.filter(i => !keep.has(i));
+    return { keep: keepArr, discard, pat: discard.length === 0, head: discard.length ? `draw ${discard.length}` : "stand pat",
+      why: `Go low — you hold ${lowRanks.length} cards eight-or-lower. Keep them and draw ${discard.length} toward a qualifying A-5 low.`,
+      tone: lowRanks.length >= 4 ? "good" : "ok" };
+  }
+  const cnt = {}; hand.forEach((c, i) => { (cnt[c.v] = cnt[c.v] || []).push(i); });
+  const pairs = Object.values(cnt).filter(g => g.length >= 2);
+  if (pairs.length) {                                       // play the high (pair of 9s+ qualifies)
+    pairs.forEach(g => g.forEach(i => keep.add(i)));
+    const keepArr = [...keep].sort((a, b) => a - b), discard = all.filter(i => !keep.has(i));
+    const topPair = Math.max(...pairs.map(g => hand[g[0]].v));
+    return { keep: keepArr, discard, pat: false, head: `draw ${discard.length}`,
+      why: topPair >= 9
+        ? `Play the high — keep your pair and draw ${discard.length} toward a qualifying high (pair of nines or better).`
+        : `Your pair is below nines, so it doesn't qualify yet. Draw ${discard.length} to improve it, or fold to action.`,
+      tone: topPair >= 9 ? "ok" : "warn" };
+  }
+  const ord = hand.map((c, i) => ({ i, v: c.v })).sort((a, b) => b.v - a.v);   // no low, no pair → weak
+  ord.slice(0, 2).forEach(o => keep.add(o.i));
+  const keepArr = [...keep].sort((a, b) => a - b), discard = all.filter(i => !keep.has(i));
+  return { keep: keepArr, discard, pat: false, head: `draw ${discard.length}`,
+    why: `Weak both ways — no low draw and no pair. Keep your highest cards, draw ${discard.length}, or fold to a bet.`, tone: "warn" };
+}
 function coachDrawPlan(st, me) {
   if (IS_DRAMAHA(st.gid)) return planDramaha(st, me);
   const dl = drawsLeftOf(st);
-  return st.gid === "badugi" ? planBadugi(me.hand, dl) : plan27(me.hand, dl);
+  if (st.gid === "badugi") return planBadugi(me.hand, dl);
+  if (st.gid === "archie")  return planArchie(me.hand, dl);
+  if (IS_SPLITDRAW(st.gid)) return planSplitTwoWay(me.hand, st.gid, dl);   // badeucey / badacey
+  return plan27(me.hand, dl);
 }
 // 5-card-draw-high plan for the Dramaha-High draw side.
 function planDrawHigh(hand) {
