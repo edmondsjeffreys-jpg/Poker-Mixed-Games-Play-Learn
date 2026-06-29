@@ -1403,7 +1403,7 @@ function bringInSeat(players, gid) {
 function firstToActStud(players, gid) {
   const seats = players.filter(live);
   if (!seats.length) return 0;
-  if (gid === "razz") {
+  if (gid === "razz" || gid === "razzdugi") {
     return seats.reduce((a, b) => cmpVecLow(showLowVec(upCards(b)), showLowVec(upCards(a))) < 0 ? b : a).id;
   }
   // high games: best poker value of up-cards acts first
@@ -2180,7 +2180,7 @@ function winnerId(st) {
   const s = st.players.filter(live);
   if (s.length === 1) return s[0].id;
   if (IS_STUD(st.gid)) {
-    if (st.gid === "razz") {
+    if (st.gid === "razz" || st.gid === "razzdugi") {
       let best = null, id = s[0].id;
       s.forEach(p => { const e = bestRazz(p.hand); if (!best || cmpRazz(e, best) < 0) { best = e; id = p.id; } });
       return id;
@@ -2660,7 +2660,7 @@ function App() {
   const wid      = winnerId(st);
   // Live hand readout
   const myEval   = stud
-    ? (st.gid === "razz" ? (me.hand.length >= 1 ? bestRazz(me.hand) : null)
+    ? ((st.gid === "razz" || st.gid === "razzdugi") ? (me.hand.length >= 1 ? bestRazz(me.hand) : null)
                          : (me.hand.length >= 5 ? studHigh(me.hand) : null))
     : dramaha
     ? (me.hand.length === HAND_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaHigh(me.hand, st.board) : null)
@@ -2683,6 +2683,7 @@ function App() {
   const myLow    = stud
     ? (IS_STUD8(st.gid) && me.hand.length >= 5 ? bestLow7(me.hand) : null)
     : (IS_HILO(st.gid) && me.hand.length === HOLE_SIZE(st.gid) && st.board.length >= 3 ? bestOmahaLow(me.hand, st.board) : null);
+  const myBadugi = (st.gid === "razzdugi" && me.hand.length >= 1) ? evalBadugi(me.hand) : null;
   const minLive  = stud ? (stk.studAnte + 1) : (flop || dramaha) ? stk.bblind : stk.bblind;
   const isOver   = st.phase === "idle" || st.phase === "showdown";
   const ableCount = st.players.filter(p => p.chips >= minLive).length;
@@ -3005,6 +3006,11 @@ function App() {
                 {myLow && (
                   <span style={{...S.evalBdg,color:"#86efac",background:"#86efac18",border:"1px solid #86efac44"}}>
                     {lowDesc(myLow)}
+                  </span>
+                )}
+                {myBadugi && (
+                  <span style={{...S.evalBdg,color:hColor(myBadugi),background:hColor(myBadugi)+"18",border:`1px solid ${hColor(myBadugi)}44`}}>
+                    {myBadugi.desc}
                   </span>
                 )}
                 {myDrawTxt && (
@@ -3388,7 +3394,7 @@ function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid
   let ev = null, lo = null;
   if (reveal && !p.folded) {
     if (stud) {
-      ev = gid === "razz" ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
+      ev = (gid === "razz" || gid === "razzdugi") ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
       lo = IS_STUD8(gid) && p.hand.length>=5 ? bestLow7(p.hand) : null;
     } else if (dramaha) {
       ev = board.length>=3 && p.hand.length===hs ? bestOmahaHigh(p.hand, board) : null;
@@ -3442,7 +3448,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
   const hs   = flop ? HOLE_SIZE(gid) : HAND_SIZE(gid);
   let ev = null;
   if (reveal && !p.folded) {
-    if (stud) ev = gid === "razz" ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
+    if (stud) ev = (gid === "razz" || gid === "razzdugi") ? bestRazz(p.hand) : (p.hand.length>=5 ? studHigh(p.hand) : null);
     else if (dramaha) ev = board.length>=3 && p.hand.length===hs ? bestOmahaHigh(p.hand, board) : null;
     else if (flop) ev = board.length>=3 ? flopHigh(gid, p.hand, board) : null;
     else if (p.hand.length===hs) ev = evalHand(gid, p.hand);
