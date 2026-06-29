@@ -59,6 +59,7 @@ const SECTIONS = [
     { id:"lhe",    label:"Limit Hold'em",    tag:"HOLD'EM", available:true  },
     { id:"omaha8", label:"Omaha Hi-Lo",      tag:"OMAHA 8", available:true  },
     { id:"razz",   label:"Razz",             tag:"STUD",    available:true  },
+    { id:"razzdugi",label:"Razzdugi",        tag:"STUD SP", available:true  },
     { id:"stud",   label:"7-Card Stud",      tag:"STUD",    available:true  },
     { id:"stud8",  label:"Stud Hi-Lo",       tag:"STUD 8",  available:true  },
     { id:"superstud", label:"Super Stud 8",  tag:"STUD 8",  available:true  },
@@ -88,7 +89,8 @@ const GAMES = SECTIONS.flatMap(s => s.games);
 // Game families
 const IS_DRAW  = gid => gid === "single" || gid === "triple" || gid === "badugi";
 const IS_FLOP  = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp" || gid === "dbbomb";
-const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud";
+const IS_STUD  = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud" || gid === "razzdugi";
+const IS_RAZZDUGI = gid => gid === "razzdugi";   // stud split: best razz low + best badugi (no qualifier)
 const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo" || gid === "dbbomb";
 const IS_HILO  = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud";
 const IS_STUD8 = gid => gid === "stud8" || gid === "superstud";   // hi-lo 8-or-better stud
@@ -698,7 +700,7 @@ function cpuDecideFlop(st, idx) {
 function studStrength(st, pl) {
   const gid = st.gid;
   const n = pl.hand.length;
-  if (gid === "razz") {
+  if (gid === "razz" || gid === "razzdugi") {
     // Lower is better; score by how many low (≤8) distinct cards and how low.
     const lows = [...new Set(pl.hand.map(c => lowVal(c.v)).filter(v => v <= 8))].sort((a,b)=>a-b);
     let s = lows.length / 5 * 0.7;                         // breadth of low cards
@@ -1277,7 +1279,7 @@ const CAT_GOOD = {
 const GAME_LABEL = {
   single:"2-7 Single", triple:"2-7 Triple", badugi:"Badugi", lhe:"Limit Hold'em",
   nlhe:"No-Limit Hold'em", omaha8:"Omaha Hi-Lo", plo:"PLO", bigo:"Big O",
-  razz:"Razz", stud:"7-Card Stud", stud8:"Stud Hi-Lo",
+  razz:"Razz", razzdugi:"Razzdugi", stud:"7-Card Stud", stud8:"Stud Hi-Lo",
   dramahaH:"Dramaha High", dramaha27:"2-7 Dramaha", dramadugi:"Dramadugi",
 };
 
@@ -1393,7 +1395,7 @@ function bringInSeat(players, gid) {
   const seats = players.filter(live).filter(p => upCards(p).length);
   if (!seats.length) return players.findIndex(live);
   const score = p => { const c = upCards(p)[0]; return c.v * 10 + SUIT_RANK[c.s]; };
-  if (gid === "razz" || gid === "superstud") return seats.reduce((a, b) => score(b) > score(a) ? b : a).id; // highest brings in
+  if (gid === "razz" || gid === "superstud" || gid === "razzdugi") return seats.reduce((a, b) => score(b) > score(a) ? b : a).id; // highest brings in
   return seats.reduce((a, b) => score(b) < score(a) ? b : a).id;                       // lowest brings in
 }
 // First to act on 4th+ street: best showing hand acts first (Stud/Stud-8 high),
@@ -1889,6 +1891,21 @@ function showdownStud(st) {
     const names = winners.map(e => nm(e.p)).join(" & ");
     const single = winners.length === 1 && winners[0].p.id !== 0;
     msg = `${names} win${single?"s":""} $${pot} with ${razzDesc(best)}.`;
+  } else if (st.gid === "razzdugi") {
+    // Split (no qualifier): best razz low (A-5) + best badugi, both from the 7 cards.
+    const evals = still.map(p => ({ p, lo: bestRazz(p.hand), bd: evalBadugi(p.hand) }));
+    let bestLo = null; evals.forEach(e => { if (!bestLo || cmpRazz(e.lo, bestLo) < 0) bestLo = e.lo; });
+    const loWinners = evals.filter(e => cmpRazz(e.lo, bestLo) === 0);
+    let bestBd = null; evals.forEach(e => { if (!bestBd || cmpBadugi(e.bd, bestBd) < 0) bestBd = e.bd; });
+    const bdWinners = evals.filter(e => cmpBadugi(e.bd, bestBd) === 0);
+    const loShare = Math.floor(pot / 2), bdShare = pot - loShare;
+    const perLo = Math.floor(loShare / loWinners.length), perBd = Math.floor(bdShare / bdWinners.length);
+    loWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + perLo + (i===0 ? loShare - perLo*loWinners.length : 0));
+    bdWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id]||0) + perBd + (i===0 ? bdShare - perBd*bdWinners.length : 0));
+    const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
+    const scoop = loWinners.length === 1 && bdWinners.length === 1 && loWinners[0].p.id === bdWinners[0].p.id;
+    if (scoop) { const who = nm(loWinners[0].p); msg = `${who} scoop${who==="You"?"":"s"} $${pot} — ${razzDesc(bestLo)} low + ${bestBd.desc}.`; }
+    else msg = `${loWinners.map(e=>nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${loShare} (${razzDesc(bestLo)}); ${bdWinners.map(e=>nm(e.p)).join(" & ")} ${verb(bdWinners)} the badugi for $${bdShare} (${bestBd.desc}).`;
   } else if (st.gid === "stud") {
     const evals = still.map(p => ({ p, hi: studHigh(p.hand) }));
     let best = null; evals.forEach(e => { if (!best || cmpHigh(e.hi, best) < 0) best = e.hi; });
@@ -3201,6 +3218,9 @@ function App() {
         ) : st.gid==="omaha8" ? (
           <><b style={{color:"#c9a84c44"}}>OMAHA HI-LO 8</b>
           {" · use exactly 2 of 4 hole cards · high & qualifying low (8-or-better) split the pot · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="razzdugi" ? (
+          <><b style={{color:"#c9a84c44"}}>RAZZDUGI</b>
+          {" · 7-card stud split · best Razz low (5-4-3-2-A) splits with best Badugi (4-3-2-A) from your 7 cards · no qualifier · highest card brings in · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="razz" ? (
           <><b style={{color:"#c9a84c44"}}>RAZZ</b>
           {" · 7-card stud for low · Aces low · straights & flushes don't count · Nuts: 5-4-3-2-A · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
