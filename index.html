@@ -946,6 +946,62 @@ function tableRead(st) {
   const aggro = opp.reduce((a, p) => a + (PROF[p.id]?.aggr ?? 0.5), 0) / opp.length;
   return { loose: 1 - tight / 100, aggro, n: opp.length };
 }
+// ── MONTE-CARLO EQUITY FOR DRAW GAMES ───────────────────────────────
+// Estimates hero's win probability by dealing random opponent hands and playing
+// out the remaining draws. Opponents who stood pat last round are modelled as
+// already holding a made hand (one polish draw); others draw the full remainder.
+// Approximate by design — the opponent model is a heuristic, not a solver — but
+// it values draws correctly (a one-card seven-draw shows its real strength).
+function drawEquity(st, me, sims = 1200) {
+  const gid = st.gid;
+  if (!PURE_DRAW(gid)) return null;
+  const hs = me.hand.length;
+  const drawsLeft = drawsLeftOf(st);
+  const opps = st.players.filter(p => p.id !== 0 && live(p));
+  if (opps.length === 0) return 1;
+  const cleanPr = { standPat: 0, over: 0, leak: 0 };
+  const key = c => c.r + c.s;
+  let wins = 0;
+  for (let s = 0; s < sims; s++) {
+    const used = new Set(me.hand.map(key));
+    const deck = mkDeck().filter(c => !used.has(key(c)));
+    // Hero plays out remaining draws with a clean keep.
+    let heroHand = me.hand.slice();
+    for (let d = 0; d < drawsLeft; d++) {
+      const disc = cpuDrawCards(heroHand, cleanPr, gid);
+      if (disc.length === 0) break;
+      heroHand = heroHand.map((c, i) => disc.includes(i) ? deck.shift() : c);
+    }
+    let heroBest = true;
+    for (const o of opps) {
+      let oh = deck.splice(0, hs);
+      const pat = o.drewLast === 0 && (st.drawN || 0) > 0;
+      if (pat) {
+        // A pat player reps a SMOOTH made low (≈10-or-better), not just any 5 unpaired cards.
+        // Draw them toward one, keeping cards ten-or-lower, so the model credits them correctly.
+        for (let t = 0; t < 6; t++) {
+          const e = evalHand(gid, oh);
+          if (gid === "badugi" ? (e && e.size === 4) : (e && e.cat === 0 && e.vs[0] <= 10)) break;
+          let disc;
+          if (gid === "badugi") { const keep = badugiKeepIndices(oh); disc = oh.map((_, i) => i).filter(i => !keep.has(i)); }
+          else { const seen = new Set(); disc = []; oh.forEach((c, i) => { if (c.v <= 10 && !seen.has(c.v)) seen.add(c.v); else disc.push(i); }); }
+          if (!disc.length) break;
+          oh = oh.map((c, i) => disc.includes(i) ? deck.shift() : c);
+        }
+      } else {
+        for (let d = 0; d < drawsLeft; d++) {
+          const disc = cpuDrawCards(oh, cleanPr, gid);
+          if (disc.length === 0) break;
+          oh = oh.map((c, i) => disc.includes(i) ? deck.shift() : c);
+        }
+      }
+      if (cmpHand(gid, evalHand(gid, oh), evalHand(gid, heroHand)) < 0) { heroBest = false; break; }  // opponent strictly ahead
+    }
+    if (heroBest) wins++;
+  }
+  return wins / sims;
+}
+
 // ── DRAW-GAME BETTING COACH ──────────────────────────────────
 // Thinks like a draw player: made-vs-draw, smooth-vs-rough, draws left, and —
 // most importantly — reads opponents' draw counts and pat-player aggression,
@@ -965,6 +1021,9 @@ function coachDrawBet(st, me, callAmt) {
   const predraw = (st.drawN || 0) === 0;     // before the first draw — no draw reads yet
   const last    = dl <= 1;                    // final betting round
   const M = heroMade(gid, ev);
+  const eq = drawEquity(st, me, 700);          // Monte-Carlo win probability (null if N/A)
+  const e  = eq == null ? null : Math.round(eq * 100);
+  const eqTxt = e == null ? "" : ` (~${e}% to win)`;
   const goodTop = gid === "badugi" ? 9 : 8;   // "good enough" made-hand ceiling
   const smoothTop = gid === "badugi" ? 7 : 8;
 
@@ -973,16 +1032,16 @@ function coachDrawBet(st, me, callAmt) {
   const heavy = opps.filter(p => p.drewLast >= 2);
   const patBetting = facing && pats.length > 0;   // a pat opponent is driving the action
 
-  // PRE-FIRST-DRAW: judge the starting hand; there are no draws to read yet.
+  // PRE-FIRST-DRAW: judge the starting hand by its real equity (values draws correctly).
   if (predraw) {
-    if (str >= 0.7)  return { tone:"good", text:`Premium start — ${M.txt}. Raise to build the pot and take the lead.` };
-    if (str >= 0.45) return { tone:"good", text:`Strong holding or smooth one-card draw. Call, and raise in position to thin the field.` };
-    if (str >= 0.3)  return facing
-      ? { tone:"ok", text:`Playable but rough. One bet is fine; let it go if it gets raised behind you.` }
-      : { tone:"ok", text:`Marginal — playable, but be cautious out of position.` };
+    if (eq >= 0.58) return { tone:"good", text:`Premium start${eqTxt} — ${M.txt}. Raise to build the pot and take the lead.` };
+    if (eq >= 0.44) return { tone:"good", text:`Strong holding or smooth draw${eqTxt}. Call, and raise in position to thin the field.` };
+    if (eq >= 0.32) return facing
+      ? { tone:"ok", text:`Playable but rough${eqTxt}. One bet is fine; let it go if it's raised behind you.` }
+      : { tone:"ok", text:`Marginal${eqTxt} — playable, but be cautious out of position.` };
     return facing
-      ? { tone:"warn", text:`Too rough to call a bet — a weak draw plays badly from here. Fold.` }
-      : { tone:"warn", text:`Weak holding — don't draw two or three into a field. Fold the worst of these.` };
+      ? { tone:"warn", text:`Too weak${eqTxt} to call a bet — a rough draw plays badly from here. Fold.` }
+      : { tone:"warn", text:`Weak holding${eqTxt} — don't draw two or three into a field. Fold the worst of these.` };
   }
 
   // AFTER A DRAW: the reads are everything.
@@ -994,17 +1053,17 @@ function coachDrawBet(st, me, callAmt) {
     return { tone:"warn", text:`You're still drawing into a pat bettor — you're chasing to beat a made hand. Continue only with a strong one-card draw at a fair price.${last ? " On the last draw, that's usually a fold." : ""}` };
   }
 
-  // No pat aggression shown — play your own made/draw strength.
+  // No pat aggression shown — play your own made/draw strength, informed by equity.
   if (facing) {
     if (M.made && M.top <= goodTop)
-      return { tone:"good", text:`You hold ${M.txt} and nobody has shown a pat hand${heavy.length ? `; ${heavy.length} drew multiple cards, so they're weak` : ""}. Raise for value.` };
-    if (str >= 0.5) return { tone:"ok", text:`Decent ${M.made ? "made hand" : "draw"} with no pat pressure. Call; raise if you improve.` };
-    return { tone:"warn", text:`Thin ${M.made ? "made hand" : "draw"} facing a bet. Without a read they're weak, folding is fine.` };
+      return { tone:"good", text:`You hold ${M.txt}${eqTxt} and nobody's shown a pat hand${heavy.length ? `; ${heavy.length} drew multiple, so they're weak` : ""}. Raise for value.` };
+    if (eq >= 0.5) return { tone:"ok", text:`Decent ${M.made ? "made hand" : "draw"}${eqTxt} with no pat pressure. Call; raise if you improve.` };
+    return { tone:"warn", text:`Thin ${M.made ? "made hand" : "draw"}${eqTxt} facing a bet. Without a read they're weak, folding is fine.` };
   }
   if (M.made && M.top <= goodTop)
-    return { tone:"good", text:`Bet ${M.txt} for value${heavy.length ? ` — players who drew ${heavy[0].drewLast} are unlikely to beat you` : ""}. Don't give a free draw.` };
-  if (str >= 0.4) return { tone:"ok", text:`Reasonable ${M.made ? "hand" : "draw"} — betting to deny free cards is fine, especially against opponents who drew multiple.` };
-  return { tone:"warn", text:`Not enough to bet. Check; ${last ? "give up cheaply if you bricked." : "take the free draw and try to improve."}` };
+    return { tone:"good", text:`Bet ${M.txt} for value${eqTxt}${heavy.length ? ` — players who drew ${heavy[0].drewLast} are unlikely to beat you` : ""}. Don't give a free draw.` };
+  if (eq >= 0.45) return { tone:"ok", text:`Reasonable ${M.made ? "hand" : "draw"}${eqTxt} — betting to deny free cards is fine, especially against opponents who drew multiple.` };
+  return { tone:"warn", text:`Not enough to bet${eqTxt}. Check; ${last ? "give up cheaply if you bricked." : "take the free draw and try to improve."}` };
 }
 // Discrete grader for draw games — mirrors coachDrawBet so history grades line up.
 function coachDrawRec(st, me, callAmt) {
@@ -1013,13 +1072,14 @@ function coachDrawRec(st, me, callAmt) {
   const str = heroDrawStrength(st, me);
   const predraw = (st.drawN || 0) === 0;
   const M = heroMade(gid, ev);
+  const eq = drawEquity(st, me, 500);
   const goodTop = gid === "badugi" ? 9 : 8, smoothTop = gid === "badugi" ? 7 : 8;
   const pats = st.players.filter(p => p.id !== 0 && live(p) && p.drewLast === 0);
   const patBetting = facing && pats.length > 0;
-  if (predraw) { if (str >= 0.7) return facing ? "raise" : "bet"; if (str >= 0.3) return facing ? "call" : "check"; return facing ? "fold" : "check"; }
+  if (predraw) { if (eq >= 0.58) return facing ? "raise" : "bet"; if (eq >= 0.32) return facing ? "call" : "check"; return facing ? "fold" : "check"; }
   if (patBetting) return (M.made && M.top <= smoothTop) ? "call" : "fold";
-  if (facing) { if (M.made && M.top <= goodTop) return "raise"; if (str >= 0.5) return "call"; return "fold"; }
-  return (M.made && M.top <= goodTop) || str >= 0.4 ? "bet" : "check";
+  if (facing) { if (M.made && M.top <= goodTop) return "raise"; if (eq >= 0.5) return "call"; return "fold"; }
+  return (M.made && M.top <= goodTop) || eq >= 0.45 ? "bet" : "check";
 }
 
 function coachBet(st, me, callAmt) {
@@ -2565,11 +2625,17 @@ function App() {
     : st.phase === "discarding" ? "The Discard"
     : (SLBL[st.streetN] || "");
 
-  // Coach advice (only when coach mode is on and it's your move)
-  const advice = !st.coach || !meActive ? null
-    : drawing            ? coachDraw(st, me)
-    : myTurn             ? coachBet(st, me, callAmt)
-    : null;
+  // Coach advice (only when coach mode is on and it's your move).
+  // Memoized so the Monte-Carlo equity sim reruns only when the situation changes,
+  // not on every bet-slider drag.
+  const adviceKey = (!st.coach || !meActive) ? "off"
+    : `${st.gid}|${st.phase}|${st.drawN}|${drawing?1:0}|${myTurn?1:0}|${callAmt}|${st.currentBet}|${st.pot}|${st.exploitDial}|${(me.hand||[]).map(c=>c.r+c.s).join("")}|${st.players.map(p=>p.folded?"F":(p.drewLast??"-")).join(",")}|${(st.sel||[]).join("")}`;
+  const advice = useMemo(() => {
+    if (!st.coach || !meActive) return null;
+    if (drawing) return coachDraw(st, me);
+    if (myTurn)  return coachBet(st, me, callAmt);
+    return null;
+  }, [adviceKey]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bet-size presets (pot-limit caps at the pot; no-limit allows all-in)
   // Pot-fraction sizing done right: an opening bet is fraction×pot; a raise is
