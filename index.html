@@ -81,6 +81,7 @@ const SECTIONS = [
     { id:"badeucey", label:"Badeucey",       tag:"SPLIT", available:true },
     { id:"badacey",  label:"Badacey",        tag:"SPLIT", available:true },
     { id:"archie",   label:"Archie",         tag:"SPLIT", available:true },
+    { id:"veronica", label:"Veronica",       tag:"SPLIT +1", available:true },
   ]},
 ];
 // Flat list for lookups.
@@ -102,7 +103,8 @@ const BOMB_ANTE_BB = 3;   // each player antes this many big blinds in a bomb po
 // Dramaha: 5-card Omaha (high) + one mid-hand draw, split with a second hand made
 // from the five hole cards. The "side" is which hand the draw half is scored as.
 const IS_DRAMAHA   = gid => gid === "dramahaH" || gid === "dramaha27" || gid === "dramadugi";
-const IS_SPLITDRAW = gid => gid === "badeucey" || gid === "badacey" || gid === "archie";
+const IS_SPLITDRAW = gid => gid === "badeucey" || gid === "badacey" || gid === "archie" || gid === "veronica";
+const IS_VERONICA = gid => gid === "veronica";   // Archie + 1 community card usable for the HIGH hand only
 const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
 const DRAW_CAP     = gid => gid === "dramadugi" ? 3 : 5;   // max cards a player may draw
 // Betting structure per game: "fl" fixed-limit, "nl" no-limit, "pl" pot-limit.
@@ -472,7 +474,7 @@ function cpuDrawCards(hand, pr, gid) {
 // preferring distinct suits (good for the badugi half). Archie picks a lane.
 function cpuDrawCardsSplit(hand, gid, pr) {
   const keep = new Set();
-  if (gid === "archie") {
+  if (gid === "archie" || gid === "veronica") {
     const lv = c => c.v === 14 ? 1 : c.v;
     const lows = [...new Set(hand.filter(c => lv(c) <= 8).map(lv))];
     if (lows.length >= 3) {                                   // draw to the low
@@ -707,7 +709,23 @@ function studStrength(st, pl) {
     if (lows.length) s += Math.max(0, (8 - lows[lows.length-1]) / 8) * 0.3; // smoothness
     const ev = bestRazz(pl.hand);
     if (n >= 5 && ev) s = ev.cat === 0 ? Math.max(s, 0.6 + (8 - (ev.tb[0]||8)) * 0.05) : Math.min(s, 0.35);
-    return Math.max(0, Math.min(1, s));
+    s = Math.max(0, Math.min(1, s));
+    if (gid === "razzdugi") {
+      // Half the pot pays the best Badugi — weigh that lane too, so bots/coach value scoops.
+      const bd = evalBadugi(pl.hand);
+      let bs = 0;
+      if (bd) {
+        const top = bd.vs[0];                               // highest card in the badugi (ace=1)
+        bs = bd.size >= 4 ? 0.6 + Math.max(0, 8 - top) * 0.05    // complete badugi: lower top = better
+                          : (bd.size - 1) / 3 * 0.5 + Math.max(0, 10 - top) / 10 * 0.2; // partial draw
+      } else if (n < 4) {                                   // 3rd street: rough badugi potential
+        const suits = new Set(pl.hand.map(c => c.s)).size, ranks = new Set(pl.hand.map(c => c.v)).size;
+        bs = Math.min(suits, ranks) / 4 * 0.35;
+      }
+      bs = Math.max(0, Math.min(1, bs));
+      return Math.max(0, Math.min(1, 0.55 * s + 0.45 * bs));  // split: blend both lanes
+    }
+    return s;
   }
   // stud / stud8 high
   const hi = studHigh(pl.hand.length >= 5 ? pl.hand : pad5(pl.hand));
@@ -966,7 +984,7 @@ function coachDrawPlan(st, me) {
   if (IS_DRAMAHA(st.gid)) return planDramaha(st, me);
   const dl = drawsLeftOf(st);
   if (st.gid === "badugi") return planBadugi(me.hand, dl);
-  if (st.gid === "archie")  return planArchie(me.hand, dl);
+  if (st.gid === "archie" || st.gid === "veronica")  return planArchie(me.hand, dl);
   if (IS_SPLITDRAW(st.gid)) return planSplitTwoWay(me.hand, st.gid, dl);   // badeucey / badacey
   return plan27(me.hand, dl);
 }
@@ -2115,19 +2133,27 @@ const a5Qualifies = e => e && e.cat === 0 && e.tb[0] <= 8;   // 8-or-better
 const highQualifies = e => e && (e.cat >= 2 || (e.cat === 1 && e.tb[0] >= 9)); // pair of 9s+
 
 // ─── SPLIT-DRAW SHOWDOWN (Badeucey / Badacey / Archie) ────────────
-function splitSides(gid) {
+function splitSides(gid, board = []) {
   if (gid === "badeucey") return {
     A:{ ev:h=>evalBadugi(h, true), cmp:cmpBadugi, q:()=>true, name:"badugi" },
     B:{ ev:h=>eval27(h),           cmp:cmp27,     q:()=>true, name:"2-7" } };
   if (gid === "badacey") return {
     A:{ ev:h=>evalBadugi(h),       cmp:cmpBadugi, q:()=>true, name:"badugi" },
     B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:()=>true, name:"A-5 low" } };
+  if (gid === "veronica") {
+    // Archie + a single community card that plays for the HIGH hand only.
+    const bestHi = h => { const all = board.length ? h.concat(board) : h; let best = null;
+      for (const c of kCombos(all, 5)) { const e = evalHigh5(c); if (!best || cmpHigh(e, best) < 0) best = e; } return best; };
+    return {
+      A:{ ev:bestHi,               cmp:cmpHigh,   q:highQualifies, name:"high" },
+      B:{ ev:h=>evalA5(h),         cmp:cmpA5,     q:a5Qualifies,   name:"low" } };
+  }
   return { // archie: high (pair 9s+) / A-5 low (8-or-better); no qualifier ⇒ chop among remaining
     A:{ ev:h=>evalHigh5(h),        cmp:cmpHigh,   q:highQualifies, name:"high" },
     B:{ ev:h=>evalA5(h),           cmp:cmpA5,     q:a5Qualifies,   name:"low" } };
 }
 function showdownSplitDraw(st) {
-  const gid = st.gid, { A, B } = splitSides(gid);
+  const gid = st.gid, { A, B } = splitSides(gid, st.board || []);
   const still = st.players.filter(live);
   const ev = still.map(p => ({ p, a:A.ev(p.hand), b:B.ev(p.hand) }));
   const winners = (side, k) => {
@@ -2328,7 +2354,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29b";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29c";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2612,7 +2638,10 @@ function App() {
     });
     const queue = queueFrom(players, (bbId + 1) % 4);  // action starts left of the big blind
     const nx    = queue[0];
-    return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, pot, queue,
+    // Veronica deals one community card face-up immediately after the deal (plays for HIGH only).
+    const vBoard = s.gid === "veronica" ? deck.slice(cursor, cursor + 1) : [];
+    if (s.gid === "veronica") cursor += 1;
+    return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, pot, queue, board:vBoard,
       currentBet:stk.bblind,
       phase:"acting", maxDraws:(s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx:dealer,
       nlBet:Math.max(40, Math.floor(pot * 0.65)),
@@ -2708,7 +2737,7 @@ function App() {
   const myEval2 = IS_DOUBLE(st.gid) && me.hand.length >= 2 && (st.board2||[]).length >= 3
     ? flopHigh(st.gid, me.hand, st.board2) : null;
   // Split-draw (Badeucey/Badacey/Archie): show both halves of your hand.
-  const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid) : null;
+  const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid, st.board || []) : null;
   const mySplitTxt = mySplit
     ? `${mySplit.A.name}: ${mySplit.A.ev(me.hand).desc}  ·  ${mySplit.B.name}: ${mySplit.B.ev(me.hand).desc}`
     : null;
@@ -3321,6 +3350,9 @@ function App() {
         ) : st.gid==="badacey" ? (
           <><b style={{color:"#c9a84c44"}}>BADACEY</b>
           {" · triple draw · best Badugi (ace low) splits with best A-5 lowball · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
+        ) : st.gid==="veronica" ? (
+          <><b style={{color:"#c9a84c44"}}>VERONICA</b>
+          {" · Archie + one community card (HIGH only) · triple draw · best high (pair of 9s+) splits with best A-5 low (8-or-better) · no qualifier ⇒ pot chopped · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
         ) : st.gid==="archie" ? (
           <><b style={{color:"#c9a84c44"}}>ARCHIE</b>
           {" · triple draw · best high (pair of 9s+ to qualify) splits with best A-5 low (8-or-better) · no qualifier ⇒ pot chopped among remaining players · "}{`Fixed Limit $${stk.sbet}/$${stk.bbet}`}</>
@@ -3395,6 +3427,14 @@ function CentreInfo({ st, streetLbl }) {
             })}
           </div>
         )
+      )}
+      {IS_VERONICA(st.gid) && st.phase !== "idle" && st.board && st.board[0] && (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,marginBottom:6}}>
+          <span style={{fontSize:7,letterSpacing:1.5,color:"#c9a84c99",fontWeight:"bold"}}>COMMUNITY · HIGH ONLY</span>
+          <div style={S.board}>
+            <BoardCard key={`v-${st.boardKey}-0`} card={st.board[0]} idx={0}/>
+          </div>
+        </div>
       )}
       <div style={S.potBox}>
         <div style={S.potShine}/>
