@@ -3305,20 +3305,24 @@ function App() {
         )}
       </div>
 
-      {/* CONTACT */}
-      <div style={S.contact}>
-        <a href="mailto:hello@getmixed.ca" style={S.contactLink}>hello@getmixed.ca</a>
-        <button onClick={()=>setShowBug(true)} style={{...S.contactLink, marginLeft:14, background:"none", border:"none", borderBottom:"1px solid #6f604833", cursor:"pointer", font:"inherit", padding:0}}>🐞 Report a bug</button>
-        <button onClick={()=>setShowFeedback(true)} style={{...S.contactLink, marginLeft:14, background:"none", border:"none", borderBottom:"1px solid #6f604833", cursor:"pointer", font:"inherit", padding:0}}>💬 Feedback</button>
-        {SUPPORT_URL.indexOf("https://") === 0 && (
-          <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" style={{...S.contactLink, marginLeft:14, color:"#c9a84c99", borderBottomColor:"#c9a84c44"}}>♥ Support this project</a>
-        )}
-      </div>
-
-      {/* VERSION / BETA STAMP */}
-      <div style={{textAlign:"center", marginTop:8, fontSize:10, color:"#6f6048", letterSpacing:0.5}}>
-        {IS_BETA && <span style={{color:"#c9a84c", border:"1px solid #c9a84c55", borderRadius:4, padding:"1px 5px", marginRight:7, fontWeight:"bold", letterSpacing:1}}>BETA</span>}
-        Get Mixed · build {APP_VERSION}
+      {/* FOOTER META — actions + identity, kept quiet and disciplined */}
+      <div style={S.footMeta}>
+        <div style={S.footActions}>
+          <button onClick={()=>setShowBug(true)} style={S.footLink}>Report a bug</button>
+          <span style={S.footDot}>·</span>
+          <button onClick={()=>setShowFeedback(true)} style={S.footLink}>Send feedback</button>
+          {SUPPORT_URL.indexOf("https://") === 0 && (<>
+            <span style={S.footDot}>·</span>
+            <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" style={S.footSupport}>♥ Support</a>
+          </>)}
+        </div>
+        <a href="mailto:hello@getmixed.ca" style={S.footMail}>hello@getmixed.ca</a>
+        <div style={S.footId}>
+          <span style={S.footBrand}>GET MIXED</span>
+          {IS_BETA && <span style={S.footBeta}>BETA</span>}
+          <span style={S.footDot}>·</span>
+          <span style={S.footBuild}>build {APP_VERSION}</span>
+        </div>
       </div>
 
     </div>
@@ -3966,6 +3970,16 @@ const S = {
   fbThanks:{fontSize:15,color:"#86efac",textAlign:"center",padding:"30px 12px",lineHeight:1.6},
   contact:{textAlign:"center",padding:"4px 0 16px"},
   contactLink:{fontSize:11,color:"#6f6048",textDecoration:"none",letterSpacing:0.5,borderBottom:"1px solid #6f604833"},
+  footMeta:{display:"flex",flexDirection:"column",alignItems:"center",gap:7,padding:"13px 0 18px",marginTop:10,borderTop:"1px solid rgba(201,168,76,0.12)"},
+  footActions:{display:"flex",alignItems:"center",justifyContent:"center",flexWrap:"wrap",gap:9},
+  footLink:{fontSize:11.5,color:"#9d8a62",background:"none",border:"none",padding:0,margin:0,cursor:"pointer",letterSpacing:0.4,fontFamily:"Georgia, serif"},
+  footSupport:{fontSize:11.5,color:"#c9a84c",textDecoration:"none",letterSpacing:0.4,fontFamily:"Georgia, serif"},
+  footMail:{fontSize:10.5,color:"#6f6048",textDecoration:"none",letterSpacing:0.5},
+  footId:{display:"flex",alignItems:"center",justifyContent:"center",gap:7},
+  footBrand:{fontSize:9.5,color:"#8a7a54",letterSpacing:2,fontWeight:"bold"},
+  footBeta:{fontSize:8,color:"#c9a84c",border:"1px solid rgba(201,168,76,0.4)",borderRadius:3,padding:"1px 5px",letterSpacing:1.5,fontWeight:"bold"},
+  footBuild:{fontSize:9.5,color:"#6f6048",letterSpacing:0.5},
+  footDot:{color:"rgba(216,202,172,0.25)",fontSize:11},
 
 
 
