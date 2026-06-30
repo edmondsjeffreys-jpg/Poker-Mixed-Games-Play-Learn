@@ -2323,6 +2323,8 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
+const APP_VERSION = "2026.06.29";   // build stamp — bump when you ship a new build
+const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
   { id:"tour-menu",   title:"Pick your game",  text:"Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -2330,7 +2332,8 @@ const TOUR = [
   { id:"tour-coach",  title:"Live coaching",   text:"Real-time strategy advice as you play. Tap any time to toggle it on or off." },
   { id:"tour-review", title:"Track your play", text:"Review logs every decision and grades it, so you can spot leaks over time." },
 ];
-function FeedbackScreen({ onClose }) {
+function FeedbackScreen({ onClose, mode="feedback", context="" }) {
+  const isBug = mode === "bug";
   const [msg, setMsg] = useState("");
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState("idle");
@@ -2343,7 +2346,8 @@ function FeedbackScreen({ onClose }) {
       const r = await fetch(FORMSPREE_ENDPOINT, {
         method:"POST",
         headers:{ "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({ message: msg, email, source: "getmixed.ca" }),
+        body: JSON.stringify({ message: msg, email, source: "getmixed.ca",
+          type: isBug ? "BUG REPORT" : "feedback", context, version: APP_VERSION }),
       });
       setStatus(r.ok ? "done" : "error");
     } catch { setStatus("error"); }
@@ -2352,21 +2356,25 @@ function FeedbackScreen({ onClose }) {
     <div style={S.overlay} onClick={onClose}>
       <div style={S.fbCard} onClick={e => e.stopPropagation()}>
         <div style={S.reviewHead}>
-          <span style={S.reviewTitle}>💬 Feedback</span>
+          <span style={S.reviewTitle}>{isBug ? "🐞 Report a bug" : "💬 Feedback"}</span>
           <button onClick={onClose} style={S.modalClose}>✕</button>
         </div>
         {status === "done" ? (
-          <div style={S.fbThanks}>Thanks — your feedback was sent. 🙏</div>
+          <div style={S.fbThanks}>Thanks — your {isBug ? "bug report" : "feedback"} was sent. 🙏</div>
         ) : (
           <>
-            <div style={S.fbLabel}>Found a bug or have an idea? Tell me about it:</div>
-            <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={5} style={S.fbArea} placeholder="What's on your mind?" />
+            <div style={S.fbLabel}>{isBug
+              ? "Describe the bug — what happened, and what did you expect?"
+              : "Found a bug or have an idea? Tell me about it:"}</div>
+            <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={5} style={S.fbArea}
+              placeholder={isBug ? "e.g. The winner was highlighted wrong at showdown…" : "What's on your mind?"} />
             <input value={email} onChange={e => setEmail(e.target.value)} style={S.fbInput} placeholder="Your email (optional, for a reply)" />
+            {isBug && context && <div style={{fontSize:10,color:"#9d8a62",marginTop:6}}>Auto-attached: {context} · v{APP_VERSION}</div>}
             {status === "error" && <div style={S.fbErr}>Couldn't send just now — please try again in a moment.</div>}
             {status === "noendpoint" && <div style={S.fbErr}>Feedback isn't connected yet — the form endpoint still needs to be added.</div>}
             <button onClick={send} disabled={status === "sending" || !msg.trim()}
               style={{ ...S.fbSend, opacity:(status === "sending" || !msg.trim()) ? 0.5 : 1 }}>
-              {status === "sending" ? "Sending…" : "Send feedback"}
+              {status === "sending" ? "Sending…" : (isBug ? "Send bug report" : "Send feedback")}
             </button>
           </>
         )}
@@ -2381,6 +2389,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [showBug, setShowBug] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tourStep, setTourStep] = useState(-1);   // -1 = off; 0..N = spotlight step
   const [tourRect, setTourRect] = useState(null);
@@ -2768,6 +2777,7 @@ function App() {
           <span style={S.menuTrigCur}>
             {curGame?.tag && <span style={S.menuTrigTag}>{curGame.tag}</span>}
             <span style={S.menuTrigName}>{curGame?.label || "Choose a game"}</span>
+            {IS_BETA && <span style={{fontSize:7,letterSpacing:1,color:"#c9a84c",border:"1px solid #c9a84c55",borderRadius:3,padding:"1px 4px",marginLeft:6,fontWeight:"bold",alignSelf:"center"}}>BETA</span>}
           </span>
           <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#e0bd5e",fontSize:16,fontWeight:"bold",lineHeight:1,marginLeft:6}}>▾</span>
         </button>
@@ -2892,6 +2902,7 @@ function App() {
 
       {showReview && <ReviewScreen onClose={()=>setShowReview(false)} mobile={mobile}/>}
       {showFeedback && <FeedbackScreen onClose={()=>setShowFeedback(false)}/>}
+      {showBug && <FeedbackScreen mode="bug" context={curGame?.label || st.gid} onClose={()=>setShowBug(false)}/>}
 
       {/* FIRST-RUN SPOTLIGHT TOUR */}
       {tourStep >= 0 && tourRect && (() => {
@@ -3292,10 +3303,17 @@ function App() {
       {/* CONTACT */}
       <div style={S.contact}>
         <a href="mailto:hello@getmixed.ca" style={S.contactLink}>hello@getmixed.ca</a>
+        <button onClick={()=>setShowBug(true)} style={{...S.contactLink, marginLeft:14, background:"none", border:"none", borderBottom:"1px solid #6f604833", cursor:"pointer", font:"inherit", padding:0}}>🐞 Report a bug</button>
         <button onClick={()=>setShowFeedback(true)} style={{...S.contactLink, marginLeft:14, background:"none", border:"none", borderBottom:"1px solid #6f604833", cursor:"pointer", font:"inherit", padding:0}}>💬 Feedback</button>
         {SUPPORT_URL.indexOf("https://") === 0 && (
           <a href={SUPPORT_URL} target="_blank" rel="noopener noreferrer" style={{...S.contactLink, marginLeft:14, color:"#c9a84c99", borderBottomColor:"#c9a84c44"}}>♥ Support this project</a>
         )}
+      </div>
+
+      {/* VERSION / BETA STAMP */}
+      <div style={{textAlign:"center", marginTop:8, fontSize:10, color:"#6f6048", letterSpacing:0.5}}>
+        {IS_BETA && <span style={{color:"#c9a84c", border:"1px solid #c9a84c55", borderRadius:4, padding:"1px 5px", marginRight:7, fontWeight:"bold", letterSpacing:1}}>BETA</span>}
+        Get Mixed · build {APP_VERSION}
       </div>
 
     </div>
