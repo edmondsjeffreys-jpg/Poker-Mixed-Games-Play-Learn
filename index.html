@@ -2406,7 +2406,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29f";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29g";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2498,6 +2498,7 @@ function App() {
   const [showBug, setShowBug] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tourStep, setTourStep] = useState(-1);   // -1 = off; 0..N = spotlight step
+  const [showWelcome, setShowWelcome] = useState(false);   // first-visit intro card
   const [tourRect, setTourRect] = useState(null);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
@@ -2546,7 +2547,9 @@ function App() {
     if (st.phase !== "acting" || !st.queue.length || st.queue[0] === 0) return;
     const actor = st.queue[0];
     const tilt  = st.cpuTilt?.[actor] || 0;
-    const delay = tilt > 0 ? 280 + Math.random() * 350 : 480 + Math.random() * 550;
+    const heroOut = !live(st.players[0]);   // once you're out, fast-forward the rest of the hand
+    const base  = tilt > 0 ? 280 + Math.random() * 350 : 480 + Math.random() * 550;
+    const delay = heroOut ? base / 3.5 : base;
     const t = setTimeout(() => {
       setSt(s => {
         if (s.phase !== "acting" || !s.queue.length || s.queue[0] !== actor) return s;
@@ -2564,7 +2567,7 @@ function App() {
     if (live(st.players[0])) return;            // you're still in — wait for your input
     const t = setTimeout(() => {
       setSt(s => (s.phase === "drawing" && !live(s.players[0])) ? execDraw(s, [], false) : s);
-    }, 650);
+    }, 190);   // hero's already out — resolve quickly (was 650)
     return () => clearTimeout(t);
   }, [st.seq, st.phase]);
 
@@ -2724,8 +2727,16 @@ function App() {
   const setCoach = v => setSt(s => ({ ...s, coach:v }));
   const setExploitDial = v => setSt(s => ({ ...s, exploitDial:v }));
 
-  // First-run tour: start it once per device, measure the spotlight target each step.
-  useEffect(() => { try { if (!localStorage.getItem("pmg_onboarded")) setTourStep(0); } catch {} }, []);
+  // First visit: show the welcome card first; the spotlight tour follows once it's dismissed.
+  useEffect(() => { try {
+    if (!localStorage.getItem("pmg_welcomed")) setShowWelcome(true);
+    else if (!localStorage.getItem("pmg_onboarded")) setTourStep(0);
+  } catch {} }, []);
+  const dismissWelcome = () => {
+    try { localStorage.setItem("pmg_welcomed", "1"); } catch {}
+    setShowWelcome(false);
+    try { if (!localStorage.getItem("pmg_onboarded")) setTourStep(0); } catch { setTourStep(0); }
+  };
   useEffect(() => {
     if (tourStep < 0) return;
     const measure = () => { const el = document.getElementById(TOUR[tourStep].id); if (el) setTourRect(el.getBoundingClientRect()); };
@@ -3018,6 +3029,37 @@ function App() {
       {showReview && <ReviewScreen onClose={()=>setShowReview(false)} mobile={mobile}/>}
       {showFeedback && <FeedbackScreen onClose={()=>setShowFeedback(false)}/>}
       {showBug && <FeedbackScreen mode="bug" context={curGame?.label || st.gid} onClose={()=>setShowBug(false)}/>}
+
+      {/* FIRST-VISIT WELCOME CARD */}
+      {showWelcome && (
+        <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",
+          padding:"0 22px",background:"radial-gradient(130% 80% at 50% 0%,rgba(22,32,58,0.92),rgba(7,10,17,0.97))",backdropFilter:"blur(3px)"}}>
+          <div style={{width:"100%",maxWidth:320,background:"linear-gradient(165deg,#141821,#0e1118)",
+            border:"1px solid rgba(201,168,76,0.28)",borderRadius:18,padding:"30px 24px 26px",textAlign:"center",
+            boxShadow:"0 24px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(201,168,76,0.08)"}}>
+            <div style={{fontSize:12,letterSpacing:6,marginBottom:12}}>
+              <span style={{color:"#e9e2cf"}}>♠</span> <span style={{color:"#c0392b"}}>♥</span> <span style={{color:"#c0392b"}}>♦</span> <span style={{color:"#e9e2cf"}}>♣</span>
+            </div>
+            <div style={{fontSize:27,letterSpacing:5,color:"#c9a84c",fontWeight:"bold"}}>GET MIXED</div>
+            <div style={{fontSize:8.5,letterSpacing:3,color:"#9d8659",marginTop:5,textTransform:"uppercase"}}>Mixed Game Play &amp; Learn</div>
+            <div style={{height:1,background:"linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent)",margin:"18px 0"}}/>
+            <div style={{fontSize:13.5,lineHeight:1.6,color:"#d8cba6"}}>
+              Practice <span style={{color:"#efe4be"}}>20+ mixed-game variants</span> against bots — draw, stud, flop, and split-pot — with a <span style={{color:"#efe4be"}}>coach</span> that breaks down every decision.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:9,margin:"20px 2px 22px",textAlign:"left"}}>
+              {["20+ games, one tap to switch","Built-in coach on every street","Free · play money · no signup"].map(t => (
+                <div key={t} style={{display:"flex",alignItems:"center",gap:10,fontSize:12.5,color:"#cdbf9e"}}>
+                  <span style={{width:5,height:5,borderRadius:"50%",background:"#c9a84c",flex:"none",boxShadow:"0 0 6px rgba(201,168,76,0.6)"}}/>{t}
+                </div>
+              ))}
+            </div>
+            <button onClick={dismissWelcome} style={{display:"block",width:"100%",background:"linear-gradient(165deg,#d8b551,#bb8f33)",
+              color:"#1a1206",border:"none",borderRadius:11,padding:14,fontSize:14,fontWeight:"bold",fontFamily:"Georgia, serif",
+              letterSpacing:1.5,cursor:"pointer",boxShadow:"0 6px 18px rgba(201,168,76,0.25)"}}>PLAY MIXED GAMES</button>
+            <div style={{fontSize:10,color:"#6f6048",marginTop:13}}>You'll only see this once.</div>
+          </div>
+        </div>
+      )}
 
       {/* FIRST-RUN SPOTLIGHT TOUR */}
       {tourStep >= 0 && tourRect && (() => {
