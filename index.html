@@ -718,7 +718,13 @@ function studStrength(st, pl) {
     let s = lows.length / 5 * 0.7;                         // breadth of low cards
     if (lows.length) s += Math.max(0, (8 - lows[lows.length-1]) / 8) * 0.3; // smoothness
     const ev = bestRazz(pl.hand);
-    if (n >= 5 && ev) s = ev.cat === 0 ? Math.max(s, 0.6 + (8 - (ev.tb[0]||8)) * 0.05) : Math.min(s, 0.35);
+    if (n >= 5 && ev) {
+      if (ev.cat === 0) {
+        const top = ev.tb[0] || 8;
+        s = top <= 8 ? Math.max(s, 0.60 + (8 - top) * 0.06)   // 8-or-better: a real made low, scales up to wheel
+                     : Math.min(s, 0.50 - (top - 8) * 0.04);   // 9-low or worse: marginal — call, never a raise
+      } else s = Math.min(s, 0.30);                            // paired / no qualifying low
+    }
     s = Math.max(0, Math.min(1, s));
     if (gid === "razzdugi") {
       // Half the pot pays the best Badugi — weigh that lane too, so bots/coach value scoops.
@@ -1148,14 +1154,19 @@ function coachDrawBet(st, me, callAmt) {
 
   // PRE-FIRST-DRAW: judge the starting hand by its real equity (values draws correctly).
   if (predraw) {
+    const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
+    const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
     if (eq >= 0.58) return { tone:"good", text:`Premium start${eqTxt} — ${M.txt}. Raise to build the pot and take the lead.` };
     if (eq >= 0.44) return { tone:"good", text:`Strong holding or smooth draw${eqTxt}. Call, and raise in position to thin the field.` };
     if (eq >= 0.32) return facing
       ? { tone:"ok", text:`Playable but rough${eqTxt}. One bet is fine; let it go if it's raised behind you.` }
       : { tone:"ok", text:`Marginal${eqTxt} — playable, but be cautious out of position.` };
+    // A rough draw is still a clear call when the price is right — pot odds beat raw equity here.
+    if (facing && eq >= potOdds + 0.05)
+      return { tone:"ok", text:`Rough draw${eqTxt}, but ${oddsTxt} pot odds make this an easy call — see a card and reassess if it's raised behind you.` };
     return facing
-      ? { tone:"warn", text:`Too weak${eqTxt} to call a bet — a rough draw plays badly from here. Fold.` }
-      : { tone:"warn", text:`Weak holding${eqTxt} — don't draw two or three into a field. Fold the worst of these.` };
+      ? { tone:"warn", text:`Too weak${eqTxt} even for ${oddsTxt} — fold.` }
+      : { tone:"warn", text:`Weak holding${eqTxt} — don't open-draw two or three into a field. Fold the worst of these.` };
   }
 
   // AFTER A DRAW: the reads are everything.
@@ -2395,7 +2406,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29e";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29f";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
