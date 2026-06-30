@@ -441,9 +441,9 @@ function cmpHand(gid, a, b) {
 
 // ─── CPU DRAW ────────────────────────────────────
 // Keep low unpaired cards, discard the rest — with personality leaks.
-function cpuDrawCards(hand, pr, gid) {
+function cpuDrawCards(hand, pr, gid, community = []) {
   if (IS_DRAMAHA(gid)) return cpuDrawCardsDramaha(hand, gid);
-  if (IS_SPLITDRAW(gid)) return cpuDrawCardsSplit(hand, gid, pr);
+  if (IS_SPLITDRAW(gid)) return cpuDrawCardsSplit(hand, gid, pr, community);
   let discard;
   if (gid === "badugi") {
     // Keep the cards that form the best badugi; discard the rest.
@@ -472,7 +472,7 @@ function cpuDrawCards(hand, pr, gid) {
 
 // v1 split-draw bot: keep distinct low ranks (good for the 2-7/A-5 half),
 // preferring distinct suits (good for the badugi half). Archie picks a lane.
-function cpuDrawCardsSplit(hand, gid, pr) {
+function cpuDrawCardsSplit(hand, gid, pr, community = []) {
   const keep = new Set();
   if (gid === "archie" || gid === "veronica") {
     const lv = c => c.v === 14 ? 1 : c.v;
@@ -483,6 +483,8 @@ function cpuDrawCardsSplit(hand, gid, pr) {
     } else {                                                  // play high: keep pairs+ and top cards
       const cnt = {}; hand.forEach(c => cnt[c.v] = (cnt[c.v] || 0) + 1);
       hand.forEach((c, i) => { if (cnt[c.v] >= 2) keep.add(i); });
+      const bvals = community.map(c => c.v);                  // Veronica: a hole card pairing the board = high pair
+      if (bvals.length) hand.forEach((c, i) => { if (bvals.includes(c.v)) keep.add(i); });
       if (keep.size === 0) { const o = hand.map((c, i) => ({ v:c.v, i })).sort((a, b) => b.v - a.v); keep.add(o[0].i); keep.add(o[1].i); }
     }
   } else {                                                    // badeucey / badacey
@@ -559,6 +561,14 @@ function cpuDecide(st, idx) {
     keepers = new Set(hand.filter(c => c.v <= 7).map(c => c.v)).size;
     good = ev && ev.cat === 0 && ev.vs[0] <= 8;
     ok   = ev && ev.cat === 0 && ev.vs[0] <= 10;
+    if (st.gid === "veronica") {
+      // Also credit a qualifying HIGH made with the community card (the lane eval27 ignores).
+      const board = st.board || [];
+      const all = board.length ? hand.concat(board) : hand;
+      let hi = null; for (const c of kCombos(all, 5)) { const e = evalHigh5(c); if (!hi || cmpHigh(e, hi) < 0) hi = e; }
+      const hiQual = hi && (hi.cat >= 2 || (hi.cat === 1 && (hi.tb[0] || 0) >= 9));   // two pair+, or pair of 9s+
+      if (hiQual) { good = good || hi.cat >= 3; ok = true; keepers = Math.max(keepers, 4); }
+    }
   }
 
   // Looseness lowers the # of good cards needed to continue, and raises
@@ -797,6 +807,21 @@ function heroDrawStrength(st, me) {
   const ev = evalHand(st.gid, me.hand);
   const dl = drawsLeftOf(st);            // draws still to come (incl. the one pending)
   const future = Math.max(0, dl - 1);    // draws after the current betting round
+  if (st.gid === "veronica") {
+    // Split: HIGH uses hole + community card; LOW (A-5, 8-or-better) uses hole only.
+    const board = st.board || [];
+    const all = board.length ? me.hand.concat(board) : me.hand;
+    let hi = null; for (const c of kCombos(all, 5)) { const e = evalHigh5(c); if (!hi || cmpHigh(e, hi) < 0) hi = e; }
+    let hs = hi ? ([0.30,0.42,0.58,0.70,0.80,0.88,0.94,0.98,1][hi.cat] ?? 0.3) : 0.3;
+    if (hi && hi.cat === 1 && (hi.tb[0] || 0) < 9) hs = 0.30;   // pair below 9s doesn't qualify for high
+    const lo = evalA5(me.hand);
+    let ls;
+    if (lo && lo.cat === 0) ls = lo.tb[0] <= 5 ? 0.90 : lo.tb[0] <= 7 ? 0.72 : lo.tb[0] <= 8 ? 0.55 : 0.32;
+    else { const lows = new Set(me.hand.filter(c => c.v <= 8).map(c => c.v === 14 ? 1 : c.v)).size;
+           ls = (lows >= 4 ? 0.5 : lows >= 3 ? 0.36 : lows >= 2 ? 0.24 : 0.13) + future * 0.05; }
+    ls = Math.min(0.95, ls);
+    return Math.max(0, Math.min(1, 0.5 * hs + 0.5 * ls));   // split: blend both lanes
+  }
   if (st.gid === "badugi") {
     if (ev && ev.size === 4) return ev.vs[0] <= 7 ? 0.92 : ev.vs[0] <= 9 ? 0.76 : 0.6;
     const keepIdx = [...badugiKeepIndices(me.hand)];
@@ -949,7 +974,7 @@ function planSplitTwoWay(hand, gid, drawsLeft) {
   return { keep: keepArr, discard, pat, head: pat ? "stand pat" : `draw ${discard.length}`, why, tone };
 }
 // Archie (high vs A-5 low, triple draw): pick the lane the hand is actually built for.
-function planArchie(hand, drawsLeft) {
+function planArchie(hand, drawsLeft, community = []) {
   const all = hand.map((_, i) => i);
   const lv = c => c.v === 14 ? 1 : c.v;
   const lowRanks = [...new Set(hand.filter(c => lv(c) <= 8).map(c => lv(c)))];
@@ -963,14 +988,20 @@ function planArchie(hand, drawsLeft) {
       tone: lowRanks.length >= 4 ? "good" : "ok" };
   }
   const cnt = {}; hand.forEach((c, i) => { (cnt[c.v] = cnt[c.v] || []).push(i); });
+  const boardVals = community.map(c => c.v);                // Veronica: a hole card pairing the board makes a high pair
+  const comboPair = community.length ? hand.map((c, i) => ({ c, i })).filter(o => boardVals.includes(o.c.v)) : [];
   const pairs = Object.values(cnt).filter(g => g.length >= 2);
-  if (pairs.length) {                                       // play the high (pair of 9s+ qualifies)
+  if (pairs.length || comboPair.length) {                   // play the high (pair of 9s+ qualifies)
     pairs.forEach(g => g.forEach(i => keep.add(i)));
+    comboPair.forEach(o => keep.add(o.i));
     const keepArr = [...keep].sort((a, b) => a - b), discard = all.filter(i => !keep.has(i));
-    const topPair = Math.max(...pairs.map(g => hand[g[0]].v));
+    const inHandTop = pairs.length ? Math.max(...pairs.map(g => hand[g[0]].v)) : 0;
+    const boardTop  = comboPair.length ? Math.max(...comboPair.map(o => o.c.v)) : 0;
+    const topPair = Math.max(inHandTop, boardTop);
+    const usesBoard = comboPair.length && boardTop >= inHandTop;
     return { keep: keepArr, discard, pat: false, head: `draw ${discard.length}`,
       why: topPair >= 9
-        ? `Play the high — keep your pair and draw ${discard.length} toward a qualifying high (pair of nines or better).`
+        ? `Play the high — ${usesBoard ? "your card pairs the community card" : "keep your pair"} toward a qualifying high (nines or better). Draw ${discard.length}.`
         : `Your pair is below nines, so it doesn't qualify yet. Draw ${discard.length} to improve it, or fold to action.`,
       tone: topPair >= 9 ? "ok" : "warn" };
   }
@@ -984,7 +1015,7 @@ function coachDrawPlan(st, me) {
   if (IS_DRAMAHA(st.gid)) return planDramaha(st, me);
   const dl = drawsLeftOf(st);
   if (st.gid === "badugi") return planBadugi(me.hand, dl);
-  if (st.gid === "archie" || st.gid === "veronica")  return planArchie(me.hand, dl);
+  if (st.gid === "archie" || st.gid === "veronica")  return planArchie(me.hand, dl, st.gid === "veronica" ? (st.board || []) : []);
   if (IS_SPLITDRAW(st.gid)) return planSplitTwoWay(me.hand, st.gid, dl);   // badeucey / badacey
   return plan27(me.hand, dl);
 }
@@ -1181,6 +1212,16 @@ function coachBet(st, me, callAmt) {
     else if (r.aggro >= 0.60) { ex = " Aggressive table — let them bet your strong hands and call down a bit lighter."; }
     if (k < 0.25) ex = "";                 // dial too low to give a confident read
     if (k >= 0.45) tag = "[Exploit] ";     // flag when the coach is leaning on reads
+  }
+  if (st.gid === "razzdugi") {
+    // Speak the badugi lane, since the generic stud text only knows the razz low.
+    const bd = me.hand.length >= 4 ? evalBadugi(me.hand) : null;
+    const lo = me.hand.length >= 5 ? bestRazz(me.hand) : null;
+    const madeBadugi = bd && bd.size === 4;
+    const smoothLow  = lo && lo.cat === 0 && (lo.tb[0] || 9) <= 8;
+    if (madeBadugi && smoothLow) tag += "Working both ways (badugi + low) — ";
+    else if (madeBadugi)         tag += "Made badugi locks half — ";
+    else if (bd && bd.size === 3) tag += "Three to a badugi — ";
   }
   const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
   const mwAdj = nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1;   // your share of equity shrinks multiway
@@ -1712,7 +1753,7 @@ function execDraw(st, playerDiscards, playerFolds = false) {
       return { ...p, hand, betSt:0, lastAct:null, drewLast:playerDiscards.length };
     }
     if (p.folded) return { ...p };
-    const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid);
+    const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid, st.gid === "veronica" ? (st.board || []) : []);
     const hand = p.hand.map((c, i) => disc.includes(i) ? deck.shift() : c);
     return { ...p, hand, betSt:0, drewLast:disc.length,
       lastAct:{ text:disc.length === 0 ? "Stands Pat" : `Drew ${disc.length}`, color:"#94a3b8" } };
@@ -2354,7 +2395,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29c";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29e";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
