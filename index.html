@@ -1024,17 +1024,22 @@ function drawEquity(st, me, sims = 1200) {
   let wins = 0;
   for (let s = 0; s < sims; s++) {
     const used = new Set(me.hand.map(key));
-    const deck = mkDeck().filter(c => !used.has(key(c)));
+    let stub = mkDeck().filter(c => !used.has(key(c)));
     // Hero plays out remaining draws with a clean keep.
     let heroHand = me.hand.slice();
+    // Self-replenishing draw: 4 players × up to 3 draws can need more than 52 cards, so when the
+    // stub runs dry we reshuffle the muck (a fresh deck minus the hero's live hand) instead of
+    // pulling `undefined` — which would otherwise crash the evaluator. Tiny noise, no crash.
+    const refill = () => { const hset = new Set(heroHand.map(key)); stub = mkDeck().filter(c => !hset.has(key(c))); };
+    const draw1 = () => { if (!stub.length) refill(); return stub.shift(); };
     for (let d = 0; d < drawsLeft; d++) {
       const disc = cpuDrawCards(heroHand, cleanPr, gid);
       if (disc.length === 0) break;
-      heroHand = heroHand.map((c, i) => disc.includes(i) ? deck.shift() : c);
+      heroHand = heroHand.map((c, i) => disc.includes(i) ? draw1() : c);
     }
     let heroBest = true;
     for (const o of opps) {
-      let oh = deck.splice(0, hs);
+      let oh = Array.from({ length: hs }, () => draw1());
       const pat = o.drewLast === 0 && (st.drawN || 0) > 0;
       if (pat) {
         // A pat player reps a SMOOTH made low (≈10-or-better), not just any 5 unpaired cards.
@@ -1046,13 +1051,13 @@ function drawEquity(st, me, sims = 1200) {
           if (gid === "badugi") { const keep = badugiKeepIndices(oh); disc = oh.map((_, i) => i).filter(i => !keep.has(i)); }
           else { const seen = new Set(); disc = []; oh.forEach((c, i) => { if (c.v <= 10 && !seen.has(c.v)) seen.add(c.v); else disc.push(i); }); }
           if (!disc.length) break;
-          oh = oh.map((c, i) => disc.includes(i) ? deck.shift() : c);
+          oh = oh.map((c, i) => disc.includes(i) ? draw1() : c);
         }
       } else {
         for (let d = 0; d < drawsLeft; d++) {
           const disc = cpuDrawCards(oh, cleanPr, gid);
           if (disc.length === 0) break;
-          oh = oh.map((c, i) => disc.includes(i) ? deck.shift() : c);
+          oh = oh.map((c, i) => disc.includes(i) ? draw1() : c);
         }
       }
       if (cmpHand(gid, evalHand(gid, oh), evalHand(gid, heroHand)) < 0) { heroBest = false; break; }  // opponent strictly ahead
@@ -2323,7 +2328,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29";   // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29b";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
