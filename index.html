@@ -1145,6 +1145,7 @@ function heroMade(gid, ev) {
 }
 function coachDrawBet(st, me, callAmt) {
   const facing = callAmt > 0, gid = st.gid;
+  const single = gid === "single";            // 2-7 single draw: one shot, reverse implied odds — NOT a pot-odds game
   const ev  = evalHand(gid, me.hand);
   const str = heroDrawStrength(st, me);
   const dl  = drawsLeftOf(st);
@@ -1166,6 +1167,17 @@ function coachDrawBet(st, me, callAmt) {
   if (predraw) {
     const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
     const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
+    if (single) {
+      // One draw, reverse implied odds: judge the DRAW'S QUALITY, not the price.
+      const lows = [...new Set(me.hand.filter(c => c.v <= 8 && c.v !== 14).map(c => c.v))];  // distinct low ranks (A is high in 2-7)
+      const hasPair = new Set(me.hand.map(c => c.v)).size < me.hand.length;
+      const smoothBase = lows.filter(v => v <= 7).length >= 3;
+      if (M.made && M.top <= 9) return { tone:"good", text:`Pat with ${M.txt} — a big edge in a one-draw game. Raise and put the drawers to a decision.` };
+      if (hasPair) return { tone:"warn", text:`A pair is a fold in single draw — one shot plus reverse implied odds means you're drawing thin. Fold; don't call on price.` };
+      if (lows.length >= 4) return { tone:"good", text:`Smooth one-card draw to a strong low${facing ? ` — the ${oddsTxt} price is a bonus, not the reason` : ""}. Raise, or take the draw.` };
+      if (lows.length === 3 && smoothBase) return { tone:"ok", text:`Playable two-card draw off a smooth base. Call in position — and this is a prime spot to raise and snow. Aggression beats a passive peel here.` };
+      return { tone:"warn", text:`Too rough for one draw — you'd be drawing two-plus into reverse implied odds. Fold; single draw isn't a pot-odds peel.` };
+    }
     if (eq >= 0.58) return { tone:"good", text:`Premium start${eqTxt} — ${M.txt}. Raise to build the pot and take the lead.` };
     if (eq >= 0.44) return { tone:"good", text:`Strong holding or smooth draw${eqTxt}. Call, and raise in position to thin the field.` };
     if (eq >= 0.32) return facing
@@ -1177,6 +1189,18 @@ function coachDrawBet(st, me, callAmt) {
     return facing
       ? { tone:"warn", text:`Too weak${eqTxt} even for ${oddsTxt} — fold.` }
       : { tone:"warn", text:`Weak holding${eqTxt} — don't open-draw two or three into a field. Fold the worst of these.` };
+  }
+
+  // 2-7 SINGLE DRAW after the draw: the one draw is done — a FINAL decision, no more cards to come.
+  if (single) {
+    if (facing) {
+      if (M.made && (M.top <= 10 || eq >= 0.6)) return { tone:"good", text:`You made ${M.txt}${eqTxt}. Raise for value — this is the last action, so get max from a worse hand or a busted bluff.` };
+      if (M.made && eq >= 0.45) return { tone:"ok", text:`Marginal made hand${eqTxt} — call to bluff-catch; raising just turns it into a bluff.` };
+      return { tone:"warn", text:`You bricked${eqTxt} — there's no draw left to justify a call. Fold.` };
+    }
+    if (M.made && (M.top <= 10 || eq >= 0.6)) return { tone:"good", text:`Bet ${M.txt} for value${eqTxt} — it's the final action, so a smooth made hand bets rather than checks.` };
+    if (M.made) return { tone:"ok", text:`Thin made hand${eqTxt} — a value bet is thin; check to bluff-catch or show it down.` };
+    return { tone:"warn", text:`You bricked${eqTxt}. Check and give up — or fire as a bluff if the table folds. Single draw rewards pressure.` };
   }
 
   // AFTER A DRAW: the reads are everything.
@@ -1527,7 +1551,7 @@ const mkState = (gid, prev = null) => {
   const bbDepth  = prev?.bbDepth  ?? 100;
   const stk      = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
   const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
-  const nSeats = IS_FLOP(gid) ? 8 : 4;   // flop games seat 8 (deck-safe); stud/draw stay 4 for now
+  const nSeats = (format === "tourney" && IS_FLOP(gid)) ? 8 : 4;   // 8-max is a TOURNAMENT feature; cash stays 4-max
   return {
   gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips, nSeats), board:[], board2:[],
   pot:0, currentBet:0, betCount:0, queue:[], streetN:0, drawN:0, seq:0,
@@ -2418,7 +2442,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29i";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29j";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
