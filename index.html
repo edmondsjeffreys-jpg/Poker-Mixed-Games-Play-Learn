@@ -159,7 +159,17 @@ const PROF = {
   1:{ name:"Tommy",  tag:"The Rock",   aggr:0.20, bluff:0.05, slow:0.36, leak:0.10, standPat:0.07, over:0.03, sz:0.45, cry:0.07 },
   2:{ name:"Carlos", tag:"The Maniac", aggr:0.75, bluff:0.38, slow:0.03, leak:0.25, standPat:0.04, over:0.15, sz:1.25, cry:0.28 },
   3:{ name:"Martin", tag:"Old Reg",    aggr:0.38, bluff:0.12, slow:0.20, leak:0.22, standPat:0.25, over:0.06, sz:0.65, cry:0.14 },
+  4:{ name:"Dex",    tag:"The Nit",    aggr:0.15, bluff:0.03, slow:0.42, leak:0.06, standPat:0.08, over:0.02, sz:0.40, cry:0.05 },
+  5:{ name:"Priya",  tag:"Solid Reg",  aggr:0.42, bluff:0.14, slow:0.18, leak:0.16, standPat:0.20, over:0.07, sz:0.72, cry:0.12 },
+  6:{ name:"Ivan",   tag:"Station",    aggr:0.22, bluff:0.06, slow:0.10, leak:0.40, standPat:0.05, over:0.04, sz:0.55, cry:0.42 },
+  7:{ name:"Sana",   tag:"LAG",        aggr:0.68, bluff:0.30, slow:0.06, leak:0.20, standPat:0.10, over:0.14, sz:1.05, cry:0.22 },
 };
+
+// 8-max mobile: the 7 opponent seats placed around the top oval (hero sits below). translate(-50%,-50%).
+const OVAL_POS = [
+  { left:"14%", top:"62%" }, { left:"11%", top:"33%" }, { left:"30%", top:"15%" },
+  { left:"50%", top:"11%" }, { left:"70%", top:"15%" }, { left:"89%", top:"33%" }, { left:"86%", top:"62%" },
+];
 
 // ─── DECK ────────────────────────────────────────
 function mkDeck() {
@@ -1504,28 +1514,29 @@ function queueFromSeat(players, from) {
 }
 
 // ─── STATE ───────────────────────────────────────
-const mkPs = (prev = null, startChips = 2000) => [
-  { id:0, name:"You",          chips:prev?prev[0].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:true,  lastAct:null },
-  { id:1, name:PROF[1].name,   chips:prev?prev[1].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
-  { id:2, name:PROF[2].name,   chips:prev?prev[2].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
-  { id:3, name:PROF[3].name,   chips:prev?prev[3].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null },
-];
+const mkPs = (prev = null, startChips = 2000, n = 4) => {
+  const arr = [{ id:0, name:"You", chips:(prev&&prev[0])?prev[0].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:true, lastAct:null }];
+  for (let i = 1; i < n; i++)
+    arr.push({ id:i, name:PROF[i].name, chips:(prev&&prev[i])?prev[i].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null });
+  return arr;
+};
 const mkState = (gid, prev = null) => {
   const format   = prev?.format   ?? "cash";
   const stakeIdx = prev?.stakeIdx ?? 1;          // $10/$20 == legacy numbers
   const bbDepth  = prev?.bbDepth  ?? 100;
   const stk      = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
   const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
+  const nSeats = IS_FLOP(gid) ? 8 : 4;   // flop games seat 8 (deck-safe); stud/draw stay 4 for now
   return {
-  gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips), board:[], board2:[],
+  gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips, nSeats), board:[], board2:[],
   pot:0, currentBet:0, betCount:0, queue:[], streetN:0, drawN:0, seq:0,
   maxDraws:(gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid)) ? 3 : 1, nlBet:40,
-  dealerIdx:Math.floor(Math.random() * 4), reveal:false,
+  dealerIdx:Math.floor(Math.random() * nSeats), reveal:false,
   msg:"Press Deal to start", result:null, sel:[],
-  cpuTilt: prev?.cpuTilt || { 1:0, 2:0, 3:0 },
+  cpuTilt: prev?.cpuTilt || { 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0 },
   stats:   prev?.stats   || { hands:0, wins:0 },
   // Per-bot tightness (0 loose .. 100 tight). Defaults loosened from old behaviour.
-  botTight: prev?.botTight || { 1:62, 2:18, 3:38 },
+  botTight: prev?.botTight || { 1:62, 2:18, 3:38, 4:78, 5:45, 6:20, 7:30 },
   // Coach mode: surface live strategy tips on the player's turn.
   coach: prev?.coach ?? true,
   exploitDial: prev?.exploitDial ?? 0,           // 0 = GTO … 100 = full exploit
@@ -2248,7 +2259,7 @@ function settle(st, players, potWon, result, msg, winnerIds = []) {
       cpuTilt[p.id] = Math.min(3, (cpuTilt[p.id] || 0) + 1);
     });
   } else {
-    [1,2,3].forEach(i => { if (cpuTilt[i] > 0) cpuTilt[i]--; });
+    [1,2,3,4,5,6,7].forEach(i => { if (cpuTilt[i] > 0) cpuTilt[i]--; });
   }
   const stats = {
     hands: st.stats.hands + 1,
@@ -2406,7 +2417,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29g";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29h";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2819,7 +2830,7 @@ function App() {
   const meBroke  = isOver && me.chips < minLive;
   const allBroke = isOver && st.players.filter((_,i)=>i>0).every(p=>p.chips<minLive);
   const gameOver = isOver && (meBroke || allBroke || ableCount < 2);
-  const tilted   = [1,2,3].filter(i => (st.cpuTilt?.[i]||0) > 0);
+  const tilted   = [1,2,3,4,5,6,7].filter(i => (st.cpuTilt?.[i]||0) > 0);
   const SLBL     = stud
     ? ["3rd Street","4th Street","5th Street","6th Street","7th Street"]
     : (flop || dramaha)
@@ -2943,7 +2954,7 @@ function App() {
             <div style={S.modalSection}>OPPONENT STYLE · OPTIMAL ↔ EXPLOITATIVE</div>
             <div style={S.modalHint}>Higher = optimal (solid, balanced, value-focused, hard to read). Lower = exploitative (attacks, bluffs and applies pressure, higher variance — and more beatable if you adjust).</div>
 
-            {[1,2,3].map(id => {
+            {st.players.filter(p=>p.id!==0).map(p=>p.id).map(id => {
               const t = st.botTight?.[id] ?? 50;
               const desc = t >= 78 ? "Optimal" : t >= 58 ? "Disciplined" : t >= 42 ? "Balanced" : t >= 24 ? "Exploitative" : "Wildly Exploit.";
               return (
@@ -3120,15 +3131,30 @@ function App() {
 
             {/* ── CPU SECTION ─────────────── */}
             {mobile ? (
-              /* Mobile: all 3 CPUs in a compact top strip */
-              <div style={S.mStrip}>
-                {[1,2,3].map(id => (
-                  <MobileSeat key={id} p={st.players[id]} reveal={st.reveal} gid={st.gid} board={st.board}
-                    isDealer={st.dealerIdx===id}
-                    thinking={cpuTurn && st.queue[0]===id}
-                    wid={wid} won={(st.winnerIds||[]).includes(id)} tilt={st.cpuTilt?.[id]||0} profile={PROF[id]} />
-                ))}
-              </div>
+              st.players.length > 4 ? (
+                /* Mobile 8-max: opponents around the oval, pot + board in the centre */
+                <div style={S.ovalWrap}>
+                  {st.players.filter(p => p.id !== 0).map((p, i) => (
+                    <div key={p.id} style={{ ...S.ovalSeat, ...(OVAL_POS[i] || OVAL_POS[OVAL_POS.length-1]) }}>
+                      <MobileSeat p={p} reveal={st.reveal} gid={st.gid} board={st.board}
+                        isDealer={st.dealerIdx===p.id}
+                        thinking={cpuTurn && st.queue[0]===p.id}
+                        wid={wid} won={(st.winnerIds||[]).includes(p.id)} tilt={st.cpuTilt?.[p.id]||0} profile={PROF[p.id]} />
+                    </div>
+                  ))}
+                  <div style={S.ovalCentre}><CentreInfo st={st} streetLbl={streetLbl}/></div>
+                </div>
+              ) : (
+                /* Mobile 4-max: all 3 CPUs in a compact top strip */
+                <div style={S.mStrip}>
+                  {[1,2,3].map(id => (
+                    <MobileSeat key={id} p={st.players[id]} reveal={st.reveal} gid={st.gid} board={st.board}
+                      isDealer={st.dealerIdx===id}
+                      thinking={cpuTurn && st.queue[0]===id}
+                      wid={wid} won={(st.winnerIds||[]).includes(id)} tilt={st.cpuTilt?.[id]||0} profile={PROF[id]} />
+                  ))}
+                </div>
+              )
             ) : (
               <>
                 {/* Desktop: diamond layout */}
@@ -3151,8 +3177,8 @@ function App() {
               </>
             )}
 
-            {/* Mobile centre info (below the CPU strip) */}
-            {mobile && <CentreInfo st={st} streetLbl={streetLbl}/>}
+            {/* Mobile centre info (below the CPU strip) — 8-max puts it inside the oval instead */}
+            {mobile && st.players.length <= 4 && <CentreInfo st={st} streetLbl={streetLbl}/>}
 
             {/* ── PLAYER SECTION ──────────── */}
             <div style={S.botRow}>
@@ -3861,6 +3887,9 @@ const S = {
   // Mobile CPU strip
   mStrip:{display:"flex",gap:6,justifyContent:"space-between",
     borderBottom:"1px solid rgba(201,168,76,0.12)",paddingBottom:8},
+  ovalWrap:{position:"relative",width:"100%",height:272,margin:"2px 0 4px"},
+  ovalSeat:{position:"absolute",transform:"translate(-50%,-50%)",width:92,zIndex:2},
+  ovalCentre:{position:"absolute",left:"50%",top:"45%",transform:"translate(-50%,-50%)",zIndex:1,width:"56%",textAlign:"center"},
 
   // Desktop rows
   rowTop:{display:"flex",justifyContent:"center"},
