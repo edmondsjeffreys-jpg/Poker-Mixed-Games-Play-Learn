@@ -550,7 +550,7 @@ function cpuDecide(st, idx) {
   // Draw games reward more disciplined aggression, so bluffing is scaled below the generic curve.
   const looseMul = 0.55 + L * 1.05;            // ~0.55 (nit) .. ~1.60 (maniac-loose)
   const effAggr  = Math.min(0.95, pr.aggr  * looseMul * (1 + tilt * 0.40));
-  const effBluff = Math.min(0.60, pr.bluff * looseMul * 0.75 * (1 + tilt * 0.55));
+  const effBluff = Math.min(0.62, pr.bluff * looseMul * (st.gid === "single" ? 1.25 : 0.75) * (1 + tilt * 0.55));  // single draw rewards aggression
   const effCry   = Math.min(0.70, pr.cry   * looseMul * (1 + tilt * 0.50));
   const effSlow  = tilt > 0 ? 0 : pr.slow;
 
@@ -609,12 +609,16 @@ function cpuDecide(st, idx) {
 
   // Post-draw streets: evaluate made hand
   if (call <= 0) {
-    if ((good && !isSlow) || (ok && isAggr) || isBluff) return { action:"bet", amount: pl.betSt + size() };
+    const patSnow = isNL && pl.drewLast === 0 && !good;   // stood pat with a weak hand → follow through the rep
+    if ((good && !isSlow) || (ok && isAggr) || isBluff || (patSnow && !isSlow && Math.random() < 0.72))
+      return { action:"bet", amount: pl.betSt + size() };
     return { action:"check", amount:0 };
   }
   if (good)                                       return { action:"call", amount:0 };
   if (ok && call <= callTolPD)                    return { action:"call", amount:0 };
   if ((isBluff || isCry) && call <= callTolPD*0.8) return { action:"call", amount:0 };
+  // Single draw: bluff-catch wider — don't fold everything to a bet (you shouldn't be able to just rep a hand).
+  if (isNL && (ok || keepers >= minKeep) && call <= callTolPD * 1.25 && Math.random() < 0.38) return { action:"call", amount:0 };
   return { action:"fold", amount:0 };
 }
 
@@ -2442,7 +2446,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29j";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29k";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
