@@ -1515,9 +1515,10 @@ function queueFromSeat(players, from) {
 
 // ─── STATE ───────────────────────────────────────
 const mkPs = (prev = null, startChips = 2000, n = 4) => {
-  const arr = [{ id:0, name:"You", chips:(prev&&prev[0])?prev[0].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:true, lastAct:null }];
+  const heroChips = (prev && prev[0]) ? prev[0].chips : startChips;   // added seats match the table, not a short buy-in
+  const arr = [{ id:0, name:"You", chips:heroChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:true, lastAct:null }];
   for (let i = 1; i < n; i++)
-    arr.push({ id:i, name:PROF[i].name, chips:(prev&&prev[i])?prev[i].chips:startChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null });
+    arr.push({ id:i, name:PROF[i].name, chips:(prev&&prev[i])?prev[i].chips:heroChips, hand:[], betSt:0, folded:false, sittingOut:false, isHuman:false, lastAct:null });
   return arr;
 };
 const mkState = (gid, prev = null) => {
@@ -2417,7 +2418,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29h";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.06.29i";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2586,13 +2587,13 @@ function App() {
 
   const deal = () => setSt(s => {
     const deck   = mkDeck();
-    const dealer = Math.floor(Math.random() * 4); // randomised every hand
+    const dealer = Math.floor(Math.random() * s.players.length); // randomised every hand, all seats
     const stk    = STK(s);
 
     // ── STUD GAMES: antes, deal 2 down + 1 up, bring-in posts ──
     if (IS_STUD(s.gid)) {
       let cursor = 0;
-      let players = mkPs(s.players).map(p => {
+      let players = mkPs(s.players, 0, s.players.length).map(p => {
         if (p.chips < stk.studAnte + 1)
           return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
         const hole = s.gid === "superstud"
@@ -2633,7 +2634,7 @@ function App() {
       const hs = HOLE_SIZE(s.gid);          // Omaha: 4 hole cards
       const ante = stk.bblind * BOMB_ANTE_BB;
       let cursor = 0;
-      let players = mkPs(s.players).map(p => {
+      let players = mkPs(s.players, 0, s.players.length).map(p => {
         if (p.chips < ante)
           return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
         const hand = deck.slice(cursor, cursor + hs); cursor += hs;
@@ -2657,7 +2658,7 @@ function App() {
     if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
       const hs = HOLE_SIZE(s.gid);
       let cursor = 0;
-      let players = mkPs(s.players).map(p => {
+      let players = mkPs(s.players, 0, s.players.length).map(p => {
         if (p.chips < stk.bblind)
           return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
         const hand = deck.slice(cursor, cursor + hs);
@@ -2686,7 +2687,7 @@ function App() {
     // ── DRAW GAMES: blinds + full hands (forced bet pre-draw, like real limit draw) ──
     const hs = HAND_SIZE(s.gid);
     let cursor = 0;
-    let players = mkPs(s.players).map(p => {
+    let players = mkPs(s.players, 0, s.players.length).map(p => {
       if (p.chips < stk.bblind)  // sit out players who can't post the big blind
         return { ...p, sittingOut:true, folded:true, hand:[], lastAct:{ text:"Sitting Out", color:"#374151" } };
       const hand = deck.slice(cursor, cursor + hs);
