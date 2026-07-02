@@ -2544,7 +2544,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02e";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02f";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3181,15 +3181,17 @@ function App() {
 
       {/* GAME PICKER — collapsible dropdown */}
       <div style={S.menuBar}>
-        <button id="tour-menu" onClick={()=>setMenuOpen(o=>!o)} style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{})}}>
+        <button id="tour-menu" onClick={()=>{ if (st.format==="tourney") return; setMenuOpen(o=>!o); }}
+          style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{}),...(st.format==="tourney"?{opacity:0.9,cursor:"default"}:{})}}>
           <span style={S.menuTrigCur}>
             {curGame?.tag && <span style={S.menuTrigTag}>{curGame.tag}</span>}
             <span style={S.menuTrigName}>{curGame?.label || "Choose a game"}</span>
-            {IS_BETA && <span style={{fontSize:7,letterSpacing:1,color:"#c9a84c",border:"1px solid #c9a84c55",borderRadius:3,padding:"1px 4px",marginLeft:6,fontWeight:"bold",alignSelf:"center"}}>BETA</span>}
+            {st.format==="tourney" && <span style={{fontSize:7,letterSpacing:1,color:"#9d8659",border:"1px solid #9d865955",borderRadius:3,padding:"1px 4px",marginLeft:6,fontWeight:"bold",alignSelf:"center"}}>ROTATION</span>}
+            {IS_BETA && st.format!=="tourney" && <span style={{fontSize:7,letterSpacing:1,color:"#c9a84c",border:"1px solid #c9a84c55",borderRadius:3,padding:"1px 4px",marginLeft:6,fontWeight:"bold",alignSelf:"center"}}>BETA</span>}
           </span>
-          <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#e0bd5e",fontSize:16,fontWeight:"bold",lineHeight:1,marginLeft:6}}>▾</span>
+          <span style={{transform:menuOpen?"rotate(180deg)":"none",transition:"transform 0.2s",color:"#e0bd5e",fontSize:16,fontWeight:"bold",lineHeight:1,marginLeft:6}}>{st.format==="tourney" ? "🔒" : "▾"}</span>
         </button>
-        {menuOpen && (
+        {menuOpen && st.format!=="tourney" && (
           <>
             <div style={S.menuBackdrop} onClick={()=>setMenuOpen(false)}/>
             <div style={S.menuDropdown}>
@@ -3399,6 +3401,12 @@ function App() {
       <div style={S.shell}>
         <div style={S.rail}>
           <div style={S.felt}>
+
+            {/* GAME PLAQUE — table sign showing the current game (esp. matters in a rotation) */}
+            <div style={S.gamePlaque}>
+              {curGame?.tag && <span style={S.plaqueTag}>{curGame.tag}</span>}
+              <span style={S.plaqueName}>{curGame?.label || ""}</span>
+            </div>
 
             {/* ── CPU SECTION ─────────────── */}
             {mobile ? (
@@ -4189,6 +4197,13 @@ const S = {
     backgroundImage:"radial-gradient(ellipse 70% 56% at 50% 42%, rgba(201,168,76,0.2) 0%, transparent 60%), radial-gradient(ellipse 86% 70% at 50% 50%,#2c8a4f 0%,#114a27 100%)",
     borderRadius:"42px / 20px",padding:"12px 14px 9px",display:"flex",flexDirection:"column",gap:6,
     border:"1px solid rgba(0,0,0,0.3)",boxShadow:"inset 0 0 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)"},
+  gamePlaque:{position:"absolute",top:5,left:"50%",transform:"translateX(-50%)",zIndex:4,pointerEvents:"none",
+    display:"flex",alignItems:"center",gap:6,
+    background:"linear-gradient(180deg,rgba(18,26,20,0.9),rgba(10,16,12,0.85))",
+    border:"1px solid rgba(201,168,76,0.42)",borderRadius:8,padding:"3px 12px",
+    boxShadow:"0 2px 9px rgba(0,0,0,0.45), inset 0 1px 0 rgba(201,168,76,0.15)"},
+  plaqueTag:{fontSize:7,letterSpacing:1.2,color:"#12180f",background:"#c9a84c",borderRadius:3,padding:"1px 5px",fontWeight:"bold",textTransform:"uppercase"},
+  plaqueName:{fontSize:11,letterSpacing:2,color:"#e3c87a",fontFamily:"Georgia,serif",fontWeight:"bold",textTransform:"uppercase"},
 
   // Mobile CPU strip
   mStrip:{display:"flex",gap:6,justifyContent:"space-between",
