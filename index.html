@@ -2544,7 +2544,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02d";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02e";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3166,10 +3166,12 @@ function App() {
         <button id="tour-gear" onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
 
-      {/* CASH / TOURNAMENT tabs */}
+      {/* CASH / TOURNAMENT tabs — highlight follows the actual format, not just the view */}
       <div style={S.topTabs}>
-        <button onClick={()=>setView("play")}  style={{...S.topTab,...(view==="play" ?S.topTabOn:{})}}>CASH</button>
-        <button onClick={()=>setView("lobby")} style={{...S.topTab,...(view==="lobby"?S.topTabOn:{})}}>TOURNAMENT</button>
+        <button onClick={()=>{ setView("play"); if (st.format==="tourney") setSt(s => mkState(s.gid, { ...s, format:"cash" })); }}
+          style={{...S.topTab,...((view==="play" && st.format!=="tourney")?S.topTabOn:{})}}>CASH</button>
+        <button onClick={()=>setView("lobby")}
+          style={{...S.topTab,...((view==="lobby" || st.format==="tourney")?S.topTabOn:{})}}>TOURNAMENT</button>
       </div>
 
       {view==="lobby" && (
