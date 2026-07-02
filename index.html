@@ -2544,7 +2544,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02c";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02d";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2628,6 +2628,127 @@ class ErrorBoundary extends React.Component {
 }
 
 // ─── ROOT ────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// TOURNAMENT LOBBY (Leg C · C1) — setup screen matching the approved mockup.
+// This slice: mix/runners/stakes selection + START that boots an 8-max tourney table.
+// Blind clock, game rotation, and field/ICM payouts are later slices (C2–C4).
+// ─────────────────────────────────────────────────────────────────────────────
+const MIX_PRESETS = [
+  { id:"horse",  name:"HORSE",           desc:"5 games · fixed-limit",      games:["lhe","omaha8","razz","stud","stud8"] },
+  { id:"8game",  name:"8-GAME",          desc:"8 games · limit + big-bet",  games:["triple","lhe","omaha8","razz","stud","stud8","nlhe","plo"] },
+  { id:"hose",   name:"HOSE",            desc:"4 games · fixed-limit",      games:["lhe","omaha8","stud","stud8"] },
+  { id:"draw",   name:"TRIPLE DRAW MIX", desc:"2-7 · badugi",               games:["triple","badugi"] },
+  { id:"single", name:"SINGLE GAME",     desc:"pick any one",               games:null },
+  { id:"custom", name:"CUSTOM",          desc:"build your own mix",         games:null },
+];
+const RUNNER_OPTS = [ {n:6,u:"1 table"},{n:9,u:"1 table"},{n:45,u:"simulated"},{n:180,u:"simulated"},{n:1000,u:"simulated"},{n:10000,u:"simulated"} ];
+const STAKE_OPTS = [
+  { id:"low",  tag:"LOW",  desc:"Soft field — loose, passive, leaky recreationals. Punish with value." },
+  { id:"med",  tag:"MED",  desc:"Mixed field — a spread of regs and recreational players." },
+  { id:"high", tag:"HIGH", desc:"Tough regs — tight, aggressive, balanced, hard to read. Bring your A-game." },
+];
+
+function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
+  const L = LOBBY_S;
+  const preset = MIX_PRESETS.find(m => m.id === cfg.mix) || MIX_PRESETS[0];
+  const rot = preset.games
+    ? preset.games.map(id => (GAMES.find(g => g.id === id)?.label) || id)
+    : preset.id === "single" ? [(GAMES.find(g => g.id === curGid)?.label) || "current game"] : ["your custom mix"];
+  const stake = STAKE_OPTS.find(s => s.id === cfg.stakes) || STAKE_OPTS[2];
+  const singleTable = cfg.runners <= 9;
+  return (
+    <div style={L.screen}>
+      <div style={L.tabs}>
+        <button style={L.tab} onClick={onCash}>CASH</button>
+        <button style={{...L.tab, ...L.tabOn}}>TOURNAMENT</button>
+      </div>
+
+      <div style={L.sec}>
+        <div style={L.lbl}>GAME MIX</div>
+        <div style={L.grid}>
+          {MIX_PRESETS.map(m => (
+            <button key={m.id} onClick={()=>setCfg(c=>({...c, mix:m.id}))}
+              style={{...L.tile, ...(cfg.mix===m.id?L.tileOn:{})}}>
+              <span style={{...L.tileN, ...(cfg.mix===m.id?{color:"#1a1206"}:{})}}>{m.name}</span>
+              <span style={{...L.tileD, ...(cfg.mix===m.id?{color:"#4f3d12"}:{})}}>{m.desc}</span>
+            </button>
+          ))}
+        </div>
+        <div style={L.rotates}><span style={{color:"#9d8659"}}>ROTATES: </span>{rot.join(" · ")}</div>
+      </div>
+
+      <div style={L.sec}>
+        <div style={L.lbl}>RUNNERS (FIELD SIZE)</div>
+        <div style={L.pills}>
+          {RUNNER_OPTS.map(r => (
+            <button key={r.n} onClick={()=>setCfg(c=>({...c, runners:r.n}))}
+              style={{...L.pill, ...(cfg.runners===r.n?L.pillOn:{})}}>
+              {r.n.toLocaleString()}<span style={L.pillU}>{r.u}</span>
+            </button>
+          ))}
+        </div>
+        <div style={L.hint}>6–9 is a true single table down to a winner. Larger fields simulate the room — you play your 8-max table while it shrinks, payouts &amp; ICM scaled to the real count.</div>
+      </div>
+
+      <div style={L.sec}>
+        <div style={L.lbl}>STAKES — SETS THE FIELD'S SKILL</div>
+        <div style={L.stakes}>
+          {STAKE_OPTS.map(s => (
+            <button key={s.id} onClick={()=>setCfg(c=>({...c, stakes:s.id}))}
+              style={{...L.srow, ...(cfg.stakes===s.id?L.srowOn:{})}}>
+              <span style={{...L.stag, ...(cfg.stakes===s.id?{color:"#c9a84c"}:{})}}>{s.tag}</span>
+              <span style={L.sdesc}>{s.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={L.summary}>
+        <b>{preset.name}</b> · {cfg.runners.toLocaleString()} runners · <b>{stake.tag}</b> stakes<br/>
+        {singleTable ? "single table · plays down to a winner" : "8-max · simulated room · payouts & ICM scaled to the field"}
+      </div>
+      <button style={L.start} onClick={()=>onStart(cfg)}>START TOURNAMENT</button>
+      <div style={L.note}>First release boots your 8-max table in tournament format. The blind clock, game rotation, and field payouts are the next build steps.</div>
+    </div>
+  );
+}
+
+const LOBBY_S = {
+  screen:{position:"fixed",inset:0,zIndex:60,overflowY:"auto",background:"linear-gradient(180deg,#0c1119,#080b12)",
+    padding:"20px 16px 44px",fontFamily:"Georgia,serif",color:"#e9e2cf"},
+  tabs:{display:"flex",gap:8,margin:"2px auto 6px",maxWidth:410},
+  tab:{flex:1,textAlign:"center",padding:"11px 0",borderRadius:10,fontSize:13,letterSpacing:2,fontWeight:"bold",
+    border:"1px solid #232a38",color:"#7d8496",background:"rgba(255,255,255,0.02)",fontFamily:"Georgia,serif",cursor:"pointer"},
+  tabOn:{color:"#1a1206",background:"linear-gradient(165deg,#d8b551,#bb8f33)",borderColor:"transparent",boxShadow:"0 4px 14px rgba(201,168,76,0.25)"},
+  sec:{marginTop:18,maxWidth:410,marginLeft:"auto",marginRight:"auto"},
+  lbl:{fontSize:9,letterSpacing:2,color:"#9d8659",marginBottom:8},
+  grid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8},
+  tile:{border:"1px solid #2a3240",borderRadius:10,padding:"11px 12px",background:"rgba(255,255,255,0.02)",
+    display:"flex",flexDirection:"column",justifyContent:"center",minHeight:52,textAlign:"left",cursor:"pointer"},
+  tileOn:{background:"linear-gradient(165deg,#d8b551,#bb8f33)",borderColor:"transparent",boxShadow:"0 4px 13px rgba(201,168,76,0.22)"},
+  tileN:{fontSize:13,fontWeight:"bold",letterSpacing:1.5,color:"#e0d4ad",lineHeight:1.1},
+  tileD:{fontSize:8,letterSpacing:0.5,color:"#8a7c5a",marginTop:3,textTransform:"uppercase"},
+  rotates:{marginTop:10,fontSize:9.5,letterSpacing:0.4,color:"#cbbd97",lineHeight:1.5},
+  pills:{display:"flex",flexWrap:"wrap",gap:6},
+  pill:{flex:"1 1 21%",minWidth:58,textAlign:"center",border:"1px solid #2a3240",borderRadius:8,padding:"8px 0",
+    fontSize:13,color:"#cdbf9e",background:"rgba(255,255,255,0.02)",fontFamily:"Georgia,serif",cursor:"pointer"},
+  pillOn:{color:"#1a1206",background:"linear-gradient(165deg,#d8b551,#bb8f33)",borderColor:"transparent",fontWeight:"bold"},
+  pillU:{display:"block",fontSize:7,letterSpacing:1,opacity:0.7},
+  hint:{fontSize:9,color:"#6f6048",marginTop:7,lineHeight:1.5},
+  stakes:{display:"flex",flexDirection:"column",gap:7},
+  srow:{display:"flex",alignItems:"center",gap:10,border:"1px solid #2a3240",borderRadius:10,padding:"9px 11px",
+    background:"rgba(255,255,255,0.02)",textAlign:"left",cursor:"pointer",width:"100%"},
+  srowOn:{borderColor:"#c9a84c",background:"rgba(201,168,76,0.08)"},
+  stag:{fontSize:12,fontWeight:"bold",letterSpacing:1,width:52,flex:"none",color:"#b9ac86"},
+  sdesc:{fontSize:9.5,color:"#9c8f70",lineHeight:1.4},
+  summary:{marginTop:18,maxWidth:410,marginLeft:"auto",marginRight:"auto",textAlign:"center",fontSize:10,color:"#b9ac86",
+    letterSpacing:0.4,lineHeight:1.6,borderTop:"1px solid rgba(201,168,76,0.14)",paddingTop:14},
+  start:{display:"block",width:"100%",maxWidth:410,margin:"14px auto 0",background:"linear-gradient(165deg,#57b56a,#3f9152)",
+    color:"#0a1a0e",border:"none",borderRadius:12,padding:15,fontSize:15,fontWeight:"bold",letterSpacing:2,
+    fontFamily:"Georgia,serif",boxShadow:"0 6px 18px rgba(63,145,82,0.3)",cursor:"pointer"},
+  note:{fontSize:10,color:"#6f6048",textAlign:"center",marginTop:14,maxWidth:380,marginLeft:"auto",marginRight:"auto",lineHeight:1.5},
+};
+
 function App() {
   const [st, setSt]   = useState(mkState("triple"));
   const [showSettings, setShowSettings] = useState(false);
@@ -2638,6 +2759,17 @@ function App() {
   const [tourStep, setTourStep] = useState(-1);   // -1 = off; 0..N = spotlight step
   const [showWelcome, setShowWelcome] = useState(false);   // first-visit intro card
   const [tourRect, setTourRect] = useState(null);
+  const [view, setView] = useState("play");                              // "play" (cash/table) | "lobby" (tournament setup)
+  const [tourCfg, setTourCfg] = useState({ mix:"horse", runners:45, stakes:"high" });
+  // Boot a tournament from the lobby. This slice deals an 8-max tourney table using the mix's first game;
+  // blind clock / rotation / field payouts land in later slices.
+  const startTournament = (cfg) => {
+    const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
+    const first  = (preset && preset.games && preset.games[0]) || null;
+    const gid    = (first && GAMES.find(g => g.id === first && g.available)) ? first : st.gid;
+    setSt(s => mkState(gid, { ...s, format:"tourney" }));
+    setView("play");
+  };
   const screenW       = useWidth();
   const mobile        = screenW < 560;
   const curGame       = GAMES.find(g => g.id === st.gid);
@@ -3033,6 +3165,17 @@ function App() {
         </div>
         <button id="tour-gear" onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
+
+      {/* CASH / TOURNAMENT tabs */}
+      <div style={S.topTabs}>
+        <button onClick={()=>setView("play")}  style={{...S.topTab,...(view==="play" ?S.topTabOn:{})}}>CASH</button>
+        <button onClick={()=>setView("lobby")} style={{...S.topTab,...(view==="lobby"?S.topTabOn:{})}}>TOURNAMENT</button>
+      </div>
+
+      {view==="lobby" && (
+        <TournamentLobby cfg={tourCfg} setCfg={setTourCfg} onStart={startTournament}
+          onCash={()=>setView("play")} curGid={st.gid}/>
+      )}
 
       {/* GAME PICKER — collapsible dropdown */}
       <div style={S.menuBar}>
@@ -3980,6 +4123,10 @@ const S = {
     background:"rgba(255,255,255,0.03)",border:"1px solid rgba(201,168,76,0.25)",borderRadius:9,
     color:"#c9a84c",fontSize:17,width:32,height:32,cursor:"pointer",
     display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.12s"},
+  topTabs:{width:"100%",maxWidth:740,display:"flex",gap:8,margin:"10px auto 2px"},
+  topTab:{flex:1,textAlign:"center",padding:"9px 0",borderRadius:9,fontSize:12,letterSpacing:2,fontWeight:"bold",
+    border:"1px solid #232a38",color:"#7d8496",background:"rgba(255,255,255,0.02)",fontFamily:"Georgia,serif",cursor:"pointer"},
+  topTabOn:{color:"#1a1206",background:"linear-gradient(165deg,#d8b551,#bb8f33)",borderColor:"transparent",boxShadow:"0 3px 12px rgba(201,168,76,0.22)"},
   brandText:{fontSize:19,letterSpacing:6,color:"#e8d9b0",fontWeight:"bold",
     textShadow:"0 1px 0 rgba(0,0,0,0.6)",animation:"brandIn 0.8s ease-out"},
   brandSub:{fontSize:8.5,letterSpacing:2.5,color:"#ac9663",textTransform:"uppercase"},
