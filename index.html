@@ -2561,7 +2561,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02g";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02h";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -4262,13 +4262,13 @@ const S = {
     backgroundImage:"radial-gradient(ellipse 70% 56% at 50% 42%, rgba(201,168,76,0.2) 0%, transparent 60%), radial-gradient(ellipse 86% 70% at 50% 50%,#2c8a4f 0%,#114a27 100%)",
     borderRadius:"42px / 20px",padding:"12px 14px 9px",display:"flex",flexDirection:"column",gap:6,
     border:"1px solid rgba(0,0,0,0.3)",boxShadow:"inset 0 0 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06)"},
-  gamePlaque:{position:"absolute",top:5,left:"50%",transform:"translateX(-50%)",zIndex:4,pointerEvents:"none",
-    display:"flex",alignItems:"center",gap:6,
-    background:"linear-gradient(180deg,rgba(18,26,20,0.9),rgba(10,16,12,0.85))",
-    border:"1px solid rgba(201,168,76,0.42)",borderRadius:8,padding:"3px 12px",
-    boxShadow:"0 2px 9px rgba(0,0,0,0.45), inset 0 1px 0 rgba(201,168,76,0.15)"},
-  plaqueTag:{fontSize:7,letterSpacing:1.2,color:"#12180f",background:"#c9a84c",borderRadius:3,padding:"1px 5px",fontWeight:"bold",textTransform:"uppercase"},
-  plaqueName:{fontSize:11,letterSpacing:2,color:"#e3c87a",fontFamily:"Georgia,serif",fontWeight:"bold",textTransform:"uppercase"},
+  gamePlaque:{position:"absolute",left:10,bottom:10,zIndex:4,pointerEvents:"none",whiteSpace:"nowrap",
+    display:"flex",alignItems:"center",gap:5,
+    background:"linear-gradient(180deg,rgba(16,24,18,0.82),rgba(9,15,11,0.78))",
+    border:"1px solid rgba(201,168,76,0.32)",borderRadius:7,padding:"3px 9px",
+    boxShadow:"0 2px 7px rgba(0,0,0,0.4)"},
+  plaqueTag:{fontSize:6.5,letterSpacing:1,color:"#12180f",background:"#c9a84c",borderRadius:3,padding:"1px 4px",fontWeight:"bold",textTransform:"uppercase"},
+  plaqueName:{fontSize:9.5,letterSpacing:1,color:"#e3c87a",fontFamily:"Georgia,serif",fontWeight:"bold",textTransform:"uppercase"},
 
   // Mobile CPU strip
   mStrip:{display:"flex",gap:6,justifyContent:"space-between",
