@@ -139,11 +139,27 @@ const mkStakes = (sb, label) => ({
   ante: sb, studAnte: Math.max(1, Math.round(sb / 2)), bringin: sb,
 });
 const CASH_STAKES   = [mkStakes(5, "$5 / $10"), mkStakes(10, "$10 / $20"), mkStakes(25, "$25 / $50")];
-const TOURNEY_STAKES = mkStakes(10, "Tournament");   // fixed blind size; stack depth is the variable
+const TOURNEY_STAKES = mkStakes(10, "Tournament");   // level-0 blind; used for the starting stack calc
+// ── Tournament structure (Leg C · C2) ──
+const TOUR_SB        = [10,15,20,30,40,60,80,120,160,250,350,500,700,1000,1500,2000];  // small blind per level
+const TOUR_LEVEL_SEC = 300;                          // real seconds per level at 1× (compresses when folded/between hands)
+const tourSb    = lvl => TOUR_SB[Math.min(Math.max(0, lvl|0), TOUR_SB.length - 1)];
+const tourLevelFromClock = (clock, levelSec) => Math.min(TOUR_SB.length - 1, Math.floor((clock || 0) / (levelSec || TOUR_LEVEL_SEC)));
+const tourStakes = st => mkStakes(tourSb(st.tour?.level || 0), `L${(st.tour?.level || 0) + 1}`);
+// One orbit of a tournament → rotate to the next game in the mix. Called at the top of deal().
+function rotateTour(s) {
+  const t = s.tour;
+  if (!t || !t.on || !(t.seq && t.seq.length)) return s;
+  const hands    = (t.hands || 0) + 1;
+  const orbitLen = Math.max(2, s.players.length);                       // ~one lap of the button
+  const mixIdx   = Math.floor((hands - 1) / orbitLen) % t.seq.length;
+  const gid      = t.seq[mixIdx] || s.gid;
+  return { ...s, gid, tour: { ...t, hands, mixIdx } };
+}
 const BB_DEPTHS     = [200, 100, 50, 10];
 const CASH_DEPTH    = 100;                            // cash buy-in fixed at 100bb
 // Active stakes for a given state.
-const STK = st => (st.format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[st.stakeIdx ?? 1]);
+const STK = st => (st.format === "tourney" ? tourStakes(st) : CASH_STAKES[st.stakeIdx ?? 1]);
 // The "one big bet/blind" used to size a stack by depth — relabelled per game family.
 const depthUnit = (gid, stk) => (BET_MODE(gid) === "fl" ? stk.bbet : stk.bblind);
 const depthWord = gid => (BET_MODE(gid) === "fl" ? "big bets" : "big blinds");
@@ -1669,6 +1685,7 @@ const mkState = (gid, prev = null) => {
   exploitDial: prev?.exploitDial ?? 0,           // 0 = GTO … 100 = full exploit
   // Stakes & format.
   format, stakeIdx, bbDepth,
+  tour: format === "tourney" ? (prev?.tour ?? null) : null,   // tournament clock/level/rotation (Leg C · C2)
   drawDone:false,                                // dramaha: has the single mid-hand draw happened?
   discardDone:false,                             // super stud: has the 3rd-street discard happened?
   };
@@ -2544,7 +2561,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02f";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02g";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2765,11 +2782,33 @@ function App() {
   // blind clock / rotation / field payouts land in later slices.
   const startTournament = (cfg) => {
     const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
-    const first  = (preset && preset.games && preset.games[0]) || null;
-    const gid    = (first && GAMES.find(g => g.id === first && g.available)) ? first : st.gid;
-    setSt(s => mkState(gid, { ...s, format:"tourney" }));
+    const seq = (preset && preset.games)
+      ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
+      : [st.gid];
+    const gid = seq[0] || st.gid;
+    const tour = { on:true, mix:cfg.mix, runners:cfg.runners, stakes:cfg.stakes,
+                   seq: seq.length ? seq : [gid], mixIdx:0, level:0, clock:0, levelSec:TOUR_LEVEL_SEC, hands:0 };
+    setSt(s => mkState(gid, { ...s, format:"tourney", tour }));
     setView("play");
   };
+  // Tournament clock (Leg C · C2): pauses on your turn, runs 1× while you watch a hand, compresses ~6×
+  // when you're folded or between hands, and pauses when the app is backgrounded. Bumps blind levels.
+  useEffect(() => {
+    if (!st.tour?.on) return;
+    const iv = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;   // backgrounded → pause
+      setSt(s => {
+        const t = s.tour; if (!t || !t.on) return s;
+        if (s.phase === "acting" && s.queue?.[0] === 0) return s;       // your decision → pause the clock
+        const between = s.phase === "idle" || s.phase === "showdown";
+        const heroOut = !!(s.players?.[0]?.folded);
+        const speed   = (between || heroOut) ? 6 : 1;
+        const clock   = (t.clock || 0) + speed;
+        return { ...s, tour: { ...t, clock, level: tourLevelFromClock(clock, t.levelSec) } };
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [st.tour?.on]);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
   const curGame       = GAMES.find(g => g.id === st.gid);
@@ -2843,7 +2882,8 @@ function App() {
 
   const switchGame = g => { if (!g.available) return; setSt(s => mkState(g.id, s)); };
 
-  const deal = () => setSt(s => {
+  const deal = () => setSt(s0 => {
+    const s      = s0.tour?.on ? rotateTour(s0) : s0;   // tournament: advance the orbit + rotate game before dealing
     const deck   = mkDeck();
     const dealer = Math.floor(Math.random() * s.players.length); // randomised every hand, all seats
     const stk    = STK(s);
@@ -3214,6 +3254,24 @@ function App() {
           </>
         )}
       </div>
+
+      {/* TOURNAMENT HUD — level clock, blinds, rotation position */}
+      {st.tour?.on && view==="play" && (() => {
+        const T = st.tour, sb = tourSb(T.level||0);
+        const rem = Math.max(0, (T.levelSec||300) - ((T.clock||0) % (T.levelSec||300)));
+        const mmss = `${Math.floor(rem/60)}:${String(Math.floor(rem%60)).padStart(2,"0")}`;
+        return (
+          <div style={S.tourHud}>
+            <div style={S.tourHudCol}><div style={S.tourHudLbl}>LEVEL</div><div style={S.tourHudVal}>{(T.level||0)+1}</div></div>
+            <div style={S.tourHudDiv}/>
+            <div style={S.tourHudCol}><div style={S.tourHudLbl}>BLINDS</div><div style={S.tourHudVal}>{sb}/{2*sb}</div></div>
+            <div style={S.tourHudDiv}/>
+            <div style={S.tourHudCol}><div style={S.tourHudLbl}>NEXT LEVEL</div><div style={S.tourHudVal}>{mmss}</div></div>
+            <div style={S.tourHudDiv}/>
+            <div style={S.tourHudCol}><div style={S.tourHudLbl}>GAME</div><div style={S.tourHudVal}>{(T.mixIdx||0)+1}/{T.seq?.length||1}</div></div>
+          </div>
+        );
+      })()}
 
       {/* SETTINGS OVERLAY */}
       {showSettings && (
@@ -4137,6 +4195,13 @@ const S = {
   topTab:{flex:1,textAlign:"center",padding:"9px 0",borderRadius:9,fontSize:12,letterSpacing:2,fontWeight:"bold",
     border:"1px solid #232a38",color:"#7d8496",background:"rgba(255,255,255,0.02)",fontFamily:"Georgia,serif",cursor:"pointer"},
   topTabOn:{color:"#1a1206",background:"linear-gradient(165deg,#d8b551,#bb8f33)",borderColor:"transparent",boxShadow:"0 3px 12px rgba(201,168,76,0.22)"},
+  tourHud:{width:"100%",maxWidth:740,margin:"8px auto 0",display:"flex",alignItems:"stretch",justifyContent:"space-around",
+    background:"linear-gradient(180deg,rgba(30,24,10,0.5),rgba(18,14,6,0.4))",border:"1px solid rgba(201,168,76,0.3)",
+    borderRadius:10,padding:"7px 4px"},
+  tourHudCol:{display:"flex",flexDirection:"column",alignItems:"center",flex:1,gap:2},
+  tourHudLbl:{fontSize:7.5,letterSpacing:1.4,color:"#9d8659",textTransform:"uppercase"},
+  tourHudVal:{fontSize:14,color:"#e3c87a",fontFamily:"monospace",fontWeight:"bold",lineHeight:1},
+  tourHudDiv:{width:1,background:"rgba(201,168,76,0.18)",alignSelf:"stretch"},
   brandText:{fontSize:19,letterSpacing:6,color:"#e8d9b0",fontWeight:"bold",
     textShadow:"0 1px 0 rgba(0,0,0,0.6)",animation:"brandIn 0.8s ease-out"},
   brandSub:{fontSize:8.5,letterSpacing:2.5,color:"#ac9663",textTransform:"uppercase"},
