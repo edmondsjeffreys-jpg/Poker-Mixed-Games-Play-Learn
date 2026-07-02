@@ -1467,35 +1467,35 @@ const live = p => !p.folded && !p.sittingOut;
 const canAct = p => live(p) && p.chips > 0;
 
 function startQueue(players, dealerIdx) {
-  const q = [];
-  for (let off = 1; off <= 4; off++) {
-    const i = (dealerIdx + off) % 4;
+  const q = [], n = players.length;
+  for (let off = 1; off <= n; off++) {
+    const i = (dealerIdx + off) % n;
     if (canAct(players[i])) q.push(i);
   }
   return q;
 }
 function reQueue(players, aggrIdx) {
-  const q = [];
-  for (let off = 1; off <= 4; off++) {
-    const i = (aggrIdx + off) % 4;
+  const q = [], n = players.length;
+  for (let off = 1; off <= n; off++) {
+    const i = (aggrIdx + off) % n;
     if (canAct(players[i]) && i !== aggrIdx) q.push(i);
   }
   return q;
 }
 // Live seats in order starting at `from` (inclusive). Used for preflop action.
 function queueFrom(players, from) {
-  const q = [];
-  for (let off = 0; off < 4; off++) {
-    const i = (from + off) % 4;
+  const q = [], n = players.length;
+  for (let off = 0; off < n; off++) {
+    const i = (from + off) % n;
     if (canAct(players[i])) q.push(i);
   }
   return q;
 }
 // Live seats clockwise from the button (for assigning blinds).
 function liveFromDealer(players, dealerIdx) {
-  const order = [];
-  for (let off = 1; off <= 4; off++) {
-    const i = (dealerIdx + off) % 4;
+  const order = [], n = players.length;
+  for (let off = 1; off <= n; off++) {
+    const i = (dealerIdx + off) % n;
     if (live(players[i])) order.push(i);
   }
   return order;
@@ -1536,8 +1536,8 @@ function partialHigh(cards) {
 }
 // Queue clockwise starting at a given seat (inclusive of live seats).
 function queueFromSeat(players, from) {
-  const q = [];
-  for (let off = 0; off < 4; off++) { const i = (from + off) % 4; if (canAct(players[i])) q.push(i); }
+  const q = [], n = players.length;
+  for (let off = 0; off < n; off++) { const i = (from + off) % n; if (canAct(players[i])) q.push(i); }
   return q;
 }
 
@@ -2446,7 +2446,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.06.29k";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.01a";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2649,7 +2649,7 @@ function App() {
         pot += amt;
         return { ...p, chips:p.chips - amt, betSt:amt, lastAct:{ text:`Bring-in $${amt}`, color:"#fbbf24" } };
       });
-      const queue = queueFromSeat(players, (biId + 1) % 4); // wraps to put bring-in last
+      const queue = queueFromSeat(players, (biId + 1) % players.length); // wraps to put bring-in last
       const nx = queue[0];
       return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, board:[], pot,
         currentBet:stk.bringin, queue, phase:"acting", dealerIdx:dealer, streetN:0,
@@ -2703,8 +2703,7 @@ function App() {
         return p;
       });
       // Preflop action starts left of the big blind
-      const bbPos = (dealer + 1 + order.indexOf(bbId)) % 4; // seat index of BB
-      const queue = queueFrom(players, (bbId + 1) % 4);
+      const queue = queueFrom(players, (bbId + 1) % players.length);
       const nx = queue[0];
       return { ...mkState(s.gid, s), deck:deck.slice(cursor), players, board:[], pot,
         currentBet:stk.bblind, queue, phase:"acting", dealerIdx:dealer, streetN:0,
@@ -2731,7 +2730,7 @@ function App() {
       if (p.id === bbId) { const amt = Math.min(stk.bblind, p.chips); pot += amt; return { ...p, chips:p.chips-amt, betSt:amt, lastAct:{ text:`BB $${amt}`, color:"#475569" } }; }
       return p;
     });
-    const queue = queueFrom(players, (bbId + 1) % 4);  // action starts left of the big blind
+    const queue = queueFrom(players, (bbId + 1) % players.length);  // action starts left of the big blind
     const nx    = queue[0];
     // Veronica deals one community card face-up immediately after the deal (plays for HIGH only).
     const vBoard = s.gid === "veronica" ? deck.slice(cursor, cursor + 1) : [];
@@ -3391,7 +3390,7 @@ function App() {
               <span style={S.slVal}>{st.currentBet>0?"Raise":"Bet"} ${nlVal}</span>
             </div>
             <div style={S.btnRow}>
-              <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>
+              {!canCheck && <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>}
               {canCheck
                 ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
                 :<Btn s={S.bCall}  onClick={()=>act("call")}>{callAmt>=me.chips?"ALL IN":`CALL $${callAmt}`}</Btn>}
@@ -3405,7 +3404,7 @@ function App() {
         {/* FL BETTING */}
         {myTurn && !drawing && isFL && (
           <div style={S.btnRow}>
-            <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>
+            {!canCheck && <Btn s={S.bFold}  onClick={()=>act("fold")}>FOLD</Btn>}
             {canCheck
               ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
               :<Btn s={S.bCall}  onClick={()=>act("call")}>CALL ${callAmt}</Btn>}
