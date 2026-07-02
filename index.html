@@ -1227,6 +1227,30 @@ function coachDrawBet(st, me, callAmt) {
     return { tone:"warn", text:`You bricked${eqTxt}. Check and give up — or fire as a bluff if the table folds. Single draw rewards pressure.` };
   }
 
+  // FINAL BETTING ROUND (all draws done) — the hand is complete; there is nothing left to draw to.
+  // Judge it at showdown with made-hand language, never "improve." (heroMade labels a rough low "a draw"
+  // because you'd normally break it — but after the last draw you can't, so describe the real holding.)
+  if (dl === 0) {
+    const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
+    const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
+    const strong  = M.made && M.top <= goodTop;
+    const held    = M.made ? M.txt : `${ev && ev.desc ? ev.desc : "a weak hand"} at showdown`;
+    if (facing) {
+      if (strong || (e != null && eq >= 0.6))
+        return { tone:"good", text:`You hold ${held}${eqTxt} — this is the last action, so raise for value and get paid by worse.` };
+      if (patBetting && !strong)
+        return { tone:"warn", text:`A player stood pat and is betting${eqTxt} — that reps a made hand. With ${held} and no draw left, fold.` };
+      if (e != null && eq >= 0.45)
+        return { tone:"ok", text:`Marginal at showdown${eqTxt} — call to bluff-catch at ${oddsTxt}. No draw left, so don't raise a hand this thin.` };
+      return { tone:"warn", text:`Weak at showdown${eqTxt} — the draws are done, there's nothing left to improve to. Fold.` };
+    }
+    if (strong || (e != null && eq >= 0.6))
+      return { tone:"good", text:`Bet ${held} for value${eqTxt} — it's the final action, so a made hand bets rather than checks.` };
+    if (e != null && eq >= 0.45)
+      return { tone:"ok", text:`Thin at showdown${eqTxt} — check to bluff-catch or show it down; a value bet is too thin.` };
+    return { tone:"warn", text:`Weak final hand${eqTxt} — check; the draw is over, so only fire as a pure bluff if the table looks weak.` };
+  }
+
   // AFTER A DRAW: the reads are everything.
   if (patBetting) {
     if (M.made && M.top <= goodTop)
@@ -1254,12 +1278,23 @@ function coachDrawRec(st, me, callAmt) {
   const ev = evalHand(gid, me.hand);
   const str = heroDrawStrength(st, me);
   const predraw = (st.drawN || 0) === 0;
+  const dl = drawsLeftOf(st);
   const M = heroMade(gid, ev);
   const eq = drawEquity(st, me, 500);
   const goodTop = gid === "badugi" ? 9 : 8, smoothTop = gid === "badugi" ? 7 : 8;
   const pats = st.players.filter(p => p.id !== 0 && live(p) && p.drewLast === 0);
   const patBetting = facing && pats.length > 0;
   if (predraw) { if (eq >= 0.58) return facing ? "raise" : "bet"; if (eq >= 0.32) return facing ? "call" : "check"; return facing ? "fold" : "check"; }
+  if (dl === 0) {                                   // final round — judge the completed hand, no draw left
+    const strong = M.made && M.top <= goodTop;
+    if (facing) {
+      if (strong || (eq != null && eq >= 0.6)) return "raise";
+      if (patBetting && !strong)               return "fold";
+      if (eq != null && eq >= 0.45)            return "call";
+      return "fold";
+    }
+    return (strong || (eq != null && eq >= 0.6)) ? "bet" : "check";
+  }
   if (patBetting) return (M.made && M.top <= smoothTop) ? "call" : "fold";
   if (facing) { if (M.made && M.top <= goodTop) return "raise"; if (eq >= 0.5) return "call"; return "fold"; }
   return (M.made && M.top <= goodTop) || eq >= 0.45 ? "bet" : "check";
@@ -1271,6 +1306,10 @@ function coachBet(st, me, callAmt) {
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
   const oddsTxt = facing ? `${(st.pot / callAmt).toFixed(1)}:1` : "";
+  // On the final street (river / 7th street) no card is coming — don't reference "free cards" or "later streets."
+  const noMoreCards = IS_STUD(st.gid) ? (me.hand.length >= 7)
+                    : (IS_FLOP(st.gid) || IS_DRAMAHA(st.gid)) ? ((st.board || []).length >= 5)
+                    : false;
   const k = Math.max(0, Math.min(1, (st.exploitDial || 0) / 100));   // 0 = pure GTO, 1 = full exploit
   // Baseline (GTO) thresholds; the dial tilts them toward exploiting the table read.
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36, tag = "", ex = "";
@@ -1321,15 +1360,15 @@ function coachBet(st, me, callAmt) {
     if (str >= valueCut)         return { tone:"good", text:`${tag}Solid holding. Calling is standard; a raise is fine.${ex}` };
     // Don't pay off a weak holding that's facing action — pot odds overstate a thin hand's real equity.
     if (nOpp >= 2 && str < 0.34 && potOdds > 0.08)
-      return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}, and you'll often pay more on later streets. Fold.` };
+      return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}${noMoreCards ? "" : ", and you'll often pay more on later streets"}. Fold.` };
     if (callEq >= potOdds + 0.16)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
     if (callEq >= potOdds + 0.04)   return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
     return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. Folding is usually best here.` };
   }
-  if (str >= raiseCut)           return { tone:"good", text:`${tag}Big hand — bet for value, don't give a free card.${ex}` };
+  if (str >= raiseCut)           return { tone:"good", text:`${tag}Big hand — bet for value${noMoreCards ? " and get paid at showdown" : ", don't give a free card"}.${ex}` };
   if (str >= valueCut)           return { tone:"good", text:`${tag}Good holding — a bet pressures weaker hands.${ex}` };
   if (str >= thinCut)            return { tone:"ok",   text:`${tag}Thin but playable — checking keeps the pot under control.${ex}` };
-  return { tone:"warn", text:`Not much here — check and take the free card.` };
+  return { tone:"warn", text:`Not much here — check${noMoreCards ? " and take it to showdown." : " and take the free card."}` };
 }
 
 // ─── DECISION GRADER (silent answer key for hand history) ──────────
@@ -2505,7 +2544,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02b";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02c";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
