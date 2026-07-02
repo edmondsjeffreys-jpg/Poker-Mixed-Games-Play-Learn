@@ -668,8 +668,14 @@ function flopStrength(st, pl) {
   };
   if (IS_DOUBLE(gid)) {
     const b2 = st.board2 || [];
-    const s = b2.length >= 3 ? (scoreBoard(board) + scoreBoard(b2)) / 2 : scoreBoard(board);
-    return Math.max(0, Math.min(1, s));
+    if (b2.length >= 3) {
+      const s1 = scoreBoard(board), s2 = scoreBoard(b2);
+      const hi = Math.max(s1, s2), lo = Math.min(s1, s2);
+      // You win each board's half independently, so a strong single board is real value — not "thin."
+      // Weight the better board over a flat average so a set/straight on one board plays for a bet.
+      return Math.max(0, Math.min(1, 0.70 * hi + 0.30 * lo));
+    }
+    return Math.max(0, Math.min(1, scoreBoard(board)));
   }
   return Math.max(0, Math.min(1, scoreBoard(board)));
 }
@@ -713,10 +719,19 @@ function cpuDecideFlop(st, idx) {
     return { action:"check", amount:0 };
   }
   // facing a bet
-  if (str >= raiseThresh && !slow) return { action:"raise", amount: sizedTotal(true) };
+  const reraised = (st.betCount || 0) >= 2;                              // a bet AND a raise already in
+  const liveOpp  = st.players.filter(p => p.id !== idx && live(p)).length;
+  let callT = callThresh, raiseT = raiseThresh;
+  if (reraised)     { callT += 0.20; raiseT += 0.08; }   // a bet-and-raise is real strength — don't pay it off
+  if (liveOpp >= 3) { callT += 0.08; }                   // a bet into a crowd is stronger than heads-up
+  if (str >= raiseT && !slow) return { action:"raise", amount: sizedTotal(true) };
   // pot odds: cheaper calls are easier to make
   const potOdds = call / (st.pot + call);
-  if (str >= callThresh || (str >= callThresh - 0.08 && potOdds < 0.2) || bluff)
+  // Bluffing into a raise or a multiway crowd is spew — only stab a lone heads-up bet.
+  const mayBluff = bluff && !reraised && liveOpp <= 2;
+  // The cheap pot-odds call only applies short-handed; into a crowd, thin hands just fold.
+  const cheapCall = str >= callT - 0.08 && potOdds < 0.2 && liveOpp <= 2;
+  if (str >= callT || cheapCall || mayBluff)
     return { action:"call", amount:0 };
   return { action:"fold", amount:0 };
 }
@@ -979,7 +994,11 @@ function planSplitTwoWay(hand, gid, drawsLeft) {
   const lv = c => aceHigh ? c.v : (c.v === 14 ? 1 : c.v);
   const order = hand.map((c, i) => ({ c, i, v: lv(c) })).sort((a, b) => a.v - b.v);
   const ranks = new Set(), suits = new Set(), keep = new Set();
-  order.forEach(o => { if (!ranks.has(o.v) && !suits.has(o.c.s)) { ranks.add(o.v); suits.add(o.c.s); keep.add(o.i); } }); // badugi-valid lows
+  // Early in a triple-draw (2+ draws left) a 9/10/J-high "badugi" card helps neither the A-5 low
+  // (needs 8-or-better) nor a strong badugi — pitch it and draw fresh. On the last draw, keep any
+  // badugi-distinct card so a made badugi isn't broken for one card.
+  const lowCap = drawsLeft >= 2 ? 8 : 13;
+  order.forEach(o => { if (o.v <= lowCap && !ranks.has(o.v) && !suits.has(o.c.s)) { ranks.add(o.v); suits.add(o.c.s); keep.add(o.i); } }); // low, badugi-distinct
   order.forEach(o => { if (keep.size < 5 && !ranks.has(o.v) && o.v <= 8) { ranks.add(o.v); keep.add(o.i); } });          // extra lows for the lowball half
   const keepArr = [...keep].sort((a, b) => a - b);
   const discard = all.filter(i => !keep.has(i));
@@ -990,6 +1009,7 @@ function planSplitTwoWay(hand, gid, drawsLeft) {
   if (pat && bSize >= 4)            { tone = "good"; why = `Pat both ways — a made badugi and a low. Stand pat.`; }
   else if (bSize >= 4)              { tone = "good"; why = `Strong two-way: a made badugi plus ${keepArr.length} low cards. Draw ${discard.length} to sharpen the ${B.name} half.`; }
   else if (keep.size >= 3)          { tone = "ok";   why = `Keep your low, distinct-suit cards — each one builds both the badugi and the ${B.name} low. Draw ${discard.length}.`; }
+  else if (keep.size === 2)         { tone = "ok";   why = `Two premium low cards — draw ${discard.length} fresh toward the ${B.name} low and a badugi. A strong low draw like this is worth raising on the early draws.`; }
   else                              { tone = "warn"; why = `Rough two-way holding — few cards help both halves. Draw ${discard.length}, or fold to a raise.`; }
   return { keep: keepArr, discard, pat, head: pat ? "stand pat" : `draw ${discard.length}`, why, tone };
 }
@@ -1274,8 +1294,29 @@ function coachBet(st, me, callAmt) {
   }
   const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
   const mwAdj = nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1;   // your share of equity shrinks multiway
+  // Freeroll: a made hand that locks a side of a split pot — you can't lose that half, so bet & raise it.
+  let locked = false;
+  if (st.gid === "razzdugi") {
+    const bd = me.hand.length >= 4 ? evalBadugi(me.hand) : null;
+    const lo = me.hand.length >= 5 ? bestRazz(me.hand) : null;
+    locked = !!((bd && bd.size === 4 && bd.vs[0] <= 8) || (lo && lo.cat === 0 && (lo.tb[0] || 9) <= 8));
+  } else if (IS_DRAMAHA(st.gid)) {
+    locked = dramahaDrawStrength(st.gid, me.hand) >= 0.76;   // a made 8-or-better low / made badugi side
+  }
+  if (locked) {
+    return facing
+      ? { tone:"good", text:`${tag}You lock a side of the pot — you're freerolling. Raise every street; you can't lose this half.${ex}` }
+      : { tone:"good", text:`${tag}You lock a side of the pot — bet and raise it. You're freerolling for the scoop.${ex}` };
+  }
+  const reraised = facing && (st.betCount || 0) >= 2;   // a bet AND a raise are already in front
   const callEq = str * mwAdj;
   if (facing) {
+    if (reraised) {
+      // Facing a bet AND a raise = real strength. Continue only with a genuine value hand; fold marginal.
+      if (str >= raiseCut)         return { tone:"good", text:`${tag}Strong enough to re-raise — a bet and a raise don't scare this hand.${ex}` };
+      if (str >= valueCut + 0.06)  return { tone:"ok",   text:`${tag}Good enough to call the raise once, but don't get carried away.${ex}` };
+      return { tone:"warn", text:`${tag}A bet AND a raise is real strength — a one-pair / thin two-pair type hand is usually behind it. Fold.` };
+    }
     if (str >= raiseCut)         return { tone:"good", text:`${tag}Strong hand — raise for value. You're well ahead of ${oddsTxt} pot odds.${ex}` };
     if (str >= valueCut)         return { tone:"good", text:`${tag}Solid holding. Calling is standard; a raise is fine.${ex}` };
     // Don't pay off a weak holding that's facing action — pot odds overstate a thin hand's real equity.
@@ -1300,9 +1341,25 @@ function coachRecAction(st, me, callAmt) {
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36;
+  // Freeroll: a made hand that locks a side of a split pot → bet/raise (mirror of coachBet).
+  let locked = false;
+  if (st.gid === "razzdugi") {
+    const bd = me.hand.length >= 4 ? evalBadugi(me.hand) : null;
+    const lo = me.hand.length >= 5 ? bestRazz(me.hand) : null;
+    locked = !!((bd && bd.size === 4 && bd.vs[0] <= 8) || (lo && lo.cat === 0 && (lo.tb[0] || 9) <= 8));
+  } else if (IS_DRAMAHA(st.gid)) {
+    locked = dramahaDrawStrength(st.gid, me.hand) >= 0.76;
+  }
+  if (locked) return facing ? "raise" : "bet";
+  const reraised = facing && (st.betCount || 0) >= 2;
   if (facing) {
     const nOpp = st.players.filter(p => p.id !== 0 && live(p)).length;
     const callEq = str * (nOpp >= 3 ? 0.68 : nOpp === 2 ? 0.84 : 1);
+    if (reraised) {
+      if (str >= raiseCut)        return "raise";
+      if (str >= valueCut + 0.06) return "call";
+      return "fold";
+    }
     if (str >= raiseCut)                       return "raise";
     if (str >= valueCut)                       return "call";   // call/raise both fine
     if (nOpp >= 2 && str < 0.34 && potOdds > 0.08) return "fold";
@@ -2446,7 +2503,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.01a";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.01b";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
