@@ -112,7 +112,7 @@ const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
                        : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb") ? "pl" : "fl";
 // Cards dealt per player for draw games.
 const HAND_SIZE = gid => (gid === "badugi" ? 4 : 5);
-const HOLE_SIZE = gid => (gid === "bigo" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
+const HOLE_SIZE = gid => (gid === "bigo" || gid === "dbbomb" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
 
 // ─── CONSTANTS ───────────────────────────────────
 const SUITS = ["♠","♥","♦","♣"];
@@ -1612,7 +1612,9 @@ const mkState = (gid, prev = null) => {
   const bbDepth  = prev?.bbDepth  ?? 100;
   const stk      = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
   const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
-  const nSeats = (format === "tourney" && IS_FLOP(gid)) ? 8 : 4;   // 8-max is a TOURNAMENT feature; cash stays 4-max
+  // Double Board Bomb Pot is a multiway format — always 7-handed (5 hole cards + two boards fits a 52-card
+  // deck only up to 7; 8 would exhaust the deck on the river). Other games: 8-max is tournament-only, cash 4-max.
+  const nSeats = gid === "dbbomb" ? 7 : (format === "tourney" && IS_FLOP(gid)) ? 8 : 4;
   return {
   gid, phase:"idle", deck:[], players:mkPs(prev?.players, startChips, nSeats), board:[], board2:[],
   pot:0, currentBet:0, betCount:0, queue:[], streetN:0, drawN:0, seq:0,
@@ -2503,7 +2505,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.01b";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02b";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3227,7 +3229,38 @@ function App() {
                         wid={wid} won={(st.winnerIds||[]).includes(p.id)} tilt={st.cpuTilt?.[p.id]||0} profile={PROF[p.id]} />
                     </div>
                   ))}
-                  <div style={S.ovalCentre}><CentreInfo st={st} streetLbl={streetLbl}/></div>
+                  {IS_DOUBLE(st.gid) ? (
+                    /* Two boards are too tall to stack with the pot in a 272px oval — render them compact
+                       in the mid-band (clear of the 33%/62% seat rows) and drop the pot into the empty
+                       lower felt. (Approved mockup 2026-07-02.) */
+                    <>
+                      <div style={S.ovalDblBoards}>
+                        <div style={S.ovalDblRow}>
+                          <span style={S.ovalDblTag}>TOP</span>
+                          <div style={S.boardSm}>
+                            {[0,1,2,3,4].map(i => st.board[i]
+                              ? <BoardCard key={`a-${st.boardKey}-${i}`} card={st.board[i]} idx={i} small/>
+                              : <div key={`a${i}`} style={S.boardSlotSm}/>)}
+                          </div>
+                        </div>
+                        <div style={S.ovalDblRow}>
+                          <span style={S.ovalDblTag}>BOT</span>
+                          <div style={S.boardSm}>
+                            {[0,1,2,3,4].map(i => (st.board2||[])[i]
+                              ? <BoardCard key={`b-${st.boardKey}-${i}`} card={st.board2[i]} idx={i} small/>
+                              : <div key={`b${i}`} style={S.boardSlotSm}/>)}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={S.ovalDblPot}>
+                        <span style={S.potLbl}>POT</span>
+                        <span style={S.ovalDblPotAmt}>${st.pot}</span>
+                        {streetLbl && <span style={S.ovalDblStreet}>{streetLbl}</span>}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={S.ovalCentre}><CentreInfo st={st} streetLbl={streetLbl}/></div>
+                  )}
                 </div>
               ) : (
                 /* Mobile 4-max: all 3 CPUs in a compact top strip */
@@ -3975,6 +4008,19 @@ const S = {
   ovalWrap:{position:"relative",width:"100%",height:272,margin:"2px 0 4px"},
   ovalSeat:{position:"absolute",transform:"translate(-50%,-50%)",width:92,zIndex:2},
   ovalCentre:{position:"absolute",left:"50%",top:"45%",transform:"translate(-50%,-50%)",zIndex:1,width:"56%",textAlign:"center"},
+  // Compact double-board centre for the oval: two narrow boards in the mid-band (clear of the 33%/62%
+  // seat rows) + the pot dropped into the empty lower felt. Inline TOP/BOT tags keep the block short.
+  ovalDblBoards:{position:"absolute",left:"50%",top:"47%",transform:"translate(-50%,-50%) scale(0.9)",zIndex:1,
+    display:"flex",flexDirection:"column",gap:5,alignItems:"center"},
+  ovalDblRow:{display:"flex",alignItems:"center",gap:5},
+  ovalDblTag:{fontSize:8,letterSpacing:1,color:"#c9a84c",width:24,textAlign:"right",fontWeight:"bold",flexShrink:0},
+  ovalDblPot:{position:"absolute",left:"50%",top:"85%",transform:"translate(-50%,-50%)",zIndex:1,
+    display:"flex",alignItems:"center",gap:8,
+    background:"linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0.4))",
+    borderRadius:10,padding:"3px 15px",border:"1.5px solid rgba(201,168,76,0.45)",
+    boxShadow:"0 2px 10px rgba(0,0,0,0.5)"},
+  ovalDblPotAmt:{fontSize:17,color:"#f3dd9a",fontFamily:"monospace",lineHeight:1.15,textShadow:"0 0 10px rgba(201,168,76,0.4)"},
+  ovalDblStreet:{fontSize:8,letterSpacing:1.2,color:"#9fb0a4",borderLeft:"1px solid rgba(201,168,76,0.3)",paddingLeft:8},
 
   // Desktop rows
   rowTop:{display:"flex",justifyContent:"center"},
