@@ -183,8 +183,8 @@ const PROF = {
 
 // 8-max mobile: the 7 opponent seats placed around the top oval (hero sits below). translate(-50%,-50%).
 const OVAL_POS = [
-  { left:"13%", top:"64%" }, { left:"9%",  top:"38%" }, { left:"28%", top:"19%" },
-  { left:"50%", top:"15%" }, { left:"72%", top:"19%" }, { left:"91%", top:"38%" }, { left:"87%", top:"64%" },
+  { left:"13%", top:"82%" }, { left:"9%",  top:"49%" }, { left:"26%", top:"17%" },
+  { left:"50%", top:"13%" }, { left:"74%", top:"17%" }, { left:"91%", top:"49%" }, { left:"87%", top:"82%" },
 ];
 
 // ─── DECK ────────────────────────────────────────
@@ -2561,7 +2561,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02j";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02k";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -4293,9 +4293,9 @@ const S = {
   // Mobile CPU strip
   mStrip:{display:"flex",gap:6,justifyContent:"space-between",
     borderBottom:"1px solid rgba(201,168,76,0.12)",paddingBottom:8},
-  ovalWrap:{position:"relative",width:"100%",height:272,margin:"2px 0 4px"},
+  ovalWrap:{position:"relative",width:"100%",height:235,margin:"2px 0 4px"},
   ovalSeat:{position:"absolute",transform:"translate(-50%,-50%)",width:92,zIndex:2},
-  ovalCentre:{position:"absolute",left:"50%",top:"58%",transform:"translate(-50%,-50%)",zIndex:1,width:"56%",textAlign:"center"},
+  ovalCentre:{position:"absolute",left:"50%",top:"55%",transform:"translate(-50%,-50%)",zIndex:1,width:"56%",textAlign:"center"},
   // Compact double-board centre for the oval: two narrow boards in the mid-band (clear of the 33%/62%
   // seat rows) + the pot dropped into the empty lower felt. Inline TOP/BOT tags keep the block short.
   ovalDblBoards:{position:"absolute",left:"50%",top:"47%",transform:"translate(-50%,-50%) scale(0.9)",zIndex:1,
