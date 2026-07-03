@@ -2561,7 +2561,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02k";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02m";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3180,6 +3180,11 @@ function App() {
         @keyframes dealIn {
           0%   { opacity: 0; transform: translateY(-34px) translateX(-22px) rotate(-12deg) scale(0.7); }
           100% { opacity: 1; transform: translateY(0) translateX(0) rotate(0deg) scale(1); }
+        }
+        @keyframes boardIn {
+          0%   { opacity: 0; transform: translateY(-12px) scale(0.86); }
+          70%  { opacity: 1; }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes winPulse {
           0%,100% { filter: drop-shadow(0 0 8px rgba(74,222,128,0.4)); }
@@ -3943,6 +3948,7 @@ function CentreInfo({ st, streetLbl }) {
       )}
       <div style={S.potBox}>
         <div style={S.potShine}/>
+        <span style={S.potChip}/>
         <span style={S.potLbl}>POT</span>
         <span style={S.potAmt}>${st.pot}</span>
       </div>
@@ -3978,7 +3984,7 @@ function CentreInfo({ st, streetLbl }) {
 function BoardCard({ card, idx, small }) {
   const isRed = RED.has(card.s);
   return (
-    <div style={{...(small?S.boardCardSm:S.boardCard), color:isRed?"#b91c1c":"#111827", animation:`dealIn 0.3s cubic-bezier(.34,1.4,.64,1) ${idx*0.08}s backwards`}}>
+    <div style={{...(small?S.boardCardSm:S.boardCard), color:isRed?"#b91c1c":"#111827", animation:`boardIn 0.3s cubic-bezier(.2,.7,.3,1) ${idx*0.09}s backwards`}}>
       <b style={{fontSize:small?11:13,lineHeight:1}}>{card.r}</b>
       <span style={{fontSize:small?10:12,lineHeight:1}}>{card.s}</span>
     </div>
@@ -4201,7 +4207,7 @@ const S = {
   brand:{display:"flex",alignItems:"center",gap:9,padding:"2px 0 1px"},
   brandRow:{position:"relative",width:"100%",maxWidth:740,display:"flex",alignItems:"center",justifyContent:"center",padding:"2px 0 4px"},
   brandStack:{display:"flex",flexDirection:"column",alignItems:"center",gap:1},
-  suitRow:{display:"flex",gap:6,marginBottom:1,fontSize:10,letterSpacing:1},
+  suitRow:{display:"flex",gap:5,marginBottom:0,fontSize:8,letterSpacing:1},
   suitB:{color:"#c9a84c",opacity:0.85},
   suitR:{color:"#c07a72",opacity:0.9},
   gearBtnTop:{position:"absolute",right:0,top:"50%",transform:"translateY(-50%)",
@@ -4222,9 +4228,9 @@ const S = {
   chromeTab:{width:"100%",maxWidth:740,margin:"4px auto 0",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
     padding:"3px 0",cursor:"pointer",color:"#8b93a1",borderRadius:8,background:"rgba(255,255,255,0.02)",border:"1px solid #1c232f"},
   chromeTabLbl:{fontSize:8,letterSpacing:1.5,color:"#6b7280",textTransform:"uppercase"},
-  brandText:{fontSize:19,letterSpacing:6,color:"#e8d9b0",fontWeight:"bold",
+  brandText:{fontSize:14,letterSpacing:4,color:"#e8d9b0",fontWeight:"bold",
     textShadow:"0 1px 0 rgba(0,0,0,0.6)",animation:"brandIn 0.8s ease-out"},
-  brandSub:{fontSize:8.5,letterSpacing:2.5,color:"#ac9663",textTransform:"uppercase"},
+  brandSub:{fontSize:7,letterSpacing:2,color:"#ac9663",textTransform:"uppercase"},
 
   // Selector
   menuBar:{position:"relative",width:"100%",maxWidth:740,zIndex:50},
@@ -4319,10 +4325,13 @@ const S = {
 
   // Centre
   centre:{flex:"0 0 auto",display:"flex",flexDirection:"column",alignItems:"center",alignSelf:"center",gap:5,width:182},
-  potBox:{position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",alignItems:"center",
-    background:"linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0.4))",
-    borderRadius:10,padding:"4px 16px",border:"1.5px solid rgba(201,168,76,0.45)",
-    boxShadow:"0 2px 10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,220,150,0.15)"},
+  potBox:{position:"relative",overflow:"hidden",display:"inline-flex",flexDirection:"row",alignItems:"center",gap:8,
+    background:"linear-gradient(180deg,rgba(20,26,16,0.9),rgba(10,14,8,0.85))",
+    borderRadius:22,padding:"5px 16px 5px 7px",border:"1px solid rgba(201,168,76,0.42)",
+    boxShadow:"0 3px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,220,150,0.12)"},
+  potChip:{width:20,height:20,borderRadius:"50%",flexShrink:0,position:"relative",zIndex:1,
+    background:"radial-gradient(circle at 50% 35%,#e6c669,#b8912f)",border:"2px solid #8a6d24",
+    boxShadow:"0 0 0 2px rgba(0,0,0,0.22),0 2px 4px rgba(0,0,0,0.5)"},
   potLbl:{fontSize:7,letterSpacing:2.5,color:"rgba(201,168,76,0.7)",position:"relative",zIndex:1},
   potAmt:{fontSize:21,color:"#f3dd9a",fontFamily:"monospace",lineHeight:1.15,position:"relative",zIndex:1,
     textShadow:"0 0 10px rgba(201,168,76,0.4)"},
@@ -4331,22 +4340,25 @@ const S = {
     backgroundSize:"220% 100%",animation:"potShine 3.5s linear infinite",pointerEvents:"none"},
 
   // Community board (flop games) — centered row of community cards
-  board:{display:"flex",gap:5,justifyContent:"center",alignItems:"center",width:"100%",marginBottom:3},
+  board:{display:"inline-flex",gap:5,justifyContent:"center",alignItems:"center",
+    padding:"7px 9px",borderRadius:12,marginBottom:6,
+    background:"linear-gradient(180deg,rgba(6,20,13,0.52),rgba(4,14,9,0.46))",
+    border:"1px solid rgba(201,168,76,0.26)",boxShadow:"inset 0 2px 11px rgba(0,0,0,0.5)"},
   dblBoards:{display:"flex",flexDirection:"column",gap:3,width:"100%",marginBottom:2},
   dblBoardWrap:{display:"flex",flexDirection:"column",alignItems:"center",gap:1},
   dblBoardTag:{fontSize:6,letterSpacing:1.5,color:"#c9a84c99"},
   boardSm:{display:"flex",gap:4,justifyContent:"center",alignItems:"center",width:"100%"},
-  boardCard:{width:32,height:45,borderRadius:5,
+  boardCard:{width:32,height:45,borderRadius:5,boxSizing:"border-box",
     background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
     display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
     boxShadow:"0 2px 7px rgba(0,0,0,0.5)",flexShrink:0},
-  boardSlot:{width:30,height:42,borderRadius:5,
+  boardSlot:{width:32,height:45,borderRadius:5,boxSizing:"border-box",
     background:"rgba(0,0,0,0.18)",border:"1px dashed rgba(201,168,76,0.18)",flexShrink:0},
-  boardCardSm:{width:26,height:36,borderRadius:4,
+  boardCardSm:{width:26,height:36,borderRadius:4,boxSizing:"border-box",
     background:"linear-gradient(160deg,#ffffff,#f4eedd)",border:"1px solid #d8c9ab",
     display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
     boxShadow:"0 1px 5px rgba(0,0,0,0.5)",flexShrink:0},
-  boardSlotSm:{width:24,height:34,borderRadius:4,
+  boardSlotSm:{width:26,height:36,borderRadius:4,boxSizing:"border-box",
     background:"rgba(0,0,0,0.18)",border:"1px dashed rgba(201,168,76,0.18)",flexShrink:0},
   streetPill:{fontSize:8,letterSpacing:1.5,color:"#b6a075",background:"rgba(0,0,0,0.2)",
     padding:"2px 9px",borderRadius:10,border:"1px solid rgba(255,255,255,0.04)",textAlign:"center"},
