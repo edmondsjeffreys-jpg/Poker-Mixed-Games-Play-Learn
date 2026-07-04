@@ -1739,7 +1739,7 @@ function applyAction(st, action, amount = 0) {
     case "call": {
       const c  = Math.min(currentBet - a.betSt, a.chips);
       a.chips -= c; a.betSt += c; pot += c;
-      a.lastAct = { text:`Call $${c}`, color:"#60a5fa" };
+      a.lastAct = { text:`Call $${a.betSt}`, color:"#60a5fa" };
       newQ = st.queue.slice(1);
       break;
     }
@@ -1753,7 +1753,7 @@ function applyAction(st, action, amount = 0) {
         // No more raises allowed this round → treat the action as a call.
         const c = Math.min(currentBet - a.betSt, a.chips);
         a.chips -= c; a.betSt += c; pot += c;
-        a.lastAct = { text: c > 0 ? `Call $${c}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
+        a.lastAct = { text: c > 0 ? `Call $${a.betSt}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
         newQ = st.queue.slice(1);
         break;
       }
@@ -1766,12 +1766,12 @@ function applyAction(st, action, amount = 0) {
         // Genuine bet/raise that increases the wager → re-opens action for everyone.
         const verb = st.currentBet > 0 ? "Raise" : "Bet";
         currentBet = a.betSt;
-        a.lastAct  = { text:`${verb} $${put}`, color:"#fbbf24" };
+        a.lastAct  = { text:`${verb} $${a.betSt}`, color:"#fbbf24" };
         newQ = reQueue(players, idx);
         betCount = (st.currentBet === 0 ? 0 : (st.betCount || 0)) + 1;  // opening bet resets the count to 1
       } else {
         // All-in short, or no real increase → behaves like a call/check, no re-open.
-        a.lastAct = put > 0 ? { text:`Call $${put}`, color:"#60a5fa" }
+        a.lastAct = put > 0 ? { text:`Call $${a.betSt}`, color:"#60a5fa" }
                             : { text:"Check", color:"#64748b" };
         newQ = st.queue.slice(1);
       }
@@ -2578,7 +2578,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02p";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02q";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
