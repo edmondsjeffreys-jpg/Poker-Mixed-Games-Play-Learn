@@ -2578,7 +2578,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02s";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02t";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3805,8 +3805,8 @@ function App() {
               ?<Btn s={S.bCheck} onClick={()=>act("check")}>CHECK</Btn>
               :<Btn s={S.bCall}  onClick={()=>act("call")}>CALL ${callAmt}</Btn>}
             {!(st.currentBet>0 && (st.betCount||0) >= 4) && (
-              <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+fb)}>
-                {st.currentBet>0?`RAISE $${fb}`:`BET $${fb}`}
+              <Btn s={S.bBet} onClick={()=>act(st.currentBet>0?"raise":"bet",me.betSt+callAmt+fb)}>
+                {st.currentBet>0?`RAISE $${st.currentBet+fb}`:`BET $${fb}`}
               </Btn>
             )}
           </div>
