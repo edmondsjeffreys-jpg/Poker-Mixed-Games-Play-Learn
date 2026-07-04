@@ -2578,7 +2578,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02o";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02p";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2828,10 +2828,9 @@ function App() {
     }, 1000);
     return () => clearInterval(iv);
   }, [st.tour?.on]);
-  // Auto-collapse the top menu the moment a hand is live (reclaim vertical space); expand between hands.
-  // A tap on the handle can override for the current hand. No pull gesture → no accidental page reload.
+  // The top menu is a MANUAL toggle via the handle (setShowChrome) — it never auto-hides/reappears on its own,
+  // so there's no jarring vanish-and-return between hands. Whatever you leave it on stays that way.
   const handLive = st.phase !== "idle" && st.phase !== "showdown";
-  useEffect(() => { setShowChrome(!handLive); }, [handLive]);
   const screenW       = useWidth();
   const mobile        = screenW < 560;
   const curGame       = GAMES.find(g => g.id === st.gid);
