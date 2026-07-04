@@ -200,8 +200,8 @@ const PROF = {
 
 // 8-max mobile: the 7 opponent seats placed around the top oval (hero sits below). translate(-50%,-50%).
 const OVAL_POS = [
-  { left:"13%", top:"68%" }, { left:"9%",  top:"34%" }, { left:"26%", top:"6%" },
-  { left:"50%", top:"3%" }, { left:"74%", top:"6%" }, { left:"91%", top:"34%" }, { left:"87%", top:"68%" },
+  { left:"13%", top:"68%" }, { left:"9%",  top:"35%" }, { left:"27%", top:"11%" },
+  { left:"50%", top:"8%" }, { left:"73%", top:"11%" }, { left:"91%", top:"35%" }, { left:"87%", top:"68%" },
 ];
 
 // ─── DECK ────────────────────────────────────────
@@ -2578,7 +2578,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02q";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02s";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3239,23 +3239,17 @@ function App() {
         <span style={S.chromeTabLbl}>{showChrome ? "hide menu" : "menu"}</span>
       </div>
 
-      {/* CASH / TOURNAMENT tabs — highlight follows the actual format, not just the view */}
+      {/* MENU PANEL — the whole menu overlays the table when open, so nothing underneath shifts */}
+      <div style={S.menuAnchor}>
       {showChrome && (
+      <div style={S.menuPanel}>
       <div style={S.topTabs}>
         <button onClick={()=>{ setView("play"); if (st.format==="tourney") setSt(s => mkState(s.gid, { ...s, format:"cash" })); }}
           style={{...S.topTab,...((view==="play" && st.format!=="tourney")?S.topTabOn:{})}}>CASH</button>
         <button onClick={()=>setView("lobby")}
           style={{...S.topTab,...((view==="lobby" || st.format==="tourney")?S.topTabOn:{})}}>TOURNAMENT</button>
       </div>
-      )}
 
-      {view==="lobby" && (
-        <TournamentLobby cfg={tourCfg} setCfg={setTourCfg} onStart={startTournament}
-          onCash={()=>setView("play")} curGid={st.gid}/>
-      )}
-
-      {/* GAME PICKER — collapsible dropdown (part of the collapsible top chrome) */}
-      {showChrome && (
       <div style={S.menuBar}>
         <button id="tour-menu" onClick={()=>{ if (st.format==="tourney") return; setMenuOpen(o=>!o); }}
           style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{}),...(st.format==="tourney"?{opacity:0.9,cursor:"default"}:{})}}>
@@ -3290,6 +3284,29 @@ function App() {
           </>
         )}
       </div>
+      <div style={S.ctrlBar}>
+        <button id="tour-coach" onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
+          {st.coach ? "● COACH ON" : "COACH OFF"}
+        </button>
+        <button id="tour-review" onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
+        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : "STAKES " + STK(st).label}</span>
+        {st.format==="tourney" && (
+          <div style={S.depthRow}>
+            {BB_DEPTHS.map(d => (
+              <button key={d} onClick={()=>setDepth(d)}
+                style={{...S.depthBtn, ...(st.bbDepth===d?S.depthBtnOn:{})}}>{d}</button>
+            ))}
+            <span style={S.depthCap}>{depthWord(st.gid)}</span>
+          </div>
+        )}
+      </div>
+      </div>
+      )}
+      </div>
+
+      {view==="lobby" && (
+        <TournamentLobby cfg={tourCfg} setCfg={setTourCfg} onStart={startTournament}
+          onCash={()=>setView("play")} curGid={st.gid}/>
       )}
 
       {/* TOURNAMENT HUD — level clock, blinds, rotation position */}
@@ -3483,26 +3500,6 @@ function App() {
           </div>
         );
       })()}
-
-      {/* MAIN CONTROLS — coach toggle, stakes readout, tournament depth (collapsible) */}
-      {showChrome && (
-      <div style={S.ctrlBar}>
-        <button id="tour-coach" onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
-          {st.coach ? "● COACH ON" : "COACH OFF"}
-        </button>
-        <button id="tour-review" onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
-        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : "STAKES " + STK(st).label}</span>
-        {st.format==="tourney" && (
-          <div style={S.depthRow}>
-            {BB_DEPTHS.map(d => (
-              <button key={d} onClick={()=>setDepth(d)}
-                style={{...S.depthBtn, ...(st.bbDepth===d?S.depthBtnOn:{})}}>{d}</button>
-            ))}
-            <span style={S.depthCap}>{depthWord(st.gid)}</span>
-          </div>
-        )}
-      </div>
-      )}
 
       {/* STATS */}
       {st.stats.hands > 0 && (
@@ -4271,6 +4268,12 @@ const S = {
   chromeTab:{width:"100%",maxWidth:740,margin:"4px auto 0",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
     padding:"3px 0",cursor:"pointer",color:"#8b93a1",borderRadius:8,background:"rgba(255,255,255,0.02)",border:"1px solid #1c232f"},
   chromeTabLbl:{fontSize:8,letterSpacing:1.5,color:"#6b7280",textTransform:"uppercase"},
+  menuAnchor:{position:"relative",width:"100%",zIndex:40},
+  menuPanel:{position:"absolute",top:2,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:760,zIndex:40,
+    display:"flex",flexDirection:"column",gap:8,padding:"8px 12px 12px",
+    background:"linear-gradient(180deg,rgba(13,19,27,0.985),rgba(10,15,22,0.985))",
+    border:"1px solid rgba(201,168,76,0.18)",borderRadius:14,
+    boxShadow:"0 14px 34px rgba(0,0,0,0.6)",maxHeight:"72vh",overflowY:"auto"},
   brandText:{fontSize:14,letterSpacing:4,color:"#e8d9b0",fontWeight:"bold",
     textShadow:"0 1px 0 rgba(0,0,0,0.6)",animation:"brandIn 0.8s ease-out"},
   brandSub:{fontSize:7,letterSpacing:2,color:"#ac9663",textTransform:"uppercase"},
@@ -4434,8 +4437,8 @@ const S = {
     borderRadius:18,padding:"3px 8px 3px 7px",
     border:"1px solid rgba(201,168,76,0.35)",flexWrap:"wrap",
     boxShadow:"inset 0 1px 0 rgba(255,220,150,0.15), 0 2px 6px rgba(0,0,0,0.4)"},
-  seatName:{fontSize:9.5,letterSpacing:1.5,color:"#e8d9b0",lineHeight:1.2},
-  seatTag:{fontSize:6.5,letterSpacing:0.8,color:"#8a6a38",lineHeight:1},
+  seatName:{fontSize:9.5,letterSpacing:1.5,color:"#e8d9b0",lineHeight:1.2,textShadow:"0 1px 3px rgba(0,0,0,0.75)"},
+  seatTag:{fontSize:6.5,letterSpacing:0.8,color:"#8a6a38",lineHeight:1,textShadow:"0 1px 2px rgba(0,0,0,0.7)"},
   seatCards:{display:"flex",justifyContent:"center",padding:"2px 0 8px"},
 
   // Player
