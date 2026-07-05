@@ -431,7 +431,7 @@ function cmpLow(a, b) {
   for (let i = 0; i < 5; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
   return 0;
 }
-const LOWNAME = { 1:"A",2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8" };
+const LOWNAME = { 1:"A",2:"2",3:"3",4:"4",5:"5",6:"6",7:"7",8:"8",9:"9",10:"10",11:"J",12:"Q",13:"K",14:"A" };
 function lowDesc(lo) { return lo ? lo.map(v => LOWNAME[v]).join("-") + " low" : "no low"; }
 
 // Best high hand for a flop game (dispatches Hold'em vs Omaha)
@@ -615,9 +615,9 @@ function cpuDecide(st, idx) {
   // Looser bots bet/bluff/call far more; tilt amplifies on top of that.
   // Draw games reward more disciplined aggression, so bluffing is scaled below the generic curve.
   const looseMul = 0.55 + L * 1.05;            // ~0.55 (nit) .. ~1.60 (maniac-loose)
-  const effAggr  = Math.min(0.95, pr.aggr  * looseMul * (1 + tilt * 0.40));
-  const effBluff = Math.min(0.62, pr.bluff * looseMul * (st.gid === "single" ? 1.25 : 0.75) * (1 + tilt * 0.55));  // single draw rewards aggression
-  const effCry   = Math.min(0.70, pr.cry   * looseMul * (1 + tilt * 0.50));
+  const effAggr  = Math.min(0.9,  pr.aggr  * looseMul * (1 + tilt * 0.28));
+  const effBluff = Math.min(0.55, pr.bluff * looseMul * (st.gid === "single" ? 1.25 : 0.75) * (1 + tilt * 0.35));  // single draw rewards aggression
+  const effCry   = Math.min(0.6,  pr.cry   * looseMul * (1 + tilt * 0.32));
   const effSlow  = tilt > 0 ? 0 : pr.slow;
 
   const isBluff = Math.random() < effBluff;
@@ -724,7 +724,12 @@ function flopStrength(st, pl) {
   // Postflop: made-hand strength. Double Board → average across both boards (you win half per board).
   const scoreBoard = bd => {
     const hi = flopHigh(gid, hole, bd);
-    let s = hi ? ([0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1][hi.cat] || 0.2) : 0;
+    // Omaha made hands are worth far less than Hold'em (everyone has 6 two-card combos) — you need trips /
+    // the nuts to be strong; bare two pair is marginal, especially multiway or on a paired board.
+    const CAT = IS_OMAHA(gid)
+      ? [0.10, 0.28, 0.45, 0.62, 0.76, 0.84, 0.92, 0.98, 1]
+      : [0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1];
+    let s = hi ? (CAT[hi.cat] || 0.2) : 0;
     if (gid === "lhe" && bd.length < 5) {
       const allSuits = {}; [...hole, ...bd].forEach(c => allSuits[c.s] = (allSuits[c.s]||0)+1);
       if (Math.max(...Object.values(allSuits)) === 4) s = Math.max(s, 0.55);
@@ -767,7 +772,7 @@ function cpuDecideFlop(st, idx) {
   const callThresh = 0.30 - L * 0.16;   // need this strength to call a bet
   const raiseThresh = 0.74 - L * 0.10;  // strength to raise a bet
 
-  const bluff = Math.random() < Math.min(0.8, pr.bluff * (0.7 + L) * (1 + tilt * 0.5));
+  const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32));
   const slow  = tilt === 0 && Math.random() < pr.slow;
 
   // Bet/raise sizing. Fixed-limit uses fb; big-bet sizes off the pot & profile.
@@ -878,17 +883,24 @@ function cpuDecideStud(st, idx) {
   const openThresh  = 0.42 - L * 0.18;
   const callThresh  = 0.32 - L * 0.16;
   const raiseThresh = 0.76 - L * 0.10;
-  const bluff = Math.random() < Math.min(0.7, pr.bluff * (0.6 + L) * (1 + tilt * 0.5));
+  const bluff = Math.random() < Math.min(0.42, pr.bluff * (0.6 + L) * (1 + tilt * 0.3));  // tilt loosens, but not absurdly
   const slow  = tilt === 0 && Math.random() < pr.slow;
 
   if (call <= 0) {
     if ((str >= openThresh && !slow) || bluff) return { action:"bet", amount: pl.betSt + fb };
     return { action:"check", amount:0 };
   }
-  if (str >= raiseThresh && !slow) return { action:"raise", amount: pl.betSt + call + fb };
+  // Facing a bet: tighten against a raise or a crowd — don't spew to showdown with a King-low.
+  const reraised = (st.betCount || 0) >= 2;
+  const liveOpp  = st.players.filter(p => p.id !== idx && live(p)).length;
+  let callT = callThresh, raiseT = raiseThresh;
+  if (reraised)     { callT += 0.20; raiseT += 0.08; }   // a bet-and-raise is real strength
+  if (liveOpp >= 3) { callT += 0.10; }                   // crowded pot — tighten up
+  if (str >= raiseT && !slow) return { action:"raise", amount: pl.betSt + call + fb };
   const potOdds = call / (st.pot + call);
-  if (str >= callThresh || (str >= callThresh - 0.08 && potOdds < 0.18) || bluff)
-    return { action:"call", amount:0 };
+  const mayBluff  = bluff && !reraised && liveOpp <= 2;                       // no bluff-calling into raises/crowds
+  const cheapCall = str >= callT - 0.08 && potOdds < 0.18 && liveOpp <= 2;    // cheap odds only short-handed
+  if (str >= callT || cheapCall || mayBluff) return { action:"call", amount:0 };
   return { action:"fold", amount:0 };
 }
 
@@ -1425,8 +1437,8 @@ function coachBet(st, me, callAmt) {
     if (str >= raiseCut)         return { tone:"good", text:`${tag}Strong hand — raise for value. You're well ahead of ${oddsTxt} pot odds.${ex}` };
     if (str >= valueCut)         return { tone:"good", text:`${tag}Solid holding. Calling is standard; a raise is fine.${ex}` };
     // Don't pay off a weak holding that's facing action — pot odds overstate a thin hand's real equity.
-    if (nOpp >= 2 && str < 0.34 && potOdds > 0.08)
-      return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}${noMoreCards ? "" : ", and you'll often pay more on later streets"}. Fold.` };
+    if (nOpp >= 2 && str < 0.34 && (potOdds > 0.08 || noMoreCards))
+      return { tone:"warn", text:`${tag}Weak holding ${nOpp >= 3 ? "in a multiway pot" : "facing a bet"} — your real share is too thin for ${oddsTxt}${noMoreCards ? " and there are no cards left to improve" : ", and you'll often pay more on later streets"}. Fold.` };
     if (callEq >= potOdds + 0.16)   return { tone:"ok",   text:`${tag}Marginal, but ${oddsTxt} pot odds make this a profitable call.${ex}` };
     if (callEq >= potOdds + 0.04)   return { tone:"ok", text:`Borderline — call only if you trust the price you're getting.` };
     return { tone:"warn", text:`${tag}Weak hand for ${oddsTxt}. Folding is usually best here.` };
@@ -1467,7 +1479,9 @@ function coachRecAction(st, me, callAmt) {
     }
     if (str >= raiseCut)                       return "raise";
     if (str >= valueCut)                       return "call";   // call/raise both fine
-    if (nOpp >= 2 && str < 0.34 && potOdds > 0.08) return "fold";
+    const noMore = IS_STUD(st.gid) ? (me.hand.length >= 7)
+                 : (IS_FLOP(st.gid) || IS_DRAMAHA(st.gid)) ? ((st.board || []).length >= 5) : false;
+    if (nOpp >= 2 && str < 0.34 && (potOdds > 0.08 || noMore)) return "fold";
     if (callEq >= potOdds + 0.16)              return "call";
     if (callEq >= potOdds + 0.04)              return "call";
     return "fold";
@@ -1847,14 +1861,18 @@ function nextPhase(st) {
     }
     if (st.streetN >= 4) return showdownStud({ ...st, players });
     const dealUp = st.streetN < 3; // 4th,5th,6th up (streetN 1,2,3); 7th down (streetN 4)
-    const deal1 = (ps, deck) => ps.map(p => {
+    let deck = [...st.deck];
+    const liveP = players.filter(live);
+    // 7th street with more players left than cards in the deck → deal ONE shared face-up COMMUNITY card that
+    // every remaining player uses (standard stud rule; prevents a deck-out crash at 8-handed razz/stud).
+    const community = (st.streetN === 3 && deck.length < liveP.length) ? { ...deck.shift(), up:true } : null;
+    const draw = (dk, up) => { const c = dk.shift(); return c ? { ...c, up } : { v:2, r:"2", s:"c", up }; };  // never undefined
+    const deal1 = (ps, dk) => ps.map(p => {
       if (!live(p)) return p;
-      const c = { ...deck.shift(), up: dealUp };
-      return { ...p, hand:[...p.hand, c] };
+      return { ...p, hand:[...p.hand, community || draw(dk, dealUp)] };
     });
     // If fewer than 2 can still act, deal remaining streets and go to showdown.
     const canAct = players.filter(p => live(p) && p.chips > 0).length;
-    let deck = [...st.deck];
     let ps = deal1(players, deck);
     let streetN = st.streetN + 1;
     if (canAct < 2) {
@@ -1862,7 +1880,8 @@ function nextPhase(st) {
       while (s2.streetN < 4) {
         let d = [...s2.deck];
         const up = s2.streetN < 3;
-        const np = s2.players.map(p => live(p) ? { ...p, hand:[...p.hand, { ...d.shift(), up }] } : p);
+        const comm2 = (s2.streetN === 3 && d.length < s2.players.filter(live).length) ? { ...d.shift(), up:true } : null;
+        const np = s2.players.map(p => live(p) ? { ...p, hand:[...p.hand, comm2 || draw(d, up)] } : p);
         s2 = { ...s2, players:np, deck:d, streetN:s2.streetN + 1 };
       }
       return showdownStud(s2);
@@ -2325,7 +2344,7 @@ function cpuDecideDramaha(st, idx) {
   const tight = st.botTight?.[idx] ?? 50, L = (100 - tight) / 100;
   const str  = dramahaStrength(st, pl);
   const openThresh = 0.42 - L*0.18, callThresh = 0.30 - L*0.16, raiseThresh = 0.74 - L*0.10;
-  const bluff = Math.random() < Math.min(0.8, pr.bluff * (0.7 + L) * (1 + tilt*0.5));
+  const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt*0.32));
   const slow  = tilt === 0 && Math.random() < pr.slow;
   const betTot = raising => pl.betSt + (raising ? call + fb : fb);
   if (call <= 0) {
@@ -2446,12 +2465,14 @@ function showdownSplitDraw(st) {
 }
 
 function settle(st, players, potWon, result, msg, winnerIds = []) {
-  // Tilt system: losing CPUs tilt; tilt decays on CPU wins
+  // Tilt system: some CPUs who just lost a pot to you steam; everyone else cools off. Kept modest so the
+  // whole table doesn't go on tilt at once.
   const cpuTilt = { ...st.cpuTilt };
   if (result === "player") {
     players.filter(p => p.id !== 0 && live(p)).forEach(p => {
-      cpuTilt[p.id] = Math.min(3, (cpuTilt[p.id] || 0) + 1);
+      if (Math.random() < 0.5) cpuTilt[p.id] = Math.min(2, (cpuTilt[p.id] || 0) + 1);   // only some steam, cap 2
     });
+    [1,2,3,4,5,6,7].forEach(i => { if (!players.find(p => p.id === i && live(p)) && cpuTilt[i] > 0) cpuTilt[i]--; });  // uninvolved cool off
   } else {
     [1,2,3,4,5,6,7].forEach(i => { if (cpuTilt[i] > 0) cpuTilt[i]--; });
   }
@@ -2623,7 +2644,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02x";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.03b";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2949,7 +2970,18 @@ function App() {
     if (s0.tour?.on && s0.tour.result) return s0;   // S2: tournament over — no more hands
     const s      = s0.tour?.on ? refillTable(rotateTour(s0)) : s0;   // rotate game + reseat fresh players, then deal
     const deck   = mkDeck();
-    const dealer = Math.floor(Math.random() * s.players.length); // randomised every hand, all seats
+    // Button rotates one live seat clockwise each hand (random only on the very first hand).
+    const nP = s.players.length;
+    let dealer;
+    if (s.dealerIdx == null) {
+      dealer = Math.floor(Math.random() * nP);
+    } else {
+      dealer = s.dealerIdx;
+      for (let step = 1; step <= nP; step++) {
+        const cand = (s.dealerIdx + step) % nP;
+        if (s.players[cand].chips > 0) { dealer = cand; break; }   // skip busted seats
+      }
+    }
     const stk    = STK(s);
 
     // ── STUD GAMES: antes, deal 2 down + 1 up, bring-in posts ──
