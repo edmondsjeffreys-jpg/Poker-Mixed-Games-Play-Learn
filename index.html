@@ -2578,7 +2578,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02t";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02u";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2795,7 +2795,6 @@ function App() {
   const [tourRect, setTourRect] = useState(null);
   const [view, setView] = useState("play");                              // "play" (cash/table) | "lobby" (tournament setup)
   const [tourCfg, setTourCfg] = useState({ mix:"horse", runners:45, stakes:"high" });
-  const [showChrome, setShowChrome] = useState(true);                     // collapsible top menu during a hand
   // Boot a tournament from the lobby. This slice deals an 8-max tourney table using the mix's first game;
   // blind clock / rotation / field payouts land in later slices.
   const startTournament = (cfg) => {
@@ -2828,9 +2827,6 @@ function App() {
     }, 1000);
     return () => clearInterval(iv);
   }, [st.tour?.on]);
-  // The top menu is a MANUAL toggle via the handle (setShowChrome) — it never auto-hides/reappears on its own,
-  // so there's no jarring vanish-and-return between hands. Whatever you leave it on stays that way.
-  const handLive = st.phase !== "idle" && st.phase !== "showdown";
   const screenW       = useWidth();
   const mobile        = screenW < 560;
   const curGame       = GAMES.find(g => g.id === st.gid);
@@ -3233,23 +3229,7 @@ function App() {
         <button id="tour-gear" onClick={()=>setShowSettings(true)} style={S.gearBtnTop} title="Settings">⚙</button>
       </div>
 
-      {/* Collapsible-menu handle — tap (never pull) to show/hide the top chrome during a hand */}
-      <div style={S.chromeTab} onClick={()=>setShowChrome(s=>!s)}>
-        <span style={{transform:showChrome?"rotate(180deg)":"none",transition:"transform 0.2s",display:"inline-block",lineHeight:1,fontSize:13}}>⌄</span>
-        <span style={S.chromeTabLbl}>{showChrome ? "hide menu" : "menu"}</span>
-      </div>
-
-      {/* MENU PANEL — the whole menu overlays the table when open, so nothing underneath shifts */}
-      <div style={S.menuAnchor}>
-      {showChrome && (
-      <div style={S.menuPanel}>
-      <div style={S.topTabs}>
-        <button onClick={()=>{ setView("play"); if (st.format==="tourney") setSt(s => mkState(s.gid, { ...s, format:"cash" })); }}
-          style={{...S.topTab,...((view==="play" && st.format!=="tourney")?S.topTabOn:{})}}>CASH</button>
-        <button onClick={()=>setView("lobby")}
-          style={{...S.topTab,...((view==="lobby" || st.format==="tourney")?S.topTabOn:{})}}>TOURNAMENT</button>
-      </div>
-
+      {/* GAME BAR — always visible on the table screen; everything else lives behind the gear ⚙ */}
       <div style={S.menuBar}>
         <button id="tour-menu" onClick={()=>{ if (st.format==="tourney") return; setMenuOpen(o=>!o); }}
           style={{...S.menuTrigger,...(menuOpen?S.menuTriggerOpen:{}),...(st.format==="tourney"?{opacity:0.9,cursor:"default"}:{})}}>
@@ -3283,25 +3263,6 @@ function App() {
             </div>
           </>
         )}
-      </div>
-      <div style={S.ctrlBar}>
-        <button id="tour-coach" onClick={()=>setCoach(!st.coach)} style={{...S.coachChip, ...(st.coach?S.coachChipOn:{})}}>
-          {st.coach ? "● COACH ON" : "COACH OFF"}
-        </button>
-        <button id="tour-review" onClick={()=>setShowReview(true)} style={S.reviewChip}>📊 REVIEW</button>
-        <span style={S.fmtReadout}>{st.format==="tourney" ? "TOURNAMENT" : "STAKES " + STK(st).label}</span>
-        {st.format==="tourney" && (
-          <div style={S.depthRow}>
-            {BB_DEPTHS.map(d => (
-              <button key={d} onClick={()=>setDepth(d)}
-                style={{...S.depthBtn, ...(st.bbDepth===d?S.depthBtnOn:{})}}>{d}</button>
-            ))}
-            <span style={S.depthCap}>{depthWord(st.gid)}</span>
-          </div>
-        )}
-      </div>
-      </div>
-      )}
       </div>
 
       {view==="lobby" && (
@@ -3431,10 +3392,27 @@ function App() {
               </div>
             )}
             {st.format==="tourney" && (
-              <div style={{...S.modalHint,marginTop:8,color:"#c9a84c"}}>
-                Stack depth selector is on the main table screen ({BB_DEPTHS.join(" / ")} {depthWord(st.gid)}).
-              </div>
+              <>
+                <div style={{...S.modalHint,marginTop:8}}>Starting stack depth</div>
+                <div style={S.segRow}>
+                  {BB_DEPTHS.map(d => (
+                    <button key={d} onClick={()=>setDepth(d)}
+                      style={{...S.segBtn,...(st.bbDepth===d?S.segBtnOn:{})}}>
+                      <span style={{fontSize:11,fontWeight:"bold"}}>{d}</span>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={()=>{ setShowSettings(false); setView("lobby"); }}
+                  style={{...S.modalDone, marginTop:10, background:"linear-gradient(165deg,#57b56a,#3f9152)", color:"#0a1a0e"}}>
+                  OPEN TOURNAMENT LOBBY
+                </button>
+              </>
             )}
+
+            <button onClick={()=>{ setShowSettings(false); setShowReview(true); }}
+              style={{...S.toggleRow, justifyContent:"center", marginTop:12}}>
+              <span style={{color:"#c9a84c",fontSize:12,letterSpacing:1}}>📊  Review hand history</span>
+            </button>
 
             <button onClick={replayTour} style={{...S.tourSkip, display:"block", margin:"14px auto 0", color:"#9d8659", textDecoration:"underline"}}>Replay the intro tour</button>
             <button onClick={()=>setShowSettings(false)} style={S.modalDone}>DONE</button>
