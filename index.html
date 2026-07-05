@@ -160,11 +160,13 @@ const BB_DEPTHS     = [200, 100, 50, 10];
 // ── Tournament field model (Leg C · sim S1) ── pure + harness-verifiable ──
 // Chip invariant: total chips in play = startStack × runners, constant. Average stack grows as the field shrinks.
 const tourStartStack = (gid, bbDepth) => depthUnit(gid, mkStakes(TOUR_SB[0], "L1")) * (bbDepth ?? 100);
-// Players still in the field as the tournament deepens — fast early, slows mid, tightens near the money.
+// Players still in the field as the tournament deepens. Exponential decay from the full field down to ~1
+// over "levels-to-final-table" (which scales with field size — bigger fields take longer). Fast early, slows late.
 function fieldLeft(total, level) {
   if (total <= 1) return 1;
-  const frac = 1 / (1 + 0.55 * Math.pow(Math.max(0, level), 1.35));
-  return Math.max(1, Math.min(total, Math.round(total * frac)));
+  const Lft  = 8 + Math.log2(total) * 2.4;                          // levels to burn the field down to ~1
+  const frac = Math.pow(total, 1 - Math.min(1, (level || 0) / Lft)); // total → 1 across Lft levels
+  return Math.max(1, Math.min(total, Math.round(frac)));
 }
 // Your rank in the field, modelled from your stack vs the field average (chip leader → 1st, short → near last).
 function fieldRank(yourStack, avgStack, left) {
@@ -173,7 +175,38 @@ function fieldRank(yourStack, avgStack, left) {
   const aboveFrac = 1 / (1 + Math.pow(r, 1.3));            // fraction of the field holding more chips than you
   return Math.max(1, Math.min(left, Math.round(aboveFrac * (left - 1)) + 1));
 }
-const paidSpots = total => Math.max(1, Math.round(total * 0.15));   // top ~15% cash
+const paidSpots = total => total <= 3 ? 1 : total <= 9 ? Math.max(2, Math.round(total * 0.3)) : Math.max(1, Math.round(total * 0.15));
+const ordinal = n => { const s = ["th","st","nd","rd"], v = n % 100; return n + (s[(v-20)%10] || s[v] || s[0]); };
+// ── S6: payout ladder ── prize pool = runners × buy-in. Every paid spot gets a min-cash floor (~1.8× buy-in),
+// then the remainder is distributed top-heavy so 1st takes the lion's share (≈20–35% depending on field size).
+const TOUR_BUYIN = { low: 60, med: 250, high: 1000 };
+function payoutLadder(total, buyIn) {
+  const pool = total * buyIn, spots = paidSpots(total), minCash = Math.round(buyIn * 1.8);
+  const extra = Math.max(0, pool - minCash * spots);
+  const w = []; for (let r = 1; r <= spots; r++) w.push(1 / Math.pow(r, 1.15));
+  const sum = w.reduce((a, b) => a + b, 0) || 1;
+  return w.map(x => Math.round(minCash + (x / sum) * extra));
+}
+const payoutFor = (place, total, buyIn) => { const l = payoutLadder(total, buyIn); return (place >= 1 && place <= l.length) ? l[place - 1] : 0; };
+// ── S3: table reseating (WSOP/TDA-style). While the field is bigger than one table, busted opponents are
+// replaced by fresh faces drawn from the room (you being reseated / players moved to you), stacks scaled to
+// the field's growing average. Once the field fits one table, refilling stops — that's your final table. ──
+function refillTable(s) {
+  const t = s.tour, F = t.field;
+  if (!t || !t.on || !F) return s;
+  const left = fieldLeft(F.total, t.level || 0);
+  if (left <= s.players.length) return s;                     // final table reached — play it down, no refill
+  const avg = Math.round(F.total * F.startStack / left);
+  let refilled = false;
+  const players = s.players.map((p, i) => {
+    if (p.id === 0 || p.chips > 0) return p;                  // you + still-alive opponents keep their seat
+    refilled = true;
+    const prof  = PROF[(i + (t.hands || 0)) % PROF.length];
+    const stack = Math.max(Math.round(F.startStack * 0.25), Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10)));  // spread around the field avg
+    return { ...p, chips: stack, name: prof.name, folded:false, sittingOut:false, busted:false, hand:[], betSt:0, lastAct:{ text:"New seat", color:"#9d8659" } };
+  });
+  return refilled ? { ...s, players } : s;
+}
 const CASH_DEPTH    = 100;                            // cash buy-in fixed at 100bb
 // Active stakes for a given state.
 const STK = st => (st.format === "tourney" ? tourStakes(st) : CASH_STAKES[st.stakeIdx ?? 1]);
@@ -2426,8 +2459,20 @@ function settle(st, players, potWon, result, msg, winnerIds = []) {
     hands: st.stats.hands + 1,
     wins:  st.stats.wins + (result === "player" ? 1 : 0),
   };
+  // ── S2: tournament bust / win + finishing place ──
+  let tour = st.tour;
+  if (tour?.on && !tour.result) {
+    const alive = players.filter(p => p.chips > 0).length;   // players still holding chips at your table
+    const F = tour.field || { total: 8 };
+    if (players[0].chips <= 0) {                              // YOU busted — you finish just under those still in
+      const place = F.total <= 9 ? alive + 1 : fieldLeft(F.total, tour.level || 0);
+      tour = { ...tour, result: { type:"bust", place, total:F.total } };
+    } else if (alive === 1) {                                // last one with chips → you take it down
+      tour = { ...tour, result: { type:"win", place:1, total:F.total } };
+    }
+  }
   return { ...st, players, pot:0, phase:"showdown", reveal:true, msg, result, cpuTilt, stats,
-    winnerIds, seq:(st.seq||0)+1 };
+    winnerIds, seq:(st.seq||0)+1, tour };
 }
 
 function winnerId(st) {
@@ -2578,7 +2623,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.02u";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.02x";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -2803,7 +2848,7 @@ function App() {
       ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
       : [st.gid];
     const gid = seq[0] || st.gid;
-    const tour = { on:true, mix:cfg.mix, runners:cfg.runners, stakes:cfg.stakes,
+    const tour = { on:true, mix:cfg.mix, runners:cfg.runners, stakes:cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250,
                    seq: seq.length ? seq : [gid], mixIdx:0, level:0, clock:0, levelSec:TOUR_LEVEL_SEC, hands:0,
                    field: { total: cfg.runners, startStack: tourStartStack(gid, st.bbDepth) } };
     setSt(s => mkState(gid, { ...s, format:"tourney", tour }));
@@ -2901,7 +2946,8 @@ function App() {
   const switchGame = g => { if (!g.available) return; setSt(s => mkState(g.id, s)); };
 
   const deal = () => setSt(s0 => {
-    const s      = s0.tour?.on ? rotateTour(s0) : s0;   // tournament: advance the orbit + rotate game before dealing
+    if (s0.tour?.on && s0.tour.result) return s0;   // S2: tournament over — no more hands
+    const s      = s0.tour?.on ? refillTable(rotateTour(s0)) : s0;   // rotate game + reseat fresh players, then deal
     const deck   = mkDeck();
     const dealer = Math.floor(Math.random() * s.players.length); // randomised every hand, all seats
     const stk    = STK(s);
@@ -3270,6 +3316,33 @@ function App() {
           onCash={()=>setView("play")} curGid={st.gid}/>
       )}
 
+      {/* TOURNAMENT RESULT (sim S2) — bust or win + finishing place */}
+      {st.tour?.result && (() => {
+        const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
+        const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
+        const first = payoutFor(1, R.total, buyIn);
+        return (
+          <div style={S.resultOverlay}>
+            <div style={S.resultCard}>
+              <div style={{fontSize:46,lineHeight:1}}>{win ? "🏆" : cashed ? "💵" : "♠"}</div>
+              <div style={{...S.resultTitle, color: win ? "#86efac" : cashed ? "#e3c87a" : "#cbb996"}}>
+                {win ? "You won!" : cashed ? "In the money" : "Busted"}
+              </div>
+              <div style={S.resultPlace}>{ordinal(R.place)} <span style={{opacity:0.55,fontSize:16}}>of {R.total.toLocaleString()}</span></div>
+              {prize > 0 && <div style={S.resultPrize}>+${prize.toLocaleString()}</div>}
+              <div style={S.resultSub}>
+                {win ? "Last player standing — you took the whole thing down."
+                     : cashed ? "You made the money before falling. Solid run."
+                     : `${(R.place - paidSpots(R.total)).toLocaleString()} spots short of the cash.`}
+              </div>
+              {buyIn > 0 && <div style={S.resultPool}>Prize pool ${pool.toLocaleString()} · 1st paid ${first.toLocaleString()}</div>}
+              <button style={S.resultBtn} onClick={()=>{ setSt(s => ({ ...s, tour:null })); setView("lobby"); }}>NEW TOURNAMENT</button>
+              <button style={S.resultBtn2} onClick={()=>{ setSt(s => mkState(s.gid, { ...s, format:"cash", tour:null })); setView("play"); }}>Back to cash game</button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* TOURNAMENT HUD — level clock, blinds, rotation position */}
       {st.tour?.on && view==="play" && (() => {
         const T = st.tour, sb = tourSb(T.level||0);
@@ -3296,14 +3369,22 @@ function App() {
         const rank  = fieldRank(me.chips, avg, left);
         const paid  = paidSpots(F.total);
         const bb    = STK(st).bblind || STK(st).bbet || 1;
-        const inMoney = rank <= paid && left <= paid;
+        const toMoney = left - paid;
+        const inMoney = left <= paid;
+        const stone   = toMoney === 1;
+        const nearBubble = toMoney > 0 && toMoney <= Math.max(3, Math.round(paid * 0.12));
+        const buyIn  = T.buyIn || 0;
+        const locked = inMoney && buyIn ? payoutFor(Math.min(rank, paid), F.total, buyIn) : 0;
+        let money, mColor;
+        if (inMoney)        { money = locked ? `● ITM · $${locked.toLocaleString()}` : "● in the money"; mColor = "#86efac"; }
+        else if (stone)     { money = "◆ STONE BUBBLE"; mColor = "#f87171"; }
+        else if (nearBubble){ money = `hand-for-hand · ${toMoney} out`; mColor = "#fbbf24"; }
+        else                { money = `${toMoney.toLocaleString()} to the money`; mColor = "#c9a84c"; }
         return (
-          <div style={S.fieldStrip}>
+          <div style={{...S.fieldStrip, ...(stone ? S.fieldStripBubble : nearBubble ? S.fieldStripNear : {})}}>
             <span style={S.fieldMain}><b style={{color:"#e3c87a"}}>{rank.toLocaleString()}</b> <span style={{opacity:0.7}}>of</span> {left.toLocaleString()} left</span>
             <span style={S.fieldSub}>avg {Math.round(avg/bb)}bb · you {Math.round(me.chips/bb)}bb</span>
-            <span style={{...S.fieldMoney, color: inMoney ? "#86efac" : "#c9a84c"}}>
-              {inMoney ? "in the money" : `${(left - paid).toLocaleString()} to the money`}
-            </span>
+            <span style={{...S.fieldMoney, color: mColor}}>{money}</span>
           </div>
         );
       })()}
@@ -4243,6 +4324,23 @@ const S = {
   fieldMain:{fontSize:12,color:"#cfc3a0",letterSpacing:0.3},
   fieldSub:{fontSize:10,color:"#8b95a1",fontFamily:"monospace"},
   fieldMoney:{fontSize:9,letterSpacing:1,textTransform:"uppercase",fontWeight:"bold"},
+  fieldStripNear:{border:"1px solid rgba(251,191,36,0.5)",background:"rgba(251,191,36,0.06)"},
+  fieldStripBubble:{border:"1px solid rgba(248,113,113,0.6)",background:"rgba(248,113,113,0.08)",boxShadow:"0 0 12px rgba(248,113,113,0.15)"},
+  resultOverlay:{position:"fixed",inset:0,zIndex:70,display:"flex",alignItems:"center",justifyContent:"center",
+    padding:24,background:"radial-gradient(ellipse at 50% 40%,rgba(20,30,22,0.92),rgba(6,9,13,0.95))"},
+  resultCard:{width:"100%",maxWidth:340,textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:8,
+    background:"linear-gradient(180deg,rgba(22,28,20,0.9),rgba(12,16,12,0.9))",border:"1px solid rgba(201,168,76,0.35)",
+    borderRadius:18,padding:"26px 22px",boxShadow:"0 18px 50px rgba(0,0,0,0.6)"},
+  resultTitle:{fontSize:24,letterSpacing:1,fontFamily:"Georgia,serif",fontWeight:"bold"},
+  resultPlace:{fontSize:30,color:"#f3dd9a",fontFamily:"Georgia,serif",fontWeight:"bold",letterSpacing:0.5},
+  resultPrize:{fontSize:26,color:"#86efac",fontFamily:"monospace",fontWeight:"bold",textShadow:"0 0 12px rgba(134,239,172,0.35)",marginTop:2},
+  resultPool:{fontSize:10,color:"#8b95a1",letterSpacing:0.4,marginTop:4},
+  resultSub:{fontSize:12,color:"#a9b0a2",lineHeight:1.5,maxWidth:260,marginTop:2},
+  resultBtn:{width:"100%",marginTop:12,padding:14,borderRadius:12,border:"none",cursor:"pointer",
+    background:"linear-gradient(165deg,#57b56a,#3f9152)",color:"#0a1a0e",fontSize:14,fontWeight:"bold",
+    letterSpacing:1.5,fontFamily:"Georgia,serif",boxShadow:"0 6px 16px rgba(63,145,82,0.3)"},
+  resultBtn2:{width:"100%",marginTop:8,padding:11,borderRadius:10,cursor:"pointer",
+    background:"transparent",border:"1px solid #2a3240",color:"#9aa3ad",fontSize:12,letterSpacing:0.5,fontFamily:"Georgia,serif"},
   chromeTab:{width:"100%",maxWidth:740,margin:"4px auto 0",display:"flex",alignItems:"center",justifyContent:"center",gap:6,
     padding:"3px 0",cursor:"pointer",color:"#8b93a1",borderRadius:8,background:"rgba(255,255,255,0.02)",border:"1px solid #1c232f"},
   chromeTabLbl:{fontSize:8,letterSpacing:1.5,color:"#6b7280",textTransform:"uppercase"},
