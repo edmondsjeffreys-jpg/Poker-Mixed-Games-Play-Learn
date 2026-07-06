@@ -188,6 +188,23 @@ function payoutLadder(total, buyIn) {
   return w.map(x => Math.round(minCash + (x / sum) * extra));
 }
 const payoutFor = (place, total, buyIn) => { const l = payoutLadder(total, buyIn); return (place >= 1 && place <= l.length) ? l[place - 1] : 0; };
+// ── S5: ICM / stage context ── how deep the tournament is for a given stack. Bubble pressure taxes marginal
+// spots for medium stacks (survival matters more than chips near a pay jump); short stacks shove/fold, big
+// stacks apply pressure. `tighten` is added to value thresholds (+ = fold more).
+function icmContext(st, chips) {
+  if (!st.tour?.on || !st.tour.field) return null;
+  const F = st.tour.field, level = st.tour.level || 0;
+  const left = fieldLeft(F.total, level), paid = paidSpots(F.total), toMoney = left - paid;
+  const bb = STK(st).bblind || STK(st).bbet || 1;
+  const myBB = chips / bb;
+  const inMoney    = left <= paid;
+  const onBubble   = toMoney > 0 && toMoney <= Math.max(2, Math.round(paid * 0.06));
+  const nearBubble = toMoney > 0 && toMoney <= Math.max(4, Math.round(paid * 0.18));
+  const short = myBB < 12, deep = myBB > 40;
+  let tighten = 0;
+  if (nearBubble && !inMoney) tighten = short ? 0 : deep ? -0.04 : (onBubble ? 0.14 : 0.08);
+  return { myBB, toMoney, onBubble, nearBubble, inMoney, short, deep, tighten };
+}
 // ── S3: table reseating (WSOP/TDA-style). While the field is bigger than one table, busted opponents are
 // replaced by fresh faces drawn from the room (you being reseated / players moved to you), stacks scaled to
 // the field's growing average. Once the field fits one table, refilling stops — that's your final table. ──
@@ -795,11 +812,14 @@ function cpuDecideFlop(st, idx) {
   let callT = callThresh, raiseT = raiseThresh;
   if (reraised)     { callT += 0.20; raiseT += 0.08; }   // a bet-and-raise is real strength — don't pay it off
   if (liveOpp >= 3) { callT += 0.08; }                   // a bet into a crowd is stronger than heads-up
+  const icm = icmContext(st, pl.chips);                  // S5: ICM/stage pressure
+  if (icm) { callT += icm.tighten; raiseT += icm.tighten * 0.5; }
   if (str >= raiseT && !slow) return { action:"raise", amount: sizedTotal(true) };
   // pot odds: cheaper calls are easier to make
   const potOdds = call / (st.pot + call);
-  // Bluffing into a raise or a multiway crowd is spew — only stab a lone heads-up bet.
-  const mayBluff = bluff && !reraised && liveOpp <= 2;
+  // Bluffing into a raise or a multiway crowd is spew — only stab a lone heads-up bet; and don't bluff when the
+  // bubble is squeezing you (survival) — but a big stack can lean on it.
+  const mayBluff = bluff && !reraised && liveOpp <= 2 && !(icm && icm.tighten > 0);
   // The cheap pot-odds call only applies short-handed; into a crowd, thin hands just fold.
   const cheapCall = str >= callT - 0.08 && potOdds < 0.2 && liveOpp <= 2;
   if (str >= callT || cheapCall || mayBluff)
@@ -896,9 +916,11 @@ function cpuDecideStud(st, idx) {
   let callT = callThresh, raiseT = raiseThresh;
   if (reraised)     { callT += 0.20; raiseT += 0.08; }   // a bet-and-raise is real strength
   if (liveOpp >= 3) { callT += 0.10; }                   // crowded pot — tighten up
+  const icm = icmContext(st, pl.chips);                  // S5: ICM/stage pressure
+  if (icm) { callT += icm.tighten; raiseT += icm.tighten * 0.5; }
   if (str >= raiseT && !slow) return { action:"raise", amount: pl.betSt + call + fb };
   const potOdds = call / (st.pot + call);
-  const mayBluff  = bluff && !reraised && liveOpp <= 2;                       // no bluff-calling into raises/crowds
+  const mayBluff  = bluff && !reraised && liveOpp <= 2 && !(icm && icm.tighten > 0);   // no bluffing when the bubble squeezes
   const cheapCall = str >= callT - 0.08 && potOdds < 0.18 && liveOpp <= 2;    // cheap odds only short-handed
   if (str >= callT || cheapCall || mayBluff) return { action:"call", amount:0 };
   return { action:"fold", amount:0 };
@@ -1391,6 +1413,14 @@ function coachBet(st, me, callAmt) {
   const k = Math.max(0, Math.min(1, (st.exploitDial || 0) / 100));   // 0 = pure GTO, 1 = full exploit
   // Baseline (GTO) thresholds; the dial tilts them toward exploiting the table read.
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36, tag = "", ex = "";
+  const icm = icmContext(st, me.chips);
+  if (icm) {
+    valueCut += icm.tighten;   // ICM: near the bubble, marginal continues become folds (survival > chips)
+    if (icm.short && facing)                     tag = `You're short (${Math.round(icm.myBB)}bb) — think shove-or-fold, don't flat marginal hands. `;
+    else if (icm.onBubble && icm.tighten > 0)    tag = `On the bubble — survival matters here; tighten up. `;
+    else if (icm.nearBubble && icm.tighten > 0)  tag = `Near the money — lean cautious with marginal hands. `;
+    else if (icm.deep && icm.nearBubble)         tag = `Big stack on the bubble — you can apply pressure. `;
+  }
   if (k > 0) {
     const r = tableRead(st);
     if (r.loose >= 0.55)      { valueCut -= 0.07 * k; thinCut -= 0.06 * k; ex = " These players call too much — value-bet thinner and skip bluffs."; }
@@ -1458,6 +1488,8 @@ function coachRecAction(st, me, callAmt) {
   const str     = heroStrength(st);
   const potOdds = facing ? callAmt / (st.pot + callAmt) : 0;
   let raiseCut = 0.78, valueCut = 0.55, thinCut = 0.36;
+  const icm = icmContext(st, me.chips);
+  if (icm) valueCut += icm.tighten;   // ICM tighten mirror (S5)
   // Freeroll: a made hand that locks a side of a split pot → bet/raise (mirror of coachBet).
   let locked = false;
   if (st.gid === "razzdugi") {
@@ -1865,7 +1897,7 @@ function nextPhase(st) {
     const liveP = players.filter(live);
     // 7th street with more players left than cards in the deck → deal ONE shared face-up COMMUNITY card that
     // every remaining player uses (standard stud rule; prevents a deck-out crash at 8-handed razz/stud).
-    const community = (st.streetN === 3 && deck.length < liveP.length) ? { ...deck.shift(), up:true } : null;
+    const community = (deck.length < liveP.length) ? { ...deck.shift(), up:true } : null;
     const draw = (dk, up) => { const c = dk.shift(); return c ? { ...c, up } : { v:2, r:"2", s:"c", up }; };  // never undefined
     const deal1 = (ps, dk) => ps.map(p => {
       if (!live(p)) return p;
@@ -1880,7 +1912,7 @@ function nextPhase(st) {
       while (s2.streetN < 4) {
         let d = [...s2.deck];
         const up = s2.streetN < 3;
-        const comm2 = (s2.streetN === 3 && d.length < s2.players.filter(live).length) ? { ...d.shift(), up:true } : null;
+        const comm2 = (d.length < s2.players.filter(live).length) ? { ...d.shift(), up:true } : null;
         const np = s2.players.map(p => live(p) ? { ...p, hand:[...p.hand, comm2 || draw(d, up)] } : p);
         s2 = { ...s2, players:np, deck:d, streetN:s2.streetN + 1 };
       }
@@ -2062,7 +2094,9 @@ function execDiscard(st, playerDiscards) {
   });
   // Deal 4th street (up) and resume betting.
   const deck = [...st.deck];
-  players = players.map(p => live(p) ? { ...p, hand:[...p.hand, { ...deck.shift(), up:true }] } : p);
+  const _liveN = players.filter(live).length;
+  const _comm = deck.length < _liveN ? { ...deck.shift(), up:true } : null;   // deck-out safety
+  players = players.map(p => live(p) ? { ...p, hand:[...p.hand, _comm || { ...(deck.shift() || { v:2, r:"2", s:"c" }), up:true }] } : p);
   const first = firstToActStud(players, st.gid);
   const queue = queueFromSeat(players, first);
   const nx = queue[0];
@@ -2644,7 +2678,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03b";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.03d";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
