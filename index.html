@@ -2722,7 +2722,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03e";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.03f";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
@@ -3282,6 +3282,8 @@ function App() {
   // Double Board: second readout for the bottom board.
   const myEval2 = IS_DOUBLE(st.gid) && me.hand.length >= 2 && (st.board2||[]).length >= 3
     ? flopHigh(st.gid, me.hand, st.board2) : null;
+  const myLow = IS_HILO(st.gid) && !me.folded
+    ? (stud ? (me.hand.length>=5 ? bestLow7(me.hand) : null) : ((st.board||[]).length>=3 ? bestOmahaLow(me.hand, st.board) : null)) : null;
   // Split-draw (Badeucey/Badacey/Archie): show both halves of your hand.
   const mySplit = IS_SPLITDRAW(st.gid) && me.hand.length === 5 ? splitSides(st.gid, st.board || []) : null;
   const mySplitTxt = mySplit
@@ -3782,7 +3784,7 @@ function App() {
                 {me.lastAct && <Bdg {...me.lastAct}/>}
                 {myEval && (
                   <span style={{...S.evalBdg,color:hColor(myEval),background:hColor(myEval)+"18",border:`1px solid ${hColor(myEval)}44`}}>
-                    {IS_DOUBLE(st.gid) ? "Top: " : ""}{myEval.desc}
+                    {IS_DOUBLE(st.gid) ? "Top: " : ""}{myEval.desc}{myLow ? ` · ${LOWNAME[myLow[0]]}-low` : ""}
                   </span>
                 )}
                 {myEval2 && (
@@ -4263,6 +4265,9 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
     else if (flop) ev = board.length>=3 ? flopHigh(gid, p.hand, board) : null;
     else if (p.hand.length===hs) ev = evalHand(gid, p.hand);
   }
+  // Hi-Lo: also surface the qualifying low so the badge shows who took the low, not just the high.
+  const lo = (reveal && !p.folded && IS_HILO(gid)) ? (stud ? bestLow7(p.hand) : (board.length>=3 ? bestOmahaLow(p.hand, board) : null)) : null;
+  const loTxt = lo ? ` · ${LOWNAME[lo[0]]}-low` : "";
   const win = won || p.id === wid;
   const speaks = won && p.name === "Martin";
   const backCount = p.hand.length > 0 ? p.hand.length : hs;
@@ -4293,7 +4298,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
               ? <MicroCard key={i} card={c}/>
               : <div key={i} style={{width:11,height:16,borderRadius:2,background:"#1a3680",border:"1px solid rgba(201,168,76,0.6)"}}/>)}
           </div>
-          {ev && <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}</div>}
+          {ev && <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}{loTxt}</div>}
           {p.folded && <div style={{fontSize:7,color:"#ef444488",letterSpacing:1.5}}>FOLDED</div>}
         </div>
       ) : !reveal || p.folded || p.sittingOut ? (
@@ -4308,7 +4313,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
           <div style={{display:"flex",gap:2}}>
             {p.hand.map((c,i)=><MicroCard key={i} card={c}/>)}
           </div>
-          <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}</div>
+          <div style={{fontSize:8,color:win?"#4ade80":hColor(ev),letterSpacing:0.5}}>{ev.desc}{loTxt}</div>
         </div>
       ) : (
         <div style={{fontSize:7,color:p.folded?"#ef444488":"#374151",letterSpacing:1.5}}>
