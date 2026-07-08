@@ -708,6 +708,45 @@ function cpuDecide(st, idx) {
 // ─── FLOP-GAME HAND STRENGTH (0..1) ──────────────
 // Preflop uses a starting-hand heuristic; postflop uses the made hand category
 // plus a small bump for flush/straight draws.
+// ── Omaha draw + board-texture awareness ── the made hand alone badly misvalues Omaha: a nut-low + flush draw
+// is a monster, and a set on a four-flush or paired board is trash. Returns draw equity to add, danger to subtract.
+function omahaDrawDanger(gid, hole, bd) {
+  let draw = 0, danger = 0;
+  const drawing = bd.length === 3 || bd.length === 4;              // flop/turn (river = what you have is what you have)
+  const bdSuits = {}; bd.forEach(c => bdSuits[c.s] = (bdSuits[c.s] || 0) + 1);
+  const bdVals = bd.map(c => c.v);
+  const paired = bdVals.length !== new Set(bdVals).size;
+  // FLUSH danger: 3+ of a suit on the board and you can't hold the flush (need 2 of that suit)
+  for (const suit in bdSuits) {
+    if (bdSuits[suit] >= 3 && hole.filter(c => c.s === suit).length < 2)
+      danger = Math.max(danger, bdSuits[suit] >= 4 ? 0.32 : 0.16);
+  }
+  if (paired) danger = Math.max(danger, 0.10);                     // full houses are out there
+  if (drawing) {
+    // flush draw — 2 hole + 2 board of a suit = one card away; value by nut-ness
+    for (const suit of ["s", "h", "d", "c"]) {
+      const mine = hole.filter(c => c.s === suit).length, onBd = bdSuits[suit] || 0;
+      if (mine >= 2 && onBd === 2) {                                   // 2 on board + you hold 2 = one card from a flush
+        const hv = Math.max(...hole.filter(c => c.s === suit).map(c => c.v));
+        draw += hv === 14 ? 0.36 : hv === 13 ? 0.30 : hv === 12 ? 0.24 : 0.16;
+      }
+    }
+    // nut / strong low draw (hi-lo): two low hole cards + 1-2 low board cards, one card from a made low
+    if (IS_HILO(gid)) {
+      const lo = v => (v === 14 ? 1 : v);
+      const lowBd   = [...new Set(bd.filter(c => c.v <= 8 || c.v === 14).map(c => lo(c.v)))];
+      const lowHole = [...new Set(hole.filter(c => c.v <= 8 || c.v === 14).map(c => lo(c.v)))];
+      const distinct = new Set([...lowBd, ...lowHole]);
+      if (lowHole.length >= 2 && lowBd.length >= 1 && distinct.size >= 3 && distinct.size <= 4)
+        draw += (lowHole.includes(1) && lowHole.includes(2)) ? 0.34 : 0.20;   // A-2 = nut-low draw
+    }
+    // straight / wrap draw (approx): 4+ distinct ranks inside a 5-card window
+    const allV = [...new Set([...hole.map(c => c.v), ...bdVals, ...(hole.some(c=>c.v===14)?[1]:[]), ...(bdVals.includes(14)?[1]:[])])];
+    for (let base = 1; base <= 10; base++)
+      if (allV.filter(v => v >= base && v <= base + 4).length >= 4) { draw += 0.15; break; }
+  }
+  return { draw: Math.min(0.72, draw), danger };
+}
 function flopStrength(st, pl) {
   const gid = st.gid, board = st.board || [];
   const hole = pl.hand;
@@ -752,6 +791,11 @@ function flopStrength(st, pl) {
       if (Math.max(...Object.values(allSuits)) === 4) s = Math.max(s, 0.55);
     }
     if (IS_HILO(gid)) { const lo = bestOmahaLow(hole, bd); if (lo) s = Math.max(s, 0.5 + (8 - lo[0]) * 0.03); }
+    if (IS_OMAHA(gid)) {
+      const { draw, danger } = omahaDrawDanger(gid, hole, bd);
+      s = Math.max(s - danger, draw);                                   // scary board taxes made hands; big draws stand on their own
+      if (draw > 0.2 && hi && hi.cat >= 2) s = Math.min(1, s + 0.06);   // made hand + a real draw = extra
+    }
     return s;
   };
   if (IS_DOUBLE(gid)) {
@@ -2678,7 +2722,7 @@ const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 // Tip-jar link. Paste your Ko-fi / Buy Me a Coffee URL (e.g. https://ko-fi.com/yourname)
 // in place of PASTE_SUPPORT_LINK and the "Support" link appears in the footer. Until then it stays hidden.
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03d";  // build stamp — bump when you ship a new build
+const APP_VERSION = "2026.07.03e";  // build stamp — bump when you ship a new build
 const IS_BETA = true;               // shows a BETA badge in header + footer
 // First-run guided tour: spotlight these elements in order.
 const TOUR = [
