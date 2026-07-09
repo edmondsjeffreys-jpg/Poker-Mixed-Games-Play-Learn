@@ -119,7 +119,8 @@ const mkStakes = (sb, label) => ({
 const CASH_STAKES = [mkStakes(5, "$5 / $10"), mkStakes(10, "$10 / $20"), mkStakes(25, "$25 / $50")];
 const TOURNEY_STAKES = mkStakes(10, "Tournament");
 const TOUR_SB = [10, 15, 20, 30, 40, 60, 80, 120, 160, 250, 350, 500, 700, 1000, 1500, 2000];
-const TOUR_LEVEL_SEC = 300;
+const TOUR_LEVEL_SEC = 2100;
+const TOUR_HAND_SECS = 130;
 const tourSb = lvl => TOUR_SB[Math.min(Math.max(0, lvl | 0), TOUR_SB.length - 1)];
 const tourLevelFromClock = (clock, levelSec) => Math.min(TOUR_SB.length - 1, Math.floor((clock || 0) / (levelSec || TOUR_LEVEL_SEC)));
 const tourStakes = st => mkStakes(tourSb(st.tour?.level || 0), `L${(st.tour?.level || 0) + 1}`);
@@ -131,7 +132,9 @@ function rotateTour(s) {
     const orbitLen = Math.max(2, s.players.length);
     const mixIdx = Math.floor((hands - 1) / orbitLen) % t.seq.length;
     const gid = t.seq[mixIdx] || s.gid;
-    return { ...s, gid, tour: { ...t, hands, mixIdx } };
+    const clock = (t.clock || 0) + Math.round(TOUR_HAND_SECS * (0.85 + Math.random() * 0.3));
+    const level = tourLevelFromClock(clock, t.levelSec || TOUR_LEVEL_SEC);
+    return { ...s, gid, tour: { ...t, hands, mixIdx, clock, level } };
 }
 const BB_DEPTHS = [200, 100, 50, 10];
 const tourStartStack = (gid, bbDepth) => depthUnit(gid, mkStakes(TOUR_SB[0], "L1")) * (bbDepth ?? 100);
@@ -2982,7 +2985,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03g";
+const APP_VERSION = "2026.07.03i";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3072,6 +3075,12 @@ const STAKE_OPTS = [
     { id: "med", tag: "MED", desc: "Mixed field — a spread of regs and recreational players." },
     { id: "high", tag: "HIGH", desc: "Tough regs — tight, aggressive, balanced, hard to read. Bring your A-game." },
 ];
+const SPEED_OPTS = [
+    { id: "hyper", label: "Hyper", min: 6 },
+    { id: "turbo", label: "Turbo", min: 15 },
+    { id: "standard", label: "Standard", min: 35 },
+    { id: "slow", label: "Slow", min: 60 },
+];
 function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
     const L = LOBBY_S;
     const preset = MIX_PRESETS.find(m => m.id === cfg.mix) || MIX_PRESETS[0];
@@ -3079,6 +3088,7 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
         ? preset.games.map(id => (GAMES.find(g => g.id === id)?.label) || id)
         : preset.id === "single" ? [(GAMES.find(g => g.id === curGid)?.label) || "current game"] : ["your custom mix"];
     const stake = STAKE_OPTS.find(s => s.id === cfg.stakes) || STAKE_OPTS[2];
+    const spd = SPEED_OPTS.find(s => s.id === cfg.speed) || SPEED_OPTS[2];
     const singleTable = cfg.runners <= 9;
     return (React.createElement("div", { style: L.screen },
         React.createElement("div", { style: L.tabs },
@@ -3103,17 +3113,31 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
             React.createElement("div", { style: L.stakes }, STAKE_OPTS.map(s => (React.createElement("button", { key: s.id, onClick: () => setCfg(c => ({ ...c, stakes: s.id })), style: { ...L.srow, ...(cfg.stakes === s.id ? L.srowOn : {}) } },
                 React.createElement("span", { style: { ...L.stag, ...(cfg.stakes === s.id ? { color: "#c9a84c" } : {}) } }, s.tag),
                 React.createElement("span", { style: L.sdesc }, s.desc)))))),
+        React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "BLIND SPEED \u2014 LEVEL LENGTH"),
+            React.createElement("div", { style: L.pills }, SPEED_OPTS.map(sp => (React.createElement("button", { key: sp.id, onClick: () => setCfg(c => ({ ...c, speed: sp.id })), style: { ...L.pill, ...(cfg.speed === sp.id ? L.pillOn : {}) } },
+                sp.label,
+                React.createElement("span", { style: L.pillU },
+                    sp.min,
+                    " min"))))),
+            React.createElement("div", { style: L.hint },
+                "~",
+                spd.min,
+                "-minute levels \u2014 about ",
+                Math.max(2, Math.round(spd.min * 60 / TOUR_HAND_SECS)),
+                " hands per level. Shorter levels mean the blinds climb faster.")),
         React.createElement("div", { style: L.summary },
             React.createElement("b", null, preset.name),
             " \u00B7 ",
             cfg.runners.toLocaleString(),
             " runners \u00B7 ",
             React.createElement("b", null, stake.tag),
-            " stakes",
+            " stakes \u00B7 ",
+            React.createElement("b", null, spd.label),
             React.createElement("br", null),
             singleTable ? "single table · plays down to a winner" : "8-max · simulated room · payouts & ICM scaled to the field"),
         React.createElement("button", { style: L.start, onClick: () => onStart(cfg) }, "START TOURNAMENT"),
-        React.createElement("div", { style: L.note }, "First release boots your 8-max table in tournament format. The blind clock, game rotation, and field payouts are the next build steps.")));
+        React.createElement("div", { style: L.note }, "Full tournament: real-time blind clock, HORSE-style game rotation, a shrinking field with bubble & ICM, and a payout ladder scaled to the field.")));
 }
 const LOBBY_S = {
     screen: { position: "fixed", inset: 0, zIndex: 60, overflowY: "auto", background: "linear-gradient(180deg,#0c1119,#080b12)",
@@ -3161,7 +3185,7 @@ function App() {
     const [showWelcome, setShowWelcome] = useState(false);
     const [tourRect, setTourRect] = useState(null);
     const [view, setView] = useState("play");
-    const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high" });
+    const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard" });
     const startTournament = (cfg) => {
         const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
         const seq = (preset && preset.games)
@@ -3169,7 +3193,7 @@ function App() {
             : [st.gid];
         const gid = seq[0] || st.gid;
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250,
-            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: TOUR_LEVEL_SEC, hands: 0,
+            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0,
             field: { total: cfg.runners, startStack: tourStartStack(gid, st.bbDepth) } };
         setSt(s => mkState(gid, { ...s, format: "tourney", tour }));
         setView("play");
@@ -3186,9 +3210,7 @@ function App() {
                     return s;
                 if (s.phase === "acting" && s.queue?.[0] === 0)
                     return s;
-                const between = s.phase === "idle" || s.phase === "showdown";
-                const heroOut = !!(s.players?.[0]?.folded);
-                const speed = (between || heroOut) ? 6 : 1;
+                const speed = s.phase === "acting" ? 1 : 0;
                 const clock = (t.clock || 0) + speed;
                 return { ...s, tour: { ...t, clock, level: tourLevelFromClock(clock, t.levelSec) } };
             });
