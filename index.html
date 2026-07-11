@@ -1843,6 +1843,22 @@ function hsClear() { try {
     localStorage.removeItem(HS_KEY);
 }
 catch { } }
+const TS_KEY = "pmg_tour_v1";
+function tsSave(st) { try {
+    localStorage.setItem(TS_KEY, JSON.stringify(st));
+}
+catch { } }
+function tsLoad() { try {
+    const x = JSON.parse(localStorage.getItem(TS_KEY) || "null");
+    return (x && x.tour && x.tour.on && !x.tour.result) ? x : null;
+}
+catch {
+    return null;
+} }
+function tsClear() { try {
+    localStorage.removeItem(TS_KEY);
+}
+catch { } }
 const CAT_FIX = {
     "Preflop selection": "Tighten your starting hands — fold the marginal ones before committing chips.",
     "Value aggression": "Bet and raise your strong hands more often — you're leaving value uncollected.",
@@ -2985,7 +3001,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03i";
+const APP_VERSION = "2026.07.03l";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3081,8 +3097,9 @@ const SPEED_OPTS = [
     { id: "standard", label: "Standard", min: 35 },
     { id: "slow", label: "Slow", min: 60 },
 ];
-function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
+function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
     const L = LOBBY_S;
+    const parked = tsLoad();
     const preset = MIX_PRESETS.find(m => m.id === cfg.mix) || MIX_PRESETS[0];
     const rot = preset.games
         ? preset.games.map(id => (GAMES.find(g => g.id === id)?.label) || id)
@@ -3094,6 +3111,18 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, curGid }) {
         React.createElement("div", { style: L.tabs },
             React.createElement("button", { style: L.tab, onClick: onCash }, "CASH"),
             React.createElement("button", { style: { ...L.tab, ...L.tabOn } }, "TOURNAMENT")),
+        parked && onResume && (React.createElement("button", { onClick: onResume, style: { width: "100%", margin: "0 0 14px", padding: "13px 15px", borderRadius: 12, cursor: "pointer",
+                border: "1px solid rgba(134,239,172,0.55)", background: "linear-gradient(180deg,rgba(63,145,82,0.28),rgba(28,66,40,0.22))",
+                textAlign: "left", display: "flex", flexDirection: "column", gap: 3 } },
+            React.createElement("span", { style: { fontSize: 13, letterSpacing: 1.2, fontWeight: "bold", color: "#86efac" } }, "\u25B6  RESUME TOURNAMENT IN PROGRESS"),
+            React.createElement("span", { style: { fontSize: 11, color: "#a9c9b3" } },
+                "Level ",
+                (parked.tour?.level || 0) + 1,
+                " \u00B7 ",
+                (parked.tour?.mix || "mixed").toUpperCase(),
+                " \u00B7 ",
+                (parked.players?.[0]?.chips || 0).toLocaleString(),
+                " chips"))),
         React.createElement("div", { style: L.sec },
             React.createElement("div", { style: L.lbl }, "GAME MIX"),
             React.createElement("div", { style: L.grid }, MIX_PRESETS.map(m => (React.createElement("button", { key: m.id, onClick: () => setCfg(c => ({ ...c, mix: m.id })), style: { ...L.tile, ...(cfg.mix === m.id ? L.tileOn : {}) } },
@@ -3174,8 +3203,187 @@ const LOBBY_S = {
         fontFamily: "Georgia,serif", boxShadow: "0 6px 18px rgba(63,145,82,0.3)", cursor: "pointer" },
     note: { fontSize: 10, color: "#6f6048", textAlign: "center", marginTop: 14, maxWidth: 380, marginLeft: "auto", marginRight: "auto", lineHeight: 1.5 },
 };
+function dealHand(s0) {
+    if (s0.tour?.on && s0.tour.result)
+        return s0;
+    const s = s0.tour?.on ? refillTable(rotateTour(s0)) : s0;
+    const deck = mkDeck();
+    const nP = s.players.length;
+    let dealer;
+    if (s.dealerIdx == null) {
+        dealer = Math.floor(Math.random() * nP);
+    }
+    else {
+        dealer = s.dealerIdx;
+        for (let step = 1; step <= nP; step++) {
+            const cand = (s.dealerIdx + step) % nP;
+            if (s.players[cand].chips > 0) {
+                dealer = cand;
+                break;
+            }
+        }
+    }
+    const stk = STK(s);
+    if (IS_STUD(s.gid)) {
+        let cursor = 0;
+        let players = mkPs(s.players, 0, s.players.length).map(p => {
+            if (p.chips < stk.studAnte + 1)
+                return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
+            const hole = s.gid === "superstud"
+                ? [
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: true },
+                ]
+                : [
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: false },
+                    { ...deck[cursor++], up: true },
+                ];
+            return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0,
+                chips: p.chips - stk.studAnte, lastAct: { text: `Ante $${stk.studAnte}`, color: "#475569" } };
+        });
+        let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
+        const biId = bringInSeat(players, s.gid);
+        players = players.map(p => {
+            if (p.id !== biId)
+                return p;
+            const amt = Math.min(stk.bringin, p.chips);
+            pot += amt;
+            return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `Bring-in $${amt}`, color: "#fbbf24" } };
+        });
+        const queue = queueFromSeat(players, (biId + 1) % players.length);
+        const nx = queue[0];
+        return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
+            currentBet: stk.bringin, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
+            dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
+            msg: nx === 0 ? `Your action on 3rd street — Pot $${pot}` : `${players[nx].name} acts on 3rd street…` };
+    }
+    if (IS_BOMB(s.gid)) {
+        const hs = HOLE_SIZE(s.gid);
+        const ante = stk.bblind * BOMB_ANTE_BB;
+        let cursor = 0;
+        let players = mkPs(s.players, 0, s.players.length).map(p => {
+            if (p.chips < ante)
+                return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
+            const hand = deck.slice(cursor, cursor + hs);
+            cursor += hs;
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0,
+                chips: p.chips - ante, lastAct: { text: `Ante $${ante}`, color: "#475569" } };
+        });
+        const pot = players.filter(p => !p.sittingOut).length * ante;
+        cursor++;
+        const board = deck.slice(cursor, cursor + 3);
+        cursor += 3;
+        cursor++;
+        const board2 = deck.slice(cursor, cursor + 3);
+        cursor += 3;
+        const queue = startQueue(players, dealer);
+        const nx = queue[0];
+        return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board, board2, pot,
+            currentBet: 0, queue, phase: "acting", dealerIdx: dealer, streetN: 1, discardDone: true,
+            dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
+            msg: nx === 0 ? `Bomb pot! Your action on the flop — Pot $${pot}` : `Bomb pot! ${players[nx].name} acts on the flop…` };
+    }
+    if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
+        const hs = HOLE_SIZE(s.gid);
+        let cursor = 0;
+        let players = mkPs(s.players, 0, s.players.length).map(p => {
+            if (p.chips < stk.bblind)
+                return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
+            const hand = deck.slice(cursor, cursor + hs);
+            cursor += hs;
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
+        });
+        const order = liveFromDealer(players, dealer);
+        const sbId = order[0], bbId = order[1] ?? order[0];
+        let pot = 0;
+        players = players.map(p => {
+            if (p.id === sbId) {
+                const amt = Math.min(stk.sblind, p.chips);
+                pot += amt;
+                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+            }
+            if (p.id === bbId) {
+                const amt = Math.min(stk.bblind, p.chips);
+                pot += amt;
+                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `BB $${amt}`, color: "#475569" } };
+            }
+            return p;
+        });
+        const queue = queueFrom(players, (bbId + 1) % players.length);
+        const nx = queue[0];
+        return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
+            currentBet: stk.bblind, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
+            dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
+            msg: nx === 0 ? `Your action preflop — Pot $${pot}` : `${players[nx].name} acts preflop…` };
+    }
+    const hs = HAND_SIZE(s.gid);
+    let cursor = 0;
+    let players = mkPs(s.players, 0, s.players.length).map(p => {
+        if (p.chips < stk.bblind)
+            return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
+        const hand = deck.slice(cursor, cursor + hs);
+        cursor += hs;
+        return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
+    });
+    const order = liveFromDealer(players, dealer);
+    const sbId = order[0], bbId = order[1] ?? order[0];
+    let pot = 0;
+    players = players.map(p => {
+        if (p.id === sbId) {
+            const amt = Math.min(stk.sblind, p.chips);
+            pot += amt;
+            return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+        }
+        if (p.id === bbId) {
+            const amt = Math.min(stk.bblind, p.chips);
+            pot += amt;
+            return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `BB $${amt}`, color: "#475569" } };
+        }
+        return p;
+    });
+    const queue = queueFrom(players, (bbId + 1) % players.length);
+    const nx = queue[0];
+    const vBoard = s.gid === "veronica" ? deck.slice(cursor, cursor + 1) : [];
+    if (s.gid === "veronica")
+        cursor += 1;
+    return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, pot, queue, board: vBoard,
+        currentBet: stk.bblind,
+        phase: "acting", maxDraws: (s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx: dealer,
+        nlBet: Math.max(40, Math.floor(pot * 0.65)),
+        dealKey: (s.dealKey || 0) + 1, seq: (s.seq || 0) + 1,
+        msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
+}
+function stepTable(st) {
+    let s = st;
+    for (let guard = 0; guard < 1000; guard++) {
+        if (s.phase === 'acting') {
+            const actor = s.queue && s.queue[0];
+            if (actor == null)
+                return { st: s, status: 'idle' };
+            if (actor === 0)
+                return { st: s, status: 'needs-bet' };
+            const { action, amount } = cpuDecide(s, actor);
+            s = applyAction(s, action, amount);
+            continue;
+        }
+        if (s.phase === 'drawing') {
+            if (live(s.players[0]))
+                return { st: s, status: 'needs-draw' };
+            s = execDraw(s, [], false);
+            continue;
+        }
+        if (s.phase === 'showdown')
+            return { st: s, status: 'showdown' };
+        return { st: s, status: 'idle' };
+    }
+    return { st: s, status: 'guard' };
+}
 function App() {
-    const [st, setSt] = useState(mkState("triple"));
+    const [st, setSt] = useState(() => tsLoad() || mkState("triple"));
     const [showSettings, setShowSettings] = useState(false);
     const [showReview, setShowReview] = useState(false);
     const [showFeedback, setShowFeedback] = useState(false);
@@ -3186,7 +3394,15 @@ function App() {
     const [tourRect, setTourRect] = useState(null);
     const [view, setView] = useState("play");
     const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard" });
+    useEffect(() => {
+        const t = st.tour;
+        if (t?.on && !t.result && st.phase === "showdown")
+            tsSave(st);
+        if (t?.result)
+            tsClear();
+    }, [st.phase, st.tour?.on, st.tour?.result, st.tour?.hands]);
     const startTournament = (cfg) => {
+        tsClear();
         const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
         const seq = (preset && preset.games)
             ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
@@ -3296,160 +3512,7 @@ function App() {
     }, [st.seq, st.phase]);
     const switchGame = g => { if (!g.available)
         return; setSt(s => mkState(g.id, s)); };
-    const deal = () => setSt(s0 => {
-        if (s0.tour?.on && s0.tour.result)
-            return s0;
-        const s = s0.tour?.on ? refillTable(rotateTour(s0)) : s0;
-        const deck = mkDeck();
-        const nP = s.players.length;
-        let dealer;
-        if (s.dealerIdx == null) {
-            dealer = Math.floor(Math.random() * nP);
-        }
-        else {
-            dealer = s.dealerIdx;
-            for (let step = 1; step <= nP; step++) {
-                const cand = (s.dealerIdx + step) % nP;
-                if (s.players[cand].chips > 0) {
-                    dealer = cand;
-                    break;
-                }
-            }
-        }
-        const stk = STK(s);
-        if (IS_STUD(s.gid)) {
-            let cursor = 0;
-            let players = mkPs(s.players, 0, s.players.length).map(p => {
-                if (p.chips < stk.studAnte + 1)
-                    return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
-                const hole = s.gid === "superstud"
-                    ? [
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: true },
-                    ]
-                    : [
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: false },
-                        { ...deck[cursor++], up: true },
-                    ];
-                return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0,
-                    chips: p.chips - stk.studAnte, lastAct: { text: `Ante $${stk.studAnte}`, color: "#475569" } };
-            });
-            let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
-            const biId = bringInSeat(players, s.gid);
-            players = players.map(p => {
-                if (p.id !== biId)
-                    return p;
-                const amt = Math.min(stk.bringin, p.chips);
-                pot += amt;
-                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `Bring-in $${amt}`, color: "#fbbf24" } };
-            });
-            const queue = queueFromSeat(players, (biId + 1) % players.length);
-            const nx = queue[0];
-            return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
-                currentBet: stk.bringin, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
-                dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-                msg: nx === 0 ? `Your action on 3rd street — Pot $${pot}` : `${players[nx].name} acts on 3rd street…` };
-        }
-        if (IS_BOMB(s.gid)) {
-            const hs = HOLE_SIZE(s.gid);
-            const ante = stk.bblind * BOMB_ANTE_BB;
-            let cursor = 0;
-            let players = mkPs(s.players, 0, s.players.length).map(p => {
-                if (p.chips < ante)
-                    return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
-                const hand = deck.slice(cursor, cursor + hs);
-                cursor += hs;
-                return { ...p, sittingOut: false, folded: false, hand, betSt: 0,
-                    chips: p.chips - ante, lastAct: { text: `Ante $${ante}`, color: "#475569" } };
-            });
-            const pot = players.filter(p => !p.sittingOut).length * ante;
-            cursor++;
-            const board = deck.slice(cursor, cursor + 3);
-            cursor += 3;
-            cursor++;
-            const board2 = deck.slice(cursor, cursor + 3);
-            cursor += 3;
-            const queue = startQueue(players, dealer);
-            const nx = queue[0];
-            return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board, board2, pot,
-                currentBet: 0, queue, phase: "acting", dealerIdx: dealer, streetN: 1, discardDone: true,
-                dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-                msg: nx === 0 ? `Bomb pot! Your action on the flop — Pot $${pot}` : `Bomb pot! ${players[nx].name} acts on the flop…` };
-        }
-        if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
-            const hs = HOLE_SIZE(s.gid);
-            let cursor = 0;
-            let players = mkPs(s.players, 0, s.players.length).map(p => {
-                if (p.chips < stk.bblind)
-                    return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
-                const hand = deck.slice(cursor, cursor + hs);
-                cursor += hs;
-                return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
-            });
-            const order = liveFromDealer(players, dealer);
-            const sbId = order[0], bbId = order[1] ?? order[0];
-            let pot = 0;
-            players = players.map(p => {
-                if (p.id === sbId) {
-                    const amt = Math.min(stk.sblind, p.chips);
-                    pot += amt;
-                    return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
-                }
-                if (p.id === bbId) {
-                    const amt = Math.min(stk.bblind, p.chips);
-                    pot += amt;
-                    return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `BB $${amt}`, color: "#475569" } };
-                }
-                return p;
-            });
-            const queue = queueFrom(players, (bbId + 1) % players.length);
-            const nx = queue[0];
-            return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
-                currentBet: stk.bblind, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
-                dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-                msg: nx === 0 ? `Your action preflop — Pot $${pot}` : `${players[nx].name} acts preflop…` };
-        }
-        const hs = HAND_SIZE(s.gid);
-        let cursor = 0;
-        let players = mkPs(s.players, 0, s.players.length).map(p => {
-            if (p.chips < stk.bblind)
-                return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
-            const hand = deck.slice(cursor, cursor + hs);
-            cursor += hs;
-            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
-        });
-        const order = liveFromDealer(players, dealer);
-        const sbId = order[0], bbId = order[1] ?? order[0];
-        let pot = 0;
-        players = players.map(p => {
-            if (p.id === sbId) {
-                const amt = Math.min(stk.sblind, p.chips);
-                pot += amt;
-                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
-            }
-            if (p.id === bbId) {
-                const amt = Math.min(stk.bblind, p.chips);
-                pot += amt;
-                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `BB $${amt}`, color: "#475569" } };
-            }
-            return p;
-        });
-        const queue = queueFrom(players, (bbId + 1) % players.length);
-        const nx = queue[0];
-        const vBoard = s.gid === "veronica" ? deck.slice(cursor, cursor + 1) : [];
-        if (s.gid === "veronica")
-            cursor += 1;
-        return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, pot, queue, board: vBoard,
-            currentBet: stk.bblind,
-            phase: "acting", maxDraws: (s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx: dealer,
-            nlBet: Math.max(40, Math.floor(pot * 0.65)),
-            dealKey: (s.dealKey || 0) + 1, seq: (s.seq || 0) + 1,
-            msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
-    });
+    const deal = () => setSt(dealHand);
     const act = (action, amount = 0) => { logBet(action, amount); setSt(s => applyAction(s, action, amount)); };
     const flip = i => {
         if (st.phase !== "drawing")
@@ -3685,7 +3748,10 @@ function App() {
                         g.tag && React.createElement("span", { style: { ...S.gTag, ...(g.id === st.gid ? { color: "#c9a84c" } : {}) } }, g.tag),
                         React.createElement("span", { style: S.gName }, g.label),
                         !g.available && React.createElement("span", { style: S.gSoon }, "\uFF0B")))))))))))),
-        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, onCash: () => setView("play"), curGid: st.gid })),
+        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, onCash: () => setView("play"), onResume: () => { const q = tsLoad(); if (q) {
+                setSt(q);
+                setView("play");
+            } }, curGid: st.gid })),
         st.tour?.result && (() => {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
@@ -3712,7 +3778,7 @@ function App() {
                         " \u00B7 1st paid $",
                         first.toLocaleString()),
                     React.createElement("button", { style: S.resultBtn, onClick: () => { setSt(s => ({ ...s, tour: null })); setView("lobby"); } }, "NEW TOURNAMENT"),
-                    React.createElement("button", { style: S.resultBtn2, onClick: () => { setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null })); setView("play"); } }, "Back to cash game"))));
+                    React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null })); setView("play"); } }, "Back to cash game"))));
         })(),
         st.tour?.on && view === "play" && (() => {
             const T = st.tour, sb = tourSb(T.level || 0);
