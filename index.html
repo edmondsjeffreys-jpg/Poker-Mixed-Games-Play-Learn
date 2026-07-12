@@ -194,7 +194,7 @@ function refillTable(s) {
         if (p.id === 0 || p.chips > 0)
             return p;
         refilled = true;
-        const prof = PROF[(i + (t.hands || 0)) % PROF.length];
+        const prof = PROF[((i - 1 + (t.hands || 0)) % 7) + 1] || PROF[i] || { name: "New", tag: "New seat" };
         const stack = Math.max(Math.round(F.startStack * 0.25), Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10)));
         return { ...p, chips: stack, name: prof.name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, lastAct: { text: "New seat", color: "#9d8659" } };
     });
@@ -3075,7 +3075,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03r";
+const APP_VERSION = "2026.07.03s";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
