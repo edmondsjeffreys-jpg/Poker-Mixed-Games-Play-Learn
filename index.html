@@ -189,13 +189,18 @@ function refillTable(s) {
     if (left <= s.players.length)
         return s;
     const avg = Math.round(F.total * F.startStack / left);
+    const seats = s.players.length;
+    const cap = Math.round(avg * seats * 1.15);
+    let running = s.players.reduce((a, p) => a + Math.max(0, p.chips), 0);
     let refilled = false;
     const players = s.players.map((p, i) => {
         if (p.id === 0 || p.chips > 0)
             return p;
         refilled = true;
         const prof = PROF[((i - 1 + (t.hands || 0)) % 7) + 1] || PROF[i] || { name: "New", tag: "New seat" };
-        const stack = Math.max(Math.round(F.startStack * 0.25), Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10)));
+        let stack = Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10));
+        stack = Math.max(Math.round(F.startStack * 0.15), Math.min(stack, cap - running));
+        running += stack;
         return { ...p, chips: stack, name: prof.name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, lastAct: { text: "New seat", color: "#9d8659" } };
     });
     return refilled ? { ...s, players } : s;
@@ -3096,7 +3101,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03v";
+const APP_VERSION = "2026.07.03w";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
