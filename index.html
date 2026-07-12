@@ -574,7 +574,7 @@ function razzDesc(ev) {
         return "—";
     const top = ev.tb.map(v => LOWNAME[v] || v);
     if (ev.cat === 0)
-        return `${top[0]}-low`;
+        return top.slice(0, 5).join("-") + " low";
     const C = ["", "pair", "two pair", "trips", "", "", "full house", "quads"][ev.cat];
     return `${top[0]}-high (${C})`;
 }
@@ -873,9 +873,32 @@ function flopStrength(st, pl) {
         const pairs = vs.length - new Set(vs).size;
         const highs = vs.filter(v => v >= 11).length;
         const doubleSuited = Object.values(suitCounts).filter(c => c >= 2).length >= 2;
-        let s = 0.3 + pairs * 0.12 + highs * 0.06 + (doubleSuited ? 0.12 : 0);
-        if (vs.includes(14) && vs.includes(2))
-            s += 0.05;
+        const suited = Object.values(suitCounts).some(c => c >= 2);
+        let s = 0.3 + pairs * 0.10 + highs * 0.05 + (doubleSuited ? 0.14 : suited ? 0.06 : 0);
+        const uniq = [...new Set(vs)].sort((a, b) => a - b);
+        if (uniq.length >= 4) {
+            const span = uniq[uniq.length - 1] - uniq[0];
+            if (span <= 4)
+                s += 0.12;
+            else if (span <= 6)
+                s += 0.06;
+        }
+        if (IS_HILO(gid)) {
+            const hasA = vs.includes(14), has2 = vs.includes(2), has3 = vs.includes(3);
+            if (hasA && has2)
+                s += 0.22;
+            else if (hasA && has3)
+                s += 0.12;
+            else if (has2 && has3)
+                s += 0.08;
+            const wheel = [...new Set(vs.map(v => v === 14 ? 1 : v).filter(v => v <= 5))].length;
+            s += Math.max(0, wheel - 2) * 0.05;
+            const aceSuit = hole.find(c => c.v === 14)?.s;
+            if (aceSuit && suitCounts[aceSuit] >= 2)
+                s += 0.10;
+        }
+        else if (vs.includes(14) && vs.includes(2))
+            s += 0.03;
         return Math.max(0, Math.min(1, s));
     }
     const scoreBoard = bd => {
@@ -884,6 +907,19 @@ function flopStrength(st, pl) {
             ? [0.10, 0.28, 0.45, 0.62, 0.76, 0.84, 0.92, 0.98, 1]
             : [0.18, 0.40, 0.58, 0.72, 0.82, 0.88, 0.94, 0.98, 1];
         let s = hi ? (CAT[hi.cat] || 0.2) : 0;
+        if (!IS_OMAHA(gid) && hi && hi.cat <= 2 && bd.length >= 3) {
+            const bc = {};
+            bd.forEach(c => bc[c.v] = (bc[c.v] || 0) + 1);
+            const boardPaired = Math.max(1, ...Object.values(bc)) >= 2;
+            const hv = hole.map(c => c.v);
+            const pocketPair = hole.length >= 2 && hv[0] === hv[1];
+            const matches = hv.some(v => bc[v]);
+            const suits = {};
+            [...hole, ...bd].forEach(c => suits[c.s] = (suits[c.s] || 0) + 1);
+            const flushish = Math.max(1, ...Object.values(suits)) >= 4;
+            if (boardPaired && !pocketPair && !matches && !flushish)
+                s = Math.min(s, 0.23);
+        }
         if (gid === "lhe" && bd.length < 5) {
             const allSuits = {};
             [...hole, ...bd].forEach(c => allSuits[c.s] = (allSuits[c.s] || 0) + 1);
@@ -1601,6 +1637,39 @@ function coachDrawRec(st, me, callAmt) {
     }
     return (M.made && M.top <= goodTop) || eq >= 0.45 ? "bet" : "check";
 }
+const STUD_RN = { 14: "aces", 13: "kings", 12: "queens", 11: "jacks", 10: "tens", 9: "nines", 8: "eights", 7: "sevens", 6: "sixes", 5: "fives", 4: "fours", 3: "threes", 2: "deuces" };
+function studHandName(hand) {
+    if (!hand || hand.length < 3)
+        return null;
+    const early = hand.length <= 4;
+    const third = hand.length === 3;
+    const vs = hand.map(c => c.v);
+    const cnt = {};
+    vs.forEach(v => cnt[v] = (cnt[v] || 0) + 1);
+    const topRank = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || b - a)[0];
+    const topCount = cnt[topRank];
+    if (topCount >= 3)
+        return `${third ? "Rolled-up" : "Trip"} ${STUD_RN[topRank]} — `;
+    if (topCount === 2 && early) {
+        const pc = hand.filter(c => c.v === topRank);
+        const ups = pc.filter(c => c.up).length;
+        if (ups === 0)
+            return `Buried ${STUD_RN[topRank]} — `;
+        if (ups === pc.length)
+            return `Open ${STUD_RN[topRank]} — `;
+        return `Split ${STUD_RN[topRank]} — `;
+    }
+    if (early && third) {
+        const suits = {};
+        hand.forEach(c => suits[c.s] = (suits[c.s] || 0) + 1);
+        if (Math.max(...Object.values(suits)) === 3)
+            return "Three-flush — ";
+        const uniq = [...new Set(vs)].sort((a, b) => a - b);
+        if (uniq.length === 3 && uniq[2] - uniq[0] <= 4)
+            return "Three-straight — ";
+    }
+    return null;
+}
 function coachBet(st, me, callAmt) {
     if (PURE_DRAW(st.gid))
         return coachDrawBet(st, me, callAmt);
@@ -1624,6 +1693,11 @@ function coachBet(st, me, callAmt) {
             tag = `Near the money — lean cautious with marginal hands. `;
         else if (icm.deep && icm.nearBubble)
             tag = `Big stack on the bubble — you can apply pressure. `;
+    }
+    if (IS_STUD(st.gid)) {
+        const nm = studHandName(me.hand);
+        if (nm)
+            tag = nm + tag;
     }
     if (k > 0) {
         const r = tableRead(st);
@@ -3001,7 +3075,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03l";
+const APP_VERSION = "2026.07.03r";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3080,6 +3154,7 @@ class ErrorBoundary extends React.Component {
 const MIX_PRESETS = [
     { id: "horse", name: "HORSE", desc: "5 games · fixed-limit", games: ["lhe", "omaha8", "razz", "stud", "stud8"] },
     { id: "8game", name: "8-GAME", desc: "8 games · limit + big-bet", games: ["triple", "lhe", "omaha8", "razz", "stud", "stud8", "nlhe", "plo"] },
+    { id: "bigbet", name: "BIG BET MIX", desc: "4 games · no-limit + pot-limit", games: ["nlhe", "plo", "bigo", "single"] },
     { id: "hose", name: "HOSE", desc: "4 games · fixed-limit", games: ["lhe", "omaha8", "stud", "stud8"] },
     { id: "draw", name: "TRIPLE DRAW MIX", desc: "2-7 · badugi", games: ["triple", "badugi"] },
     { id: "single", name: "SINGLE GAME", desc: "pick any one", games: null },
@@ -3960,20 +4035,6 @@ function App() {
                         React.createElement("button", { onClick: endTour, style: S.tourSkip }, "Skip"),
                         React.createElement("button", { onClick: nextTour, style: S.tourNext }, tourStep >= TOUR.length - 1 ? "Got it" : "Next →")))));
         })(),
-        st.stats.hands > 0 && (React.createElement("div", { style: S.statsBar },
-            React.createElement("span", { style: S.stat },
-                st.stats.hands,
-                " hands"),
-            React.createElement("span", { style: { ...S.stat, color: "#4ade80" } },
-                st.stats.wins,
-                "W"),
-            React.createElement("span", { style: { ...S.stat, color: "#f87171" } },
-                st.stats.hands - st.stats.wins,
-                "L"),
-            tilted.length > 0 && React.createElement("span", { style: { ...S.stat, color: "#f97316" } },
-                "\uD83D\uDD25 ",
-                tilted.map(i => PROF[i].name).join(", "),
-                " tilted"))),
         React.createElement("div", { style: S.shell },
             React.createElement("div", { style: S.rail },
                 React.createElement("div", { style: S.felt },
@@ -4022,7 +4083,7 @@ function App() {
                             myEval && (React.createElement("span", { style: { ...S.evalBdg, color: hColor(myEval), background: hColor(myEval) + "18", border: `1px solid ${hColor(myEval)}44` } },
                                 IS_DOUBLE(st.gid) ? "Top: " : "",
                                 myEval.desc,
-                                myLow ? ` · ${LOWNAME[myLow[0]]}-low` : "")),
+                                myLow ? ` · ${myLow.slice(0, 5).map(v => LOWNAME[v] || v).join("-")} low` : "")),
                             myEval2 && (React.createElement("span", { style: { ...S.evalBdg, color: hColor(myEval2), background: hColor(myEval2) + "18", border: `1px solid ${hColor(myEval2)}44` } },
                                 "Bot: ",
                                 myEval2.desc)),
@@ -4344,7 +4405,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
             ev = evalHand(gid, p.hand);
     }
     const lo = (reveal && !p.folded && IS_HILO(gid)) ? (stud ? bestLow7(p.hand) : (board.length >= 3 ? bestOmahaLow(p.hand, board) : null)) : null;
-    const loTxt = lo ? ` · ${LOWNAME[lo[0]]}-low` : "";
+    const loTxt = lo ? ` · ${lo.slice(0, 5).map(v => LOWNAME[v] || v).join("-")} low` : "";
     const win = won || p.id === wid;
     const speaks = won && p.name === "Martin";
     const backCount = p.hand.length > 0 ? p.hand.length : hs;
