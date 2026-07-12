@@ -261,7 +261,7 @@ function eval27(cards) {
         cat = 0;
     const CATS = ["High Card", "Pair", "Two Pair", "Three of a Kind", "Straight", "Flush", "Full House", "Four of a Kind", "Str. Flush"];
     const RN = { 14: "Ace", 13: "King", 12: "Queen", 11: "Jack", 10: "Ten", 9: "Nine", 8: "Eight", 7: "Seven", 6: "Six", 5: "Five", 4: "Four", 3: "Three", 2: "Deuce" };
-    return { cat, vs, desc: cat === 0 ? `${RN[vs[0]]}-low` : CATS[cat] };
+    return { cat, vs, desc: cat === 0 ? `${RN[vs[0]]}-low` : cat === 5 ? `${RANKS[vs[0] - 2]}-high flush` : CATS[cat] };
 }
 function cmp27(a, b) {
     if (!a || !b)
@@ -425,7 +425,7 @@ function evalHigh5(cards) {
         tb = vs.slice();
     }
     const CATS = ["High Card", "Pair", "Two Pair", "Trips", "Straight", "Flush", "Full House", "Quads", "Str. Flush"];
-    return { cat, tb, desc: CATS[cat], high: true };
+    return { cat, tb, desc: cat === 5 ? `${RANKS[tb[0] - 2]}-high flush` : CATS[cat], high: true };
 }
 function cmpHigh(a, b) {
     if (!a || !b)
@@ -2368,7 +2368,18 @@ function nextPhase(st) {
     return showdown({ ...st, players });
 }
 function execDraw(st, playerDiscards, playerFolds = false) {
-    const deck = [...st.deck];
+    let deck = [...st.deck];
+    const muck = [];
+    const draw1 = () => {
+        if (!deck.length && muck.length) {
+            for (let i = muck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [muck[i], muck[j]] = [muck[j], muck[i]];
+            }
+            deck = muck.splice(0);
+        }
+        return deck.shift() || { v: 2, r: "2", s: "♠" };
+    };
     const players = st.players.map(p => {
         if (p.sittingOut || (p.folded && p.id !== 0))
             return { ...p };
@@ -2377,13 +2388,13 @@ function execDraw(st, playerDiscards, playerFolds = false) {
                 return { ...p, folded: true, lastAct: { text: "Fold", color: "#f87171" } };
             if (p.folded)
                 return { ...p };
-            const hand = p.hand.map((c, i) => playerDiscards.includes(i) ? deck.shift() : c);
+            const hand = p.hand.map((c, i) => playerDiscards.includes(i) ? (muck.push(c), draw1()) : c);
             return { ...p, hand, betSt: 0, lastAct: null, drewLast: playerDiscards.length };
         }
         if (p.folded)
             return { ...p };
         const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid, st.gid === "veronica" ? (st.board || []) : []);
-        const hand = p.hand.map((c, i) => disc.includes(i) ? deck.shift() : c);
+        const hand = p.hand.map((c, i) => disc.includes(i) ? (muck.push(c), draw1()) : c);
         return { ...p, hand, betSt: 0, drewLast: disc.length,
             lastAct: { text: disc.length === 0 ? "Stands Pat" : `Drew ${disc.length}`, color: "#94a3b8" } };
     });
@@ -2394,6 +2405,13 @@ function execDraw(st, playerDiscards, playerFolds = false) {
     }
     const drawN = st.drawN + 1;
     const streetN = st.streetN + 1;
+    const canActN = players.filter(p => live(p) && p.chips > 0).length;
+    if (canActN < 2 && !IS_DRAMAHA(st.gid)) {
+        if (drawN < st.maxDraws)
+            return { ...st, players, deck, drawN, streetN, currentBet: 0, phase: "drawing", sel: [], seq: (st.seq || 0) + 1,
+                msg: `Running it out — Draw ${drawN + 1} of ${st.maxDraws}` };
+        return IS_SPLITDRAW(st.gid) ? showdownSplitDraw({ ...st, players, deck }) : showdown({ ...st, players, deck });
+    }
     const queue = startQueue(players, st.dealerIdx);
     const nx = queue[0];
     if (IS_DRAMAHA(st.gid)) {
@@ -2402,10 +2420,10 @@ function execDraw(st, playerDiscards, playerFolds = false) {
         board.push(dk.shift());
         return { ...st, players, deck: dk, board, drawDone: true, streetN: 2, queue, currentBet: 0, phase: "acting", sel: [],
             boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-            msg: nx === 0 ? `Your action on the turn — Pot $${st.pot}` : `${players[nx].name} acts on the turn…` };
+            msg: nx === 0 ? `Your action on the turn — Pot $${st.pot}` : `${players[nx]?.name || "Player"} acts on the turn…` };
     }
     return { ...st, players, deck, drawN, streetN, queue, currentBet: 0, phase: "acting", sel: [], seq: (st.seq || 0) + 1,
-        msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx].name} is thinking…` };
+        msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx]?.name || "Player"} is thinking…` };
 }
 function worstPineIdx(hand, board) {
     if (!hand || hand.length <= 2)
@@ -2464,6 +2482,8 @@ function execDiscard(st, playerDiscards) {
 }
 function showdown(st) {
     const still = st.players.filter(live);
+    if (!still.length)
+        return settle(st, st.players, 0, "cpu", "Hand complete.", []);
     const evaled = still.map(p => ({ ...p, ev: evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev));
     const best = evaled[0];
     const winners = evaled.filter(p => cmpHand(st.gid, p.ev, best.ev) === 0);
@@ -3076,7 +3096,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03t";
+const APP_VERSION = "2026.07.03v";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3367,14 +3387,14 @@ function dealHand(s0) {
         const hs = HOLE_SIZE(s.gid);
         let cursor = 0;
         let players = mkPs(s.players, 0, s.players.length).map(p => {
-            if (p.chips < stk.bblind)
+            if (p.chips <= 0)
                 return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
             return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
         });
         const order = liveFromDealer(players, dealer);
-        const sbId = order[0], bbId = order[1] ?? order[0];
+        const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
         let pot = 0;
         players = players.map(p => {
             if (p.id === sbId) {
@@ -3399,14 +3419,14 @@ function dealHand(s0) {
     const hs = HAND_SIZE(s.gid);
     let cursor = 0;
     let players = mkPs(s.players, 0, s.players.length).map(p => {
-        if (p.chips < stk.bblind)
+        if (p.chips <= 0)
             return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
         const hand = deck.slice(cursor, cursor + hs);
         cursor += hs;
         return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
     });
     const order = liveFromDealer(players, dealer);
-    const sbId = order[0], bbId = order[1] ?? order[0];
+    const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
     let pot = 0;
     players = players.map(p => {
         if (p.id === sbId) {
