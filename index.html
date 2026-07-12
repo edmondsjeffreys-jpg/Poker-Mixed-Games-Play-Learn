@@ -137,7 +137,7 @@ function rotateTour(s) {
     return { ...s, gid, tour: { ...t, hands, mixIdx, clock, level } };
 }
 const BB_DEPTHS = [200, 100, 50, 10];
-const tourStartStack = (gid, bbDepth) => depthUnit(gid, mkStakes(TOUR_SB[0], "L1")) * (bbDepth ?? 100);
+const tourStartStack = (gid, bbDepth) => depthUnit(gid, mkStakes(TOUR_SB[0], "L1")) * (bbDepth ?? 100) * depthMult(gid);
 function fieldLeft(total, level) {
     if (total <= 1)
         return 1;
@@ -203,8 +203,9 @@ function refillTable(s) {
 const CASH_DEPTH = 100;
 const STK = st => (st.format === "tourney" ? tourStakes(st) : CASH_STAKES[st.stakeIdx ?? 1]);
 const depthUnit = (gid, stk) => (BET_MODE(gid) === "fl" ? stk.bbet : stk.bblind);
+const depthMult = gid => (BET_MODE(gid) === "fl" ? 1 : 2);
 const depthWord = gid => (BET_MODE(gid) === "fl" ? "big bets" : "big blinds");
-const startStack = st => depthUnit(st.gid, STK(st)) * (st.format === "tourney" ? (st.bbDepth ?? 100) : CASH_DEPTH);
+const startStack = st => depthUnit(st.gid, STK(st)) * (st.format === "tourney" ? (st.bbDepth ?? 100) * depthMult(st.gid) : CASH_DEPTH);
 const SUIT_RANK = { "♠": 4, "♥": 3, "♦": 2, "♣": 1 };
 const PROF = {
     1: { name: "Tommy", tag: "The Rock", aggr: 0.20, bluff: 0.05, slow: 0.36, leak: 0.10, standPat: 0.07, over: 0.03, sz: 0.45, cry: 0.07 },
@@ -2133,7 +2134,7 @@ const mkState = (gid, prev = null) => {
     const stakeIdx = prev?.stakeIdx ?? 1;
     const bbDepth = prev?.bbDepth ?? 100;
     const stk = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
-    const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth : CASH_DEPTH);
+    const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth * depthMult(gid) : CASH_DEPTH);
     const nSeats = gid === "dbbomb" ? 7 : (format === "tourney" && IS_FLOP(gid)) ? 8 : 4;
     return {
         gid, phase: "idle", deck: [], players: mkPs(prev?.players, startChips, nSeats), board: [], board2: [],
@@ -3075,7 +3076,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03s";
+const APP_VERSION = "2026.07.03t";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3670,7 +3671,7 @@ function App() {
     const applyStakeChange = (s, patch) => {
         const ns = { ...s, ...patch };
         const stk = ns.format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[ns.stakeIdx];
-        const chips = depthUnit(ns.gid, stk) * (ns.format === "tourney" ? ns.bbDepth : CASH_DEPTH);
+        const chips = depthUnit(ns.gid, stk) * (ns.format === "tourney" ? ns.bbDepth * depthMult(ns.gid) : CASH_DEPTH);
         return { ...ns, phase: "idle", pot: 0, currentBet: 0, board: [], reveal: false, result: null,
             sel: [], queue: [], streetN: 0, drawN: 0, msg: "Stakes set — press Deal",
             players: ns.players.map(p => ({ ...p, chips, hand: [], betSt: 0, folded: false, sittingOut: false, lastAct: null })) };
