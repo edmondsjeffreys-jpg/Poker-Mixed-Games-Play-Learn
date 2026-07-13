@@ -145,6 +145,9 @@ function fieldLeft(total, level) {
     const frac = Math.pow(total, 1 - Math.min(1, (level || 0) / Lft));
     return Math.max(1, Math.min(total, Math.round(frac)));
 }
+function fieldLeftLive(F, level, busted) {
+    return Math.max(1, Math.min(fieldLeft(F.total, level), F.total - (busted || 0)));
+}
 function fieldRank(yourStack, avgStack, left) {
     if (left <= 1)
         return 1;
@@ -169,7 +172,7 @@ function icmContext(st, chips) {
     if (!st.tour?.on || !st.tour.field)
         return null;
     const F = st.tour.field, level = st.tour.level || 0;
-    const left = fieldLeft(F.total, level), paid = paidSpots(F.total), toMoney = left - paid;
+    const left = fieldLeftLive(F, level, st.tour.busted), paid = paidSpots(F.total), toMoney = left - paid;
     const bb = STK(st).bblind || STK(st).bbet || 1;
     const myBB = chips / bb;
     const inMoney = left <= paid;
@@ -185,25 +188,29 @@ function refillTable(s) {
     const t = s.tour, F = t.field;
     if (!t || !t.on || !F)
         return s;
-    const left = fieldLeft(F.total, t.level || 0);
-    if (left <= s.players.length)
+    const modelLeft = fieldLeft(F.total, t.level || 0);
+    if (modelLeft <= s.players.length)
         return s;
-    const avg = Math.round(F.total * F.startStack / left);
+    const avg = Math.round(F.total * F.startStack / modelLeft);
     const seats = s.players.length;
     const cap = Math.round(avg * seats * 1.15);
     let running = s.players.reduce((a, p) => a + Math.max(0, p.chips), 0);
+    let busted = t.busted || 0;
     let refilled = false;
+    const taken = s.players.map(p => p.name).filter(Boolean);
     const players = s.players.map((p, i) => {
         if (p.id === 0 || p.chips > 0)
             return p;
         refilled = true;
-        const prof = PROF[((i - 1 + (t.hands || 0)) % 7) + 1] || PROF[i] || { name: "New", tag: "New seat" };
+        busted += 1;
+        const name = freshName(taken, (t.hands || 0) * 7 + i * 13 + busted);
+        taken.push(name);
         let stack = Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10));
         stack = Math.max(Math.round(F.startStack * 0.15), Math.min(stack, cap - running));
         running += stack;
-        return { ...p, chips: stack, name: prof.name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, lastAct: { text: "New seat", color: "#9d8659" } };
+        return { ...p, chips: stack, name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, lastAct: { text: "New seat", color: "#9d8659" } };
     });
-    return refilled ? { ...s, players } : s;
+    return refilled ? { ...s, players, tour: { ...t, busted } } : s;
 }
 const CASH_DEPTH = 100;
 const STK = st => (st.format === "tourney" ? tourStakes(st) : CASH_STAKES[st.stakeIdx ?? 1]);
@@ -221,6 +228,14 @@ const PROF = {
     6: { name: "Ivan", tag: "Station", aggr: 0.22, bluff: 0.06, slow: 0.10, leak: 0.40, standPat: 0.05, over: 0.04, sz: 0.55, cry: 0.42 },
     7: { name: "Sana", tag: "LAG", aggr: 0.68, bluff: 0.30, slow: 0.06, leak: 0.20, standPat: 0.10, over: 0.14, sz: 1.05, cry: 0.22 },
 };
+const NAME_POOL = ["Nadia", "Omar", "Ling", "Rico", "Beth", "Kwame", "Yuki", "Sofia", "Deng", "Hank", "Mira", "Cole", "Rosa",
+    "Vik", "Jade", "Bruno", "Tara", "Enzo", "Faye", "Gus", "Iris", "Lars", "Nora", "Pavel", "Quinn", "Remy", "Suki", "Theo", "Uma",
+    "Wade", "Xena", "Zane", "Anya", "Bao", "Cira", "Dario", "Esme", "Finn", "Gita", "Hugo"];
+function freshName(taken, seed = 0) {
+    const pool = NAME_POOL.filter(n => !taken.includes(n));
+    const src = pool.length ? pool : NAME_POOL;
+    return src[(Math.abs(seed | 0)) % src.length];
+}
 const OVAL_POS = [
     { left: "13%", top: "68%" }, { left: "9%", top: "35%" }, { left: "27%", top: "11%" },
     { left: "50%", top: "8%" }, { left: "73%", top: "11%" }, { left: "91%", top: "35%" }, { left: "87%", top: "68%" },
@@ -852,7 +867,7 @@ function flopStrength(st, pl) {
     const gid = st.gid, board = st.board || [];
     const hole = pl.hand;
     if (board.length === 0) {
-        if (gid === "lhe") {
+        if (gid === "lhe" || gid === "nlhe") {
             const [a, b] = [...hole].sort((x, y) => y.v - x.v);
             const pair = a.v === b.v;
             const suited = a.s === b.s;
@@ -880,14 +895,14 @@ function flopStrength(st, pl) {
         const highs = vs.filter(v => v >= 11).length;
         const doubleSuited = Object.values(suitCounts).filter(c => c >= 2).length >= 2;
         const suited = Object.values(suitCounts).some(c => c >= 2);
-        let s = 0.3 + pairs * 0.10 + highs * 0.05 + (doubleSuited ? 0.14 : suited ? 0.06 : 0);
+        let s = 0.12 + pairs * 0.13 + highs * 0.06 + (doubleSuited ? 0.18 : suited ? 0.08 : 0);
         const uniq = [...new Set(vs)].sort((a, b) => a - b);
         if (uniq.length >= 4) {
             const span = uniq[uniq.length - 1] - uniq[0];
             if (span <= 4)
-                s += 0.12;
+                s += 0.14;
             else if (span <= 6)
-                s += 0.06;
+                s += 0.07;
         }
         if (IS_HILO(gid)) {
             const hasA = vs.includes(14), has2 = vs.includes(2), has3 = vs.includes(3);
@@ -969,10 +984,12 @@ function cpuDecideFlop(st, idx) {
     const tight = st.botTight?.[idx] ?? 50;
     const L = (100 - tight) / 100;
     const mode = BET_MODE(st.gid);
+    const pre = (st.board || []).length === 0;
     const str = flopStrength(st, pl);
-    const openThresh = 0.40 - L * 0.18;
-    const callThresh = 0.30 - L * 0.16;
-    const raiseThresh = 0.74 - L * 0.10;
+    const pfC = st.gid === "bigo" ? 0.64 : st.gid === "omaha8" ? 0.52 : IS_OMAHA(st.gid) ? 0.44 : 0.66;
+    const openThresh = pre ? pfC + 0.06 - L * 0.24 : 0.40 - L * 0.18;
+    const callThresh = pre ? pfC - L * 0.26 : 0.30 - L * 0.16;
+    const raiseThresh = pre ? Math.max(0.68, pfC + 0.14) - L * 0.12 : 0.74 - L * 0.10;
     const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32));
     const slow = tilt === 0 && Math.random() < pr.slow;
     const sizedTotal = (raising) => {
@@ -2131,7 +2148,7 @@ const mkPs = (prev = null, startChips = 2000, n = 4) => {
     const heroChips = (prev && prev[0]) ? prev[0].chips : startChips;
     const arr = [{ id: 0, name: "You", chips: heroChips, hand: [], betSt: 0, folded: false, sittingOut: false, isHuman: true, lastAct: null }];
     for (let i = 1; i < n; i++)
-        arr.push({ id: i, name: PROF[i].name, chips: (prev && prev[i]) ? prev[i].chips : heroChips, hand: [], betSt: 0, folded: false, sittingOut: false, isHuman: false, lastAct: null });
+        arr.push({ id: i, name: (prev && prev[i] && prev[i].name) || PROF[i].name, chips: (prev && prev[i]) ? prev[i].chips : heroChips, hand: [], betSt: 0, folded: false, sittingOut: false, isHuman: false, lastAct: null });
     return arr;
 };
 const mkState = (gid, prev = null) => {
@@ -2955,7 +2972,7 @@ function settle(st, players, potWon, result, msg, winnerIds = []) {
         const alive = players.filter(p => p.chips > 0).length;
         const F = tour.field || { total: 8 };
         if (players[0].chips <= 0) {
-            const place = F.total <= 9 ? alive + 1 : fieldLeft(F.total, tour.level || 0);
+            const place = F.total <= 9 ? alive + 1 : fieldLeftLive(F, tour.level || 0, tour.busted);
             tour = { ...tour, result: { type: "bust", place, total: F.total } };
         }
         else if (alive === 1) {
@@ -3101,7 +3118,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03w";
+const APP_VERSION = "2026.07.03x";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3510,9 +3527,9 @@ function App() {
             : [st.gid];
         const gid = seq[0] || st.gid;
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250,
-            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0,
+            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0,
             field: { total: cfg.runners, startStack: tourStartStack(gid, st.bbDepth) } };
-        setSt(s => mkState(gid, { ...s, format: "tourney", tour }));
+        setSt(s => mkState(gid, { ...s, format: "tourney", tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
         setView("play");
     };
     useEffect(() => {
@@ -3910,8 +3927,11 @@ function App() {
         })(),
         st.tour?.on && st.tour.field && view === "play" && (() => {
             const T = st.tour, F = T.field;
-            const left = fieldLeft(F.total, T.level || 0);
-            const avg = Math.round(F.total * F.startStack / left);
+            const seatsN = st.players.length;
+            const model = fieldLeft(F.total, T.level || 0);
+            const aliveN = st.players.filter(p => p.chips > 0).length;
+            const left = model <= seatsN ? aliveN : Math.max(seatsN + 1, fieldLeftLive(F, T.level || 0, T.busted));
+            const avg = Math.round(F.total * F.startStack / Math.max(1, left));
             const rank = fieldRank(me.chips, avg, left);
             const paid = paidSpots(F.total);
             const bb = STK(st).bblind || STK(st).bbet || 1;
@@ -3966,7 +3986,7 @@ function App() {
                     const desc = t >= 78 ? "Optimal" : t >= 58 ? "Disciplined" : t >= 42 ? "Balanced" : t >= 24 ? "Exploitative" : "Wildly Exploit.";
                     return (React.createElement("div", { key: id, style: S.tightRow },
                         React.createElement("div", { style: S.tightLabel },
-                            React.createElement("span", { style: { color: "#c9a84c", fontSize: 12 } }, PROF[id].name),
+                            React.createElement("span", { style: { color: "#c9a84c", fontSize: 12 } }, st.players.find(p => p.id === id)?.name || PROF[id].name),
                             React.createElement("span", { style: { color: "#9d8a62", fontSize: 9 } }, PROF[id].tag)),
                         React.createElement("input", { type: "range", min: 0, max: 100, step: 2, value: t, onChange: e => setTight(id, +e.target.value), style: S.tightSlider }),
                         React.createElement("span", { style: S.tightVal }, desc)));
