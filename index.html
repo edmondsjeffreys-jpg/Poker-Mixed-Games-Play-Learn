@@ -3147,7 +3147,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ae";
+const APP_VERSION = "2026.07.03af";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3235,7 +3235,7 @@ const MIX_PRESETS = [
     { id: "omahamix", name: "OMAHA MIX", desc: "PLO · Omaha-8 · Big O", games: ["plo", "omaha8", "bigo"] },
     { id: "draw", name: "TRIPLE DRAW MIX", desc: "2-7 · badugi", games: ["triple", "badugi"] },
     { id: "dramaha", name: "DRAMAHA MIX", desc: "split-pot draw games", games: ["dramahaH", "dramaha27", "dramadugi", "badacey", "badeucey"] },
-    { id: "dealers", name: "DEALER'S CHOICE", desc: "everything, rotating", games: ["lhe", "omaha8", "razz", "stud", "stud8", "nlhe", "plo", "bigo", "single", "triple", "badugi", "crazyp"] },
+    { id: "dealers", name: "DEALER'S CHOICE", desc: "everything, rotating", games: ["lhe", "omaha8", "razz", "stud", "stud8", "nlhe", "plo", "bigo", "crazyp", "badugi", "single", "triple"] },
     { id: "single", name: "SINGLE GAME", desc: "pick any one", games: null },
     { id: "custom", name: "CUSTOM", desc: "build your own mix", games: null },
 ];
@@ -3252,12 +3252,24 @@ const SPEED_OPTS = [
     { id: "standard", label: "Standard", min: 35 },
     { id: "slow", label: "Slow", min: 60 },
 ];
-function DealersChooser({ st, onPick }) {
+function DealersChooser({ st, onPick, onConfirm, onAgain }) {
     const seq = st.tour?.seq || [];
     const ch = st.chooser || {};
     const recent = (st.tour?.dcRecent || []).slice(0, 3);
     const meta = gid => GAMES.find(g => g.id === gid) || { label: gid, tag: "" };
     const tagColor = tag => /NO LIMIT/.test(tag) ? "#3f9152" : /POT LIMIT/.test(tag) ? "#b08a2e" : /SPLIT/.test(tag) ? "#8a6ab0" : "#4f6f92";
+    if (ch.hero && ch.confirm) {
+        const m = meta(ch.confirm);
+        return (React.createElement("div", { style: DC.overlay },
+            React.createElement("div", { style: DC.face },
+                React.createElement("div", { style: DC.faceName }, m.label),
+                React.createElement("div", { style: { ...DC.faceTag, color: tagColor(m.tag), borderColor: tagColor(m.tag) + "66" } }, m.tag),
+                React.createElement("div", { style: DC.faceWins }, GAME_WINS[ch.confirm] || "")),
+            React.createElement("div", { style: DC.who }, "you chose"),
+            React.createElement("div", { style: DC.pick }, m.label),
+            React.createElement("button", { style: DC.deal, onClick: onConfirm }, "DEAL \u25B8"),
+            React.createElement("button", { style: DC.again, onClick: onAgain }, "choose again")));
+    }
     if (!ch.hero) {
         const m = meta(ch.gid), name = st.players.find(p => p.id === ch.picker)?.name || "Dealer";
         return (React.createElement("div", { style: DC.overlay },
@@ -3328,6 +3340,11 @@ const DC = {
     who: { fontSize: 10, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c" },
     pick: { fontSize: 24, color: "#f4ead0", margin: "8px 0 4px" },
     why: { fontSize: 11, color: "#9c8f70", fontStyle: "italic", maxWidth: 240, lineHeight: 1.5 },
+    deal: { marginTop: 18, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e", border: "none", borderRadius: 12,
+        padding: "13px 34px", fontSize: 14, fontWeight: "bold", letterSpacing: 2, fontFamily: "Georgia,serif",
+        boxShadow: "0 6px 18px rgba(63,145,82,0.3)", cursor: "pointer" },
+    again: { marginTop: 12, fontSize: 10, color: "#8b95a1", letterSpacing: 1, textTransform: "uppercase", background: "none",
+        border: "none", cursor: "pointer", textDecoration: "underline" },
 };
 function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
     const L = LOBBY_S;
@@ -3812,7 +3829,12 @@ function App() {
         }
         return dealHand(s);
     });
-    const pickGame = gid => setSt(s => {
+    const pickGame = gid => setSt(s => (s.phase === "choosing" ? { ...s, chooser: { ...s.chooser, confirm: gid } } : s));
+    const chooseAgain = () => setSt(s => (s.phase === "choosing" ? { ...s, chooser: { ...s.chooser, confirm: null } } : s));
+    const confirmDeal = () => setSt(s => {
+        if (s.phase !== "choosing" || !s.chooser?.confirm)
+            return s;
+        const gid = s.chooser.confirm;
         const recent = [gid, ...((s.tour?.dcRecent || []).filter(g => g !== gid))].slice(0, 4);
         const nextP = nextPicker(s.players, s.tour?.dcPicker ?? 0);
         return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcGame: gid, dcPicker: nextP, dcRecent: recent } });
@@ -3834,7 +3856,7 @@ function App() {
             const t = setTimeout(() => setSt(s => {
                 if (s.phase !== "choosing")
                     return s;
-                const gid = (s.tour?.dcRecent && s.tour.dcRecent[0]) || (s.tour?.seq && s.tour.seq[0]) || s.gid;
+                const gid = s.chooser?.confirm || (s.tour?.dcRecent && s.tour.dcRecent[0]) || (s.tour?.seq && s.tour.seq[0]) || s.gid;
                 const nextP = nextPicker(s.players, s.tour?.dcPicker ?? 0);
                 return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcGame: gid, dcPicker: nextP, dcRecent: [gid, ...((s.tour?.dcRecent || []).filter(g => g !== gid))].slice(0, 4) } });
             }), 12000);
@@ -4049,6 +4071,9 @@ function App() {
         }
         @keyframes dcClock { from { width:100%; } to { width:0%; } }
         @keyframes dcFlip { from { transform: rotateY(90deg) scale(0.8); opacity:0; } to { transform: rotateY(0) scale(1); opacity:1; } }
+        button { -webkit-tap-highlight-color: transparent; }
+        button:focus { outline: none; }
+        button:focus-visible { outline: 2px solid rgba(201,168,76,0.55); outline-offset: 1px; }
       `),
         React.createElement("div", { style: S.brandRow },
             React.createElement("div", { style: S.fmtQuick },
@@ -4091,7 +4116,7 @@ function App() {
                 setSt(q);
                 setView("play");
             } }, curGid: st.gid })),
-        st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame }),
+        st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
         st.tour?.result && (() => {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
