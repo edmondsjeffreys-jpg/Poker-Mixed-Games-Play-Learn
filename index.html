@@ -3147,7 +3147,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ad";
+const APP_VERSION = "2026.07.03ae";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3259,7 +3259,7 @@ function DealersChooser({ st, onPick }) {
     const meta = gid => GAMES.find(g => g.id === gid) || { label: gid, tag: "" };
     const tagColor = tag => /NO LIMIT/.test(tag) ? "#3f9152" : /POT LIMIT/.test(tag) ? "#b08a2e" : /SPLIT/.test(tag) ? "#8a6ab0" : "#4f6f92";
     if (!ch.hero) {
-        const m = meta(ch.gid), name = st.players.find(p => p.id === ch.dealer)?.name || "Dealer";
+        const m = meta(ch.gid), name = st.players.find(p => p.id === ch.picker)?.name || "Dealer";
         return (React.createElement("div", { style: DC.overlay },
             React.createElement("div", { style: DC.face },
                 React.createElement("div", { style: DC.faceName }, m.label),
@@ -3276,9 +3276,9 @@ function DealersChooser({ st, onPick }) {
     }
     const N = seq.length, spread = 42;
     return (React.createElement("div", { style: DC.overlay },
-        React.createElement("div", { style: DC.kicker }, "your button"),
+        React.createElement("div", { style: DC.kicker }, "new orbit \u00B7 your choice"),
         React.createElement("div", { style: DC.title }, "Deal the game"),
-        React.createElement("div", { style: DC.sub }, "You have the button \u2014 pick what everyone plays."),
+        React.createElement("div", { style: DC.sub }, "Your pick sets the game for this whole orbit."),
         React.createElement("div", { style: DC.ring },
             React.createElement("div", { style: DC.ringFill })),
         recent.length > 0 && (React.createElement("div", { style: DC.rail }, recent.map((g, i) => (React.createElement("button", { key: g, onClick: () => onPick(g), style: DC.chip },
@@ -3476,6 +3476,15 @@ function peekDealer(s) {
             return c;
     }
     return s.dealerIdx;
+}
+function nextPicker(players, cur) {
+    const n = players.length;
+    for (let step = 1; step <= n; step++) {
+        const c = ((cur ?? 0) + step) % n;
+        if (players[c].chips > 0)
+            return c;
+    }
+    return cur ?? 0;
 }
 function dealCards(s) {
     const deck = mkDeck();
@@ -3685,7 +3694,7 @@ function App() {
         const gid = seq[0] || st.gid;
         const bbDepth = Math.max(5, Math.round((cfg.startBB || 200) / 2));
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250, bba: cfg.bba !== false, dc: cfg.mix === "dealers",
-            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0, dcRecent: [],
+            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0, dcRecent: [], dcPicker: 0,
             field: { total: cfg.runners, startStack: tourStartStack(gid, bbDepth) } };
         setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
         setView("play");
@@ -3791,22 +3800,32 @@ function App() {
     const deal = () => setSt(s => {
         if (s.tour?.on && s.tour?.dc && !s.tour.result) {
             const prep = refillTable(rotateTour(s));
-            const dealer = s.dealerIdx == null ? 0 : peekDealer(prep);
-            if (dealer === 0)
-                return { ...prep, phase: "choosing", chooser: { dealer, hero: true } };
-            const gid = botChooseGame(prep, dealer);
-            return { ...prep, phase: "choosing", chooser: { dealer, hero: false, gid, reason: chooseReason(gid) } };
+            const orbitLen = Math.max(2, prep.players.length);
+            const orbitStart = (((prep.tour.hands || 1) - 1) % orbitLen) === 0;
+            if (!orbitStart)
+                return dealCards(prep);
+            const picker = prep.tour.dcPicker ?? 0;
+            if (picker === 0)
+                return { ...prep, phase: "choosing", chooser: { picker, hero: true } };
+            const gid = botChooseGame(prep, picker);
+            return { ...prep, phase: "choosing", chooser: { picker, hero: false, gid, reason: chooseReason(gid) } };
         }
         return dealHand(s);
     });
     const pickGame = gid => setSt(s => {
         const recent = [gid, ...((s.tour?.dcRecent || []).filter(g => g !== gid))].slice(0, 4);
-        return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcRecent: recent } });
+        const nextP = nextPicker(s.players, s.tour?.dcPicker ?? 0);
+        return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcGame: gid, dcPicker: nextP, dcRecent: recent } });
     });
     useEffect(() => {
         if (st.phase === "choosing" && st.chooser && !st.chooser.hero) {
             const gid = st.chooser.gid;
-            const t = setTimeout(() => setSt(s => (s.phase === "choosing" ? dealCards({ ...s, gid, phase: "acting", chooser: null }) : s)), 1500);
+            const t = setTimeout(() => setSt(s => {
+                if (s.phase !== "choosing")
+                    return s;
+                const nextP = nextPicker(s.players, s.tour?.dcPicker ?? 0);
+                return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcGame: gid, dcPicker: nextP } });
+            }), 1500);
             return () => clearTimeout(t);
         }
     }, [st.phase, st.chooser]);
@@ -3816,7 +3835,8 @@ function App() {
                 if (s.phase !== "choosing")
                     return s;
                 const gid = (s.tour?.dcRecent && s.tour.dcRecent[0]) || (s.tour?.seq && s.tour.seq[0]) || s.gid;
-                return dealCards({ ...s, gid, phase: "acting", chooser: null });
+                const nextP = nextPicker(s.players, s.tour?.dcPicker ?? 0);
+                return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcGame: gid, dcPicker: nextP, dcRecent: [gid, ...((s.tour?.dcRecent || []).filter(g => g !== gid))].slice(0, 4) } });
             }), 12000);
             return () => clearTimeout(t);
         }
