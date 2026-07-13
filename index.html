@@ -3118,7 +3118,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03z";
+const APP_VERSION = "2026.07.03aa";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3920,7 +3920,7 @@ function App() {
             const T = st.tour, F = T.field, sb = tourSb(T.level || 0);
             const rem = Math.max(0, (T.levelSec || 300) - ((T.clock || 0) % (T.levelSec || 300)));
             const mmss = `${Math.floor(rem / 60)}:${String(Math.floor(rem % 60)).padStart(2, "0")}`;
-            let tier = null, accent = null;
+            let fieldCells = null, moneyTier = null, accent = null;
             if (F) {
                 const seatsN = st.players.length;
                 const model = fieldLeft(F.total, T.level || 0);
@@ -3936,47 +3936,47 @@ function App() {
                 const nearBubble = toMoney > 0 && toMoney <= Math.max(3, Math.round(paid * 0.12));
                 const buyIn = T.buyIn || 0;
                 const locked = inMoney && buyIn ? payoutFor(Math.min(rank, paid), F.total, buyIn) : 0;
-                let money, mColor;
-                if (inMoney) {
-                    money = locked ? `● ITM · $${locked.toLocaleString()}` : "● in the money";
-                    mColor = "#86efac";
+                fieldCells = (React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: S.tourHudDiv }),
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "LEFT"),
+                        React.createElement("div", { style: S.tourHudVal },
+                            rank.toLocaleString(),
+                            "/",
+                            left.toLocaleString())),
+                    React.createElement("div", { style: S.tourHudDiv }),
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "YOU"),
+                        React.createElement("div", { style: S.tourHudVal },
+                            Math.round(me.chips / bb),
+                            "bb"),
+                        React.createElement("div", { style: S.tourHudSub },
+                            "avg ",
+                            Math.round(avg / bb)))));
+                if (inMoney || stone || nearBubble) {
+                    let money, mColor;
+                    if (inMoney) {
+                        money = locked ? `● IN THE MONEY · $${locked.toLocaleString()} locked` : "● IN THE MONEY";
+                        mColor = "#86efac";
+                    }
+                    else if (stone) {
+                        money = "◆ STONE BUBBLE — next out misses the cash";
+                        mColor = "#f87171";
+                    }
+                    else {
+                        money = `HAND-FOR-HAND · ${toMoney} from the money`;
+                        mColor = "#fbbf24";
+                    }
+                    accent = stone ? S.tourHudBubble : S.tourHudNear;
+                    moneyTier = React.createElement("div", { style: { ...S.tourHudTier, color: mColor, fontWeight: "bold", fontSize: 10, letterSpacing: 0.6 } }, money);
                 }
-                else if (stone) {
-                    money = "◆ STONE BUBBLE";
-                    mColor = "#f87171";
-                }
-                else if (nearBubble) {
-                    money = `hand-for-hand · ${toMoney} out`;
-                    mColor = "#fbbf24";
-                }
-                else {
-                    money = `${toMoney.toLocaleString()} to the money`;
-                    mColor = "#c9a84c";
-                }
-                accent = stone ? S.tourHudBubble : nearBubble ? S.tourHudNear : null;
-                tier = (React.createElement("div", { style: S.tourHudTier },
-                    React.createElement("span", null,
-                        React.createElement("b", { style: { color: "#e3c87a" } }, rank.toLocaleString()),
-                        " of ",
-                        left.toLocaleString(),
-                        " left"),
-                    React.createElement("span", { style: S.tierDot }, "\u00B7"),
-                    React.createElement("span", { style: S.tierMono },
-                        "you ",
-                        Math.round(me.chips / bb),
-                        "bb ",
-                        React.createElement("span", { style: { opacity: 0.7 } },
-                            "(avg ",
-                            Math.round(avg / bb),
-                            ")")),
-                    React.createElement("span", { style: S.tierDot }, "\u00B7"),
-                    React.createElement("span", { style: { ...S.tierMoney, color: mColor } }, money)));
             }
             return (React.createElement("div", { style: { ...S.tourHud, ...(accent || {}) } },
                 React.createElement("div", { style: S.tourHudRow },
                     React.createElement("div", { style: S.tourHudCol },
                         React.createElement("div", { style: S.tourHudLbl }, "LEVEL"),
-                        React.createElement("div", { style: S.tourHudVal }, (T.level || 0) + 1)),
+                        React.createElement("div", { style: S.tourHudVal }, (T.level || 0) + 1),
+                        React.createElement("div", { style: S.tourHudSub }, mmss)),
                     React.createElement("div", { style: S.tourHudDiv }),
                     React.createElement("div", { style: S.tourHudCol },
                         React.createElement("div", { style: S.tourHudLbl }, "BLINDS"),
@@ -3986,16 +3986,13 @@ function App() {
                             2 * sb)),
                     React.createElement("div", { style: S.tourHudDiv }),
                     React.createElement("div", { style: S.tourHudCol },
-                        React.createElement("div", { style: S.tourHudLbl }, "NEXT LEVEL"),
-                        React.createElement("div", { style: S.tourHudVal }, mmss)),
-                    React.createElement("div", { style: S.tourHudDiv }),
-                    React.createElement("div", { style: S.tourHudCol },
                         React.createElement("div", { style: S.tourHudLbl }, "GAME"),
                         React.createElement("div", { style: S.tourHudVal },
                             (T.mixIdx || 0) + 1,
                             "/",
-                            T.seq?.length || 1))),
-                tier));
+                            T.seq?.length || 1)),
+                    fieldCells),
+                moneyTier));
         })(),
         showSettings && (React.createElement("div", { style: S.overlay, onClick: () => setShowSettings(false) },
             React.createElement("div", { style: S.modal, onClick: e => e.stopPropagation() },
@@ -4591,7 +4588,8 @@ const S = {
     tierMoney: { fontSize: 9, letterSpacing: 1, textTransform: "uppercase", fontWeight: "bold" },
     tourHudNear: { border: "1px solid rgba(251,191,36,0.5)" },
     tourHudBubble: { border: "1px solid rgba(248,113,113,0.6)", boxShadow: "0 0 12px rgba(248,113,113,0.15)" },
-    tourHudCol: { display: "flex", flexDirection: "column", alignItems: "center", flex: 1, gap: 2 },
+    tourHudCol: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, gap: 1 },
+    tourHudSub: { fontSize: 8, color: "#8b95a1", fontFamily: "monospace", lineHeight: 1, marginTop: 1 },
     tourHudLbl: { fontSize: 7.5, letterSpacing: 1.4, color: "#9d8659", textTransform: "uppercase" },
     tourHudVal: { fontSize: 14, color: "#e3c87a", fontFamily: "monospace", fontWeight: "bold", lineHeight: 1 },
     tourHudDiv: { width: 1, background: "rgba(201,168,76,0.18)", alignSelf: "stretch" },
