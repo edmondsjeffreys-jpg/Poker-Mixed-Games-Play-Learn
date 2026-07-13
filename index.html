@@ -3118,7 +3118,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03x";
+const APP_VERSION = "2026.07.03z";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3204,6 +3204,7 @@ const MIX_PRESETS = [
     { id: "custom", name: "CUSTOM", desc: "build your own mix", games: null },
 ];
 const RUNNER_OPTS = [{ n: 6, u: "1 table" }, { n: 9, u: "1 table" }, { n: 45, u: "simulated" }, { n: 180, u: "simulated" }, { n: 1000, u: "simulated" }, { n: 10000, u: "simulated" }];
+const STACK_OPTS = [{ bb: 100, u: "shallow" }, { bb: 150, u: "standard" }, { bb: 200, u: "deep" }, { bb: 300, u: "very deep" }];
 const STAKE_OPTS = [
     { id: "low", tag: "LOW", desc: "Soft field — loose, passive, leaky recreationals. Punish with value." },
     { id: "med", tag: "MED", desc: "Mixed field — a spread of regs and recreational players." },
@@ -3244,8 +3245,8 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
         React.createElement("div", { style: L.sec },
             React.createElement("div", { style: L.lbl }, "GAME MIX"),
             React.createElement("div", { style: L.grid }, MIX_PRESETS.map(m => (React.createElement("button", { key: m.id, onClick: () => setCfg(c => ({ ...c, mix: m.id })), style: { ...L.tile, ...(cfg.mix === m.id ? L.tileOn : {}) } },
-                React.createElement("span", { style: { ...L.tileN, ...(cfg.mix === m.id ? { color: "#1a1206" } : {}) } }, m.name),
-                React.createElement("span", { style: { ...L.tileD, ...(cfg.mix === m.id ? { color: "#4f3d12" } : {}) } }, m.desc))))),
+                React.createElement("span", { style: { ...L.tileN, ...(cfg.mix === m.id ? { color: "#f4ead0" } : {}) } }, m.name),
+                React.createElement("span", { style: { ...L.tileD, ...(cfg.mix === m.id ? { color: "#c9b98c" } : {}) } }, m.desc))))),
             React.createElement("div", { style: L.rotates },
                 React.createElement("span", { style: { color: "#9d8659" } }, "ROTATES: "),
                 rot.join(" · "))),
@@ -3256,9 +3257,16 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
                 React.createElement("span", { style: L.pillU }, r.u))))),
             React.createElement("div", { style: L.hint }, "6\u20139 is a true single table down to a winner. Larger fields simulate the room \u2014 you play your 8-max table while it shrinks, payouts & ICM scaled to the real count.")),
         React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "STARTING STACK"),
+            React.createElement("div", { style: L.pills }, STACK_OPTS.map(s => (React.createElement("button", { key: s.bb, onClick: () => setCfg(c => ({ ...c, startBB: s.bb })), style: { ...L.pill, ...(cfg.startBB === s.bb ? L.pillOn : {}) } },
+                s.bb,
+                "bb",
+                React.createElement("span", { style: L.pillU }, s.u))))),
+            React.createElement("div", { style: L.hint }, "Chips everyone starts with, in big blinds. Deeper stacks mean more post-flop play before the blinds start to bite.")),
+        React.createElement("div", { style: L.sec },
             React.createElement("div", { style: L.lbl }, "STAKES \u2014 SETS THE FIELD'S SKILL"),
             React.createElement("div", { style: L.stakes }, STAKE_OPTS.map(s => (React.createElement("button", { key: s.id, onClick: () => setCfg(c => ({ ...c, stakes: s.id })), style: { ...L.srow, ...(cfg.stakes === s.id ? L.srowOn : {}) } },
-                React.createElement("span", { style: { ...L.stag, ...(cfg.stakes === s.id ? { color: "#c9a84c" } : {}) } }, s.tag),
+                React.createElement("span", { style: { ...L.stag, ...(cfg.stakes === s.id ? { color: "#e3c87a" } : {}) } }, s.tag),
                 React.createElement("span", { style: L.sdesc }, s.desc)))))),
         React.createElement("div", { style: L.sec },
             React.createElement("div", { style: L.lbl }, "BLIND SPEED \u2014 LEVEL LENGTH"),
@@ -3278,6 +3286,10 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
             " \u00B7 ",
             cfg.runners.toLocaleString(),
             " runners \u00B7 ",
+            React.createElement("b", null,
+                cfg.startBB,
+                "bb"),
+            " \u00B7 ",
             React.createElement("b", null, stake.tag),
             " stakes \u00B7 ",
             React.createElement("b", null, spd.label),
@@ -3287,31 +3299,36 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
         React.createElement("div", { style: L.note }, "Full tournament: real-time blind clock, HORSE-style game rotation, a shrinking field with bubble & ICM, and a payout ladder scaled to the field.")));
 }
 const LOBBY_S = {
-    screen: { position: "fixed", inset: 0, zIndex: 60, overflowY: "auto", background: "linear-gradient(180deg,#0c1119,#080b12)",
+    screen: { position: "fixed", inset: 0, zIndex: 60, overflowY: "auto", background: "#101725",
+        backgroundImage: "radial-gradient(ellipse 70% 50% at 50% -8%, #1f3454 0%, transparent 60%), radial-gradient(ellipse at 50% 120%, #2a1f10 0%, transparent 55%), linear-gradient(#101725,#0c121e)",
         padding: "20px 16px 44px", fontFamily: "Georgia,serif", color: "#e9e2cf" },
     tabs: { display: "flex", gap: 8, margin: "2px auto 6px", maxWidth: 410 },
     tab: { flex: 1, textAlign: "center", padding: "11px 0", borderRadius: 10, fontSize: 13, letterSpacing: 2, fontWeight: "bold",
-        border: "1px solid #232a38", color: "#7d8496", background: "rgba(255,255,255,0.02)", fontFamily: "Georgia,serif", cursor: "pointer" },
-    tabOn: { color: "#1a1206", background: "linear-gradient(165deg,#d8b551,#bb8f33)", borderColor: "transparent", boxShadow: "0 4px 14px rgba(201,168,76,0.25)" },
+        border: "1px solid rgba(255,255,255,0.1)", color: "#9aa0ad", background: "rgba(255,255,255,0.04)", fontFamily: "Georgia,serif", cursor: "pointer" },
+    tabOn: { color: "#f0e4c4", background: "linear-gradient(135deg,rgba(201,168,76,0.26),rgba(201,168,76,0.12))",
+        borderColor: "rgba(201,168,76,0.7)", boxShadow: "0 0 12px rgba(201,168,76,0.14)" },
     sec: { marginTop: 18, maxWidth: 410, marginLeft: "auto", marginRight: "auto" },
-    lbl: { fontSize: 9, letterSpacing: 2, color: "#9d8659", marginBottom: 8 },
+    lbl: { fontSize: 9, letterSpacing: 2, color: "#c9a84c", marginBottom: 8, textTransform: "uppercase" },
     grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
-    tile: { border: "1px solid #2a3240", borderRadius: 10, padding: "11px 12px", background: "rgba(255,255,255,0.02)",
-        display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 52, textAlign: "left", cursor: "pointer" },
-    tileOn: { background: "linear-gradient(165deg,#d8b551,#bb8f33)", borderColor: "transparent", boxShadow: "0 4px 13px rgba(201,168,76,0.22)" },
+    tile: { border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "11px 12px", background: "rgba(255,255,255,0.04)",
+        display: "flex", flexDirection: "column", justifyContent: "center", minHeight: 52, textAlign: "left", cursor: "pointer", transition: "all 0.14s" },
+    tileOn: { background: "linear-gradient(135deg,rgba(201,168,76,0.26),rgba(201,168,76,0.12))",
+        borderColor: "rgba(201,168,76,0.7)", boxShadow: "0 0 12px rgba(201,168,76,0.14)" },
     tileN: { fontSize: 13, fontWeight: "bold", letterSpacing: 1.5, color: "#e0d4ad", lineHeight: 1.1 },
     tileD: { fontSize: 8, letterSpacing: 0.5, color: "#8a7c5a", marginTop: 3, textTransform: "uppercase" },
     rotates: { marginTop: 10, fontSize: 9.5, letterSpacing: 0.4, color: "#cbbd97", lineHeight: 1.5 },
     pills: { display: "flex", flexWrap: "wrap", gap: 6 },
-    pill: { flex: "1 1 21%", minWidth: 58, textAlign: "center", border: "1px solid #2a3240", borderRadius: 8, padding: "8px 0",
-        fontSize: 13, color: "#cdbf9e", background: "rgba(255,255,255,0.02)", fontFamily: "Georgia,serif", cursor: "pointer" },
-    pillOn: { color: "#1a1206", background: "linear-gradient(165deg,#d8b551,#bb8f33)", borderColor: "transparent", fontWeight: "bold" },
+    pill: { flex: "1 1 21%", minWidth: 58, textAlign: "center", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "8px 0",
+        fontSize: 13, color: "#cdbf9e", background: "rgba(255,255,255,0.04)", fontFamily: "Georgia,serif", cursor: "pointer", transition: "all 0.14s" },
+    pillOn: { color: "#f0e4c4", background: "linear-gradient(135deg,rgba(201,168,76,0.26),rgba(201,168,76,0.12))",
+        borderColor: "rgba(201,168,76,0.7)", fontWeight: "bold", boxShadow: "0 0 10px rgba(201,168,76,0.12)" },
     pillU: { display: "block", fontSize: 7, letterSpacing: 1, opacity: 0.7 },
     hint: { fontSize: 9, color: "#6f6048", marginTop: 7, lineHeight: 1.5 },
     stakes: { display: "flex", flexDirection: "column", gap: 7 },
-    srow: { display: "flex", alignItems: "center", gap: 10, border: "1px solid #2a3240", borderRadius: 10, padding: "9px 11px",
-        background: "rgba(255,255,255,0.02)", textAlign: "left", cursor: "pointer", width: "100%" },
-    srowOn: { borderColor: "#c9a84c", background: "rgba(201,168,76,0.08)" },
+    srow: { display: "flex", alignItems: "center", gap: 10, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "9px 11px",
+        background: "rgba(255,255,255,0.04)", textAlign: "left", cursor: "pointer", width: "100%", transition: "all 0.14s" },
+    srowOn: { borderColor: "rgba(201,168,76,0.7)", background: "linear-gradient(135deg,rgba(201,168,76,0.18),rgba(201,168,76,0.07))",
+        boxShadow: "0 0 10px rgba(201,168,76,0.1)" },
     stag: { fontSize: 12, fontWeight: "bold", letterSpacing: 1, width: 52, flex: "none", color: "#b9ac86" },
     sdesc: { fontSize: 9.5, color: "#9c8f70", lineHeight: 1.4 },
     summary: { marginTop: 18, maxWidth: 410, marginLeft: "auto", marginRight: "auto", textAlign: "center", fontSize: 10, color: "#b9ac86",
@@ -3511,7 +3528,7 @@ function App() {
     const [showWelcome, setShowWelcome] = useState(false);
     const [tourRect, setTourRect] = useState(null);
     const [view, setView] = useState("play");
-    const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard" });
+    const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard", startBB: 200 });
     useEffect(() => {
         const t = st.tour;
         if (t?.on && !t.result && st.phase === "showdown")
@@ -3526,10 +3543,11 @@ function App() {
             ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
             : [st.gid];
         const gid = seq[0] || st.gid;
+        const bbDepth = Math.max(5, Math.round((cfg.startBB || 200) / 2));
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250,
             seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0,
-            field: { total: cfg.runners, startStack: tourStartStack(gid, st.bbDepth) } };
-        setSt(s => mkState(gid, { ...s, format: "tourney", tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
+            field: { total: cfg.runners, startStack: tourStartStack(gid, bbDepth) } };
+        setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
         setView("play");
     };
     useEffect(() => {
@@ -3899,80 +3917,85 @@ function App() {
                     React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null })); setView("play"); } }, "Back to cash game"))));
         })(),
         st.tour?.on && view === "play" && (() => {
-            const T = st.tour, sb = tourSb(T.level || 0);
+            const T = st.tour, F = T.field, sb = tourSb(T.level || 0);
             const rem = Math.max(0, (T.levelSec || 300) - ((T.clock || 0) % (T.levelSec || 300)));
             const mmss = `${Math.floor(rem / 60)}:${String(Math.floor(rem % 60)).padStart(2, "0")}`;
-            return (React.createElement("div", { style: S.tourHud },
-                React.createElement("div", { style: S.tourHudCol },
-                    React.createElement("div", { style: S.tourHudLbl }, "LEVEL"),
-                    React.createElement("div", { style: S.tourHudVal }, (T.level || 0) + 1)),
-                React.createElement("div", { style: S.tourHudDiv }),
-                React.createElement("div", { style: S.tourHudCol },
-                    React.createElement("div", { style: S.tourHudLbl }, "BLINDS"),
-                    React.createElement("div", { style: S.tourHudVal },
-                        sb,
-                        "/",
-                        2 * sb)),
-                React.createElement("div", { style: S.tourHudDiv }),
-                React.createElement("div", { style: S.tourHudCol },
-                    React.createElement("div", { style: S.tourHudLbl }, "NEXT LEVEL"),
-                    React.createElement("div", { style: S.tourHudVal }, mmss)),
-                React.createElement("div", { style: S.tourHudDiv }),
-                React.createElement("div", { style: S.tourHudCol },
-                    React.createElement("div", { style: S.tourHudLbl }, "GAME"),
-                    React.createElement("div", { style: S.tourHudVal },
-                        (T.mixIdx || 0) + 1,
-                        "/",
-                        T.seq?.length || 1))));
-        })(),
-        st.tour?.on && st.tour.field && view === "play" && (() => {
-            const T = st.tour, F = T.field;
-            const seatsN = st.players.length;
-            const model = fieldLeft(F.total, T.level || 0);
-            const aliveN = st.players.filter(p => p.chips > 0).length;
-            const left = model <= seatsN ? aliveN : Math.max(seatsN + 1, fieldLeftLive(F, T.level || 0, T.busted));
-            const avg = Math.round(F.total * F.startStack / Math.max(1, left));
-            const rank = fieldRank(me.chips, avg, left);
-            const paid = paidSpots(F.total);
-            const bb = STK(st).bblind || STK(st).bbet || 1;
-            const toMoney = left - paid;
-            const inMoney = left <= paid;
-            const stone = toMoney === 1;
-            const nearBubble = toMoney > 0 && toMoney <= Math.max(3, Math.round(paid * 0.12));
-            const buyIn = T.buyIn || 0;
-            const locked = inMoney && buyIn ? payoutFor(Math.min(rank, paid), F.total, buyIn) : 0;
-            let money, mColor;
-            if (inMoney) {
-                money = locked ? `● ITM · $${locked.toLocaleString()}` : "● in the money";
-                mColor = "#86efac";
+            let tier = null, accent = null;
+            if (F) {
+                const seatsN = st.players.length;
+                const model = fieldLeft(F.total, T.level || 0);
+                const aliveN = st.players.filter(p => p.chips > 0).length;
+                const left = model <= seatsN ? aliveN : Math.max(seatsN + 1, fieldLeftLive(F, T.level || 0, T.busted));
+                const avg = Math.round(F.total * F.startStack / Math.max(1, left));
+                const rank = fieldRank(me.chips, avg, left);
+                const paid = paidSpots(F.total);
+                const bb = STK(st).bblind || STK(st).bbet || 1;
+                const toMoney = left - paid;
+                const inMoney = left <= paid;
+                const stone = toMoney === 1;
+                const nearBubble = toMoney > 0 && toMoney <= Math.max(3, Math.round(paid * 0.12));
+                const buyIn = T.buyIn || 0;
+                const locked = inMoney && buyIn ? payoutFor(Math.min(rank, paid), F.total, buyIn) : 0;
+                let money, mColor;
+                if (inMoney) {
+                    money = locked ? `● ITM · $${locked.toLocaleString()}` : "● in the money";
+                    mColor = "#86efac";
+                }
+                else if (stone) {
+                    money = "◆ STONE BUBBLE";
+                    mColor = "#f87171";
+                }
+                else if (nearBubble) {
+                    money = `hand-for-hand · ${toMoney} out`;
+                    mColor = "#fbbf24";
+                }
+                else {
+                    money = `${toMoney.toLocaleString()} to the money`;
+                    mColor = "#c9a84c";
+                }
+                accent = stone ? S.tourHudBubble : nearBubble ? S.tourHudNear : null;
+                tier = (React.createElement("div", { style: S.tourHudTier },
+                    React.createElement("span", null,
+                        React.createElement("b", { style: { color: "#e3c87a" } }, rank.toLocaleString()),
+                        " of ",
+                        left.toLocaleString(),
+                        " left"),
+                    React.createElement("span", { style: S.tierDot }, "\u00B7"),
+                    React.createElement("span", { style: S.tierMono },
+                        "you ",
+                        Math.round(me.chips / bb),
+                        "bb ",
+                        React.createElement("span", { style: { opacity: 0.7 } },
+                            "(avg ",
+                            Math.round(avg / bb),
+                            ")")),
+                    React.createElement("span", { style: S.tierDot }, "\u00B7"),
+                    React.createElement("span", { style: { ...S.tierMoney, color: mColor } }, money)));
             }
-            else if (stone) {
-                money = "◆ STONE BUBBLE";
-                mColor = "#f87171";
-            }
-            else if (nearBubble) {
-                money = `hand-for-hand · ${toMoney} out`;
-                mColor = "#fbbf24";
-            }
-            else {
-                money = `${toMoney.toLocaleString()} to the money`;
-                mColor = "#c9a84c";
-            }
-            return (React.createElement("div", { style: { ...S.fieldStrip, ...(stone ? S.fieldStripBubble : nearBubble ? S.fieldStripNear : {}) } },
-                React.createElement("span", { style: S.fieldMain },
-                    React.createElement("b", { style: { color: "#e3c87a" } }, rank.toLocaleString()),
-                    " ",
-                    React.createElement("span", { style: { opacity: 0.7 } }, "of"),
-                    " ",
-                    left.toLocaleString(),
-                    " left"),
-                React.createElement("span", { style: S.fieldSub },
-                    "avg ",
-                    Math.round(avg / bb),
-                    "bb \u00B7 you ",
-                    Math.round(me.chips / bb),
-                    "bb"),
-                React.createElement("span", { style: { ...S.fieldMoney, color: mColor } }, money)));
+            return (React.createElement("div", { style: { ...S.tourHud, ...(accent || {}) } },
+                React.createElement("div", { style: S.tourHudRow },
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "LEVEL"),
+                        React.createElement("div", { style: S.tourHudVal }, (T.level || 0) + 1)),
+                    React.createElement("div", { style: S.tourHudDiv }),
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "BLINDS"),
+                        React.createElement("div", { style: S.tourHudVal },
+                            sb,
+                            "/",
+                            2 * sb)),
+                    React.createElement("div", { style: S.tourHudDiv }),
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "NEXT LEVEL"),
+                        React.createElement("div", { style: S.tourHudVal }, mmss)),
+                    React.createElement("div", { style: S.tourHudDiv }),
+                    React.createElement("div", { style: S.tourHudCol },
+                        React.createElement("div", { style: S.tourHudLbl }, "GAME"),
+                        React.createElement("div", { style: S.tourHudVal },
+                            (T.mixIdx || 0) + 1,
+                            "/",
+                            T.seq?.length || 1))),
+                tier));
         })(),
         showSettings && (React.createElement("div", { style: S.overlay, onClick: () => setShowSettings(false) },
             React.createElement("div", { style: S.modal, onClick: e => e.stopPropagation() },
@@ -4021,11 +4044,7 @@ function App() {
                     React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, label))))),
                 st.format === "cash" && (React.createElement("div", { style: { ...S.segRow, marginTop: 8 } }, CASH_STAKES.map((s, i) => (React.createElement("button", { key: i, onClick: () => setStake(i), style: { ...S.segBtn, ...(st.stakeIdx === i ? S.segBtnOn : {}) } },
                     React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
-                st.format === "tourney" && (React.createElement(React.Fragment, null,
-                    React.createElement("div", { style: { ...S.modalHint, marginTop: 8 } }, "Starting stack depth"),
-                    React.createElement("div", { style: S.segRow }, BB_DEPTHS.map(d => (React.createElement("button", { key: d, onClick: () => setDepth(d), style: { ...S.segBtn, ...(st.bbDepth === d ? S.segBtnOn : {}) } },
-                        React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, d))))),
-                    React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY"))),
+                st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#c9a84c", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
@@ -4353,7 +4372,8 @@ function CentreInfo({ st, streetLbl }) {
                 React.createElement(BoardCard, { key: `v-${st.boardKey}-0`, card: st.board[0], idx: 0 })))),
         React.createElement("div", { style: S.potBox },
             React.createElement("div", { style: S.potShine }),
-            React.createElement("span", { style: S.potChip }),
+            React.createElement("span", { style: S.potChip },
+                React.createElement("span", { style: S.potChipFace }, "\u2660")),
             React.createElement("span", { style: S.potLbl }, "POT"),
             React.createElement("span", { style: S.potAmt },
                 "$",
@@ -4559,9 +4579,18 @@ const S = {
     topTab: { flex: 1, textAlign: "center", padding: "9px 0", borderRadius: 9, fontSize: 12, letterSpacing: 2, fontWeight: "bold",
         border: "1px solid #232a38", color: "#7d8496", background: "rgba(255,255,255,0.02)", fontFamily: "Georgia,serif", cursor: "pointer" },
     topTabOn: { color: "#1a1206", background: "linear-gradient(165deg,#d8b551,#bb8f33)", borderColor: "transparent", boxShadow: "0 3px 12px rgba(201,168,76,0.22)" },
-    tourHud: { width: "100%", maxWidth: 740, margin: "8px auto 0", display: "flex", alignItems: "stretch", justifyContent: "space-around",
+    tourHud: { width: "100%", maxWidth: 740, margin: "8px auto 0", display: "flex", flexDirection: "column",
         background: "linear-gradient(180deg,rgba(30,24,10,0.5),rgba(18,14,6,0.4))", border: "1px solid rgba(201,168,76,0.3)",
-        borderRadius: 10, padding: "7px 4px" },
+        borderRadius: 10, padding: "7px 4px 6px" },
+    tourHudRow: { display: "flex", alignItems: "stretch", justifyContent: "space-around", width: "100%" },
+    tourHudTier: { display: "flex", alignItems: "center", justifyContent: "center", gap: 9, flexWrap: "wrap",
+        marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(201,168,76,0.14)",
+        fontFamily: "Georgia,serif", fontSize: 11, color: "#cfc3a0", letterSpacing: 0.2 },
+    tierDot: { color: "rgba(201,168,76,0.4)" },
+    tierMono: { fontFamily: "monospace", fontSize: 10, color: "#8b95a1" },
+    tierMoney: { fontSize: 9, letterSpacing: 1, textTransform: "uppercase", fontWeight: "bold" },
+    tourHudNear: { border: "1px solid rgba(251,191,36,0.5)" },
+    tourHudBubble: { border: "1px solid rgba(248,113,113,0.6)", boxShadow: "0 0 12px rgba(248,113,113,0.15)" },
     tourHudCol: { display: "flex", flexDirection: "column", alignItems: "center", flex: 1, gap: 2 },
     tourHudLbl: { fontSize: 7.5, letterSpacing: 1.4, color: "#9d8659", textTransform: "uppercase" },
     tourHudVal: { fontSize: 14, color: "#e3c87a", fontFamily: "monospace", fontWeight: "bold", lineHeight: 1 },
@@ -4685,9 +4714,12 @@ const S = {
         background: "linear-gradient(180deg,rgba(20,26,16,0.9),rgba(10,14,8,0.85))",
         borderRadius: 22, padding: "5px 16px 5px 7px", border: "1px solid rgba(201,168,76,0.42)",
         boxShadow: "0 3px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,220,150,0.12)" },
-    potChip: { width: 20, height: 20, borderRadius: "50%", flexShrink: 0, position: "relative", zIndex: 1,
-        background: "radial-gradient(circle at 50% 35%,#e6c669,#b8912f)", border: "2px solid #8a6d24",
-        boxShadow: "0 0 0 2px rgba(0,0,0,0.22),0 2px 4px rgba(0,0,0,0.5)" },
+    potChip: { width: 24, height: 24, borderRadius: "50%", flexShrink: 0, position: "relative", zIndex: 1,
+        background: "conic-gradient(#efd98c 0deg 8deg,#7c5f1c 8deg 22deg,#efd98c 22deg 38deg,#7c5f1c 38deg 52deg,#efd98c 52deg 68deg,#7c5f1c 68deg 82deg,#efd98c 82deg 98deg,#7c5f1c 98deg 112deg,#efd98c 112deg 128deg,#7c5f1c 128deg 142deg,#efd98c 142deg 158deg,#7c5f1c 158deg 172deg,#efd98c 172deg 188deg,#7c5f1c 188deg 202deg,#efd98c 202deg 218deg,#7c5f1c 218deg 232deg,#efd98c 232deg 248deg,#7c5f1c 248deg 262deg,#efd98c 262deg 278deg,#7c5f1c 278deg 292deg,#efd98c 292deg 308deg,#7c5f1c 308deg 322deg,#efd98c 322deg 338deg,#7c5f1c 338deg 360deg)",
+        boxShadow: "0 2px 5px rgba(0,0,0,0.6)" },
+    potChipFace: { position: "absolute", inset: 3, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+        background: "radial-gradient(circle at 50% 36%,#f7e8ad,#cb9f45 68%,#a97f2b)", fontSize: 11, lineHeight: 1, color: "#4a3410",
+        boxShadow: "inset 0 1px 2px rgba(255,255,255,0.45),inset 0 -2px 3px rgba(0,0,0,0.3)" },
     potLbl: { fontSize: 7, letterSpacing: 2.5, color: "rgba(201,168,76,0.7)", position: "relative", zIndex: 1 },
     potAmt: { fontSize: 21, color: "#f3dd9a", fontFamily: "monospace", lineHeight: 1.15, position: "relative", zIndex: 1,
         textShadow: "0 0 10px rgba(201,168,76,0.4)" },
