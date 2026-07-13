@@ -130,12 +130,41 @@ function rotateTour(s) {
         return s;
     const hands = (t.hands || 0) + 1;
     const orbitLen = Math.max(2, s.players.length);
-    const mixIdx = Math.floor((hands - 1) / orbitLen) % t.seq.length;
-    const gid = t.seq[mixIdx] || s.gid;
+    const autoIdx = Math.floor((hands - 1) / orbitLen) % t.seq.length;
+    const gid = t.dc ? s.gid : (t.seq[autoIdx] || s.gid);
+    const mixIdx = t.dc ? Math.max(0, t.seq.indexOf(gid)) : autoIdx;
     const clock = (t.clock || 0) + Math.round(TOUR_HAND_SECS * (0.85 + Math.random() * 0.3));
     const level = tourLevelFromClock(clock, t.levelSec || TOUR_LEVEL_SEC);
     return { ...s, gid, tour: { ...t, hands, mixIdx, clock, level } };
 }
+function botChooseGame(s, seatId) {
+    const seq = (s.tour && s.tour.seq) || [];
+    if (!seq.length)
+        return s.gid;
+    const pr = PROF[seatId] || { aggr: 0.5 };
+    const aggr = pr.aggr ?? 0.5;
+    const scored = seq.map(g => ({ g, w: (BET_MODE(g) !== "fl" ? aggr : (1 - aggr) * 0.9) + Math.random() * 0.5 }))
+        .sort((a, b) => b.w - a.w);
+    return scored[0].g;
+}
+function chooseReason(gid) {
+    if (BET_MODE(gid) !== "fl")
+        return "big-bet — room to apply pressure.";
+    if (IS_STUD(gid))
+        return "a stud round to grind the edge.";
+    if (IS_DRAW(gid))
+        return "a limit draw — small, safe pots.";
+    return "a limit game to keep it controlled.";
+}
+const GAME_WINS = {
+    nlhe: "best 5 of 2+5", lhe: "capped bets · 2+5", plo: "use exactly 2 of 4", bigo: "5 cards · hi-lo split",
+    omaha8: "hi-lo · 8-or-better", razz: "lowest hand wins", stud: "best 5 of 7", stud8: "hi-lo split",
+    superstud: "super stud · hi-lo", triple: "worst wins · 3 draws", badugi: "4 low · off-suit",
+    single: "one draw · worst wins", crazyp: "3 cards · drop one", dbcrazyp: "two boards · drop one",
+    dbbomb: "bomb pot · two boards", razzdugi: "razz low + badugi",
+    dramahaH: "Omaha + a draw", dramaha27: "Omaha + 2-7 draw", dramadugi: "Omaha + badugi",
+    badacey: "badugi + A-5", badeucey: "badugi + 2-7", archie: "scoop the split", veronica: "Omaha + up-card",
+};
 const BB_DEPTHS = [200, 100, 50, 10];
 const tourStartStack = (gid, bbDepth) => depthUnit(gid, mkStakes(TOUR_SB[0], "L1")) * (bbDepth ?? 100) * depthMult(gid);
 function fieldLeft(total, level) {
@@ -3118,7 +3147,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ac";
+const APP_VERSION = "2026.07.03ad";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3223,6 +3252,83 @@ const SPEED_OPTS = [
     { id: "standard", label: "Standard", min: 35 },
     { id: "slow", label: "Slow", min: 60 },
 ];
+function DealersChooser({ st, onPick }) {
+    const seq = st.tour?.seq || [];
+    const ch = st.chooser || {};
+    const recent = (st.tour?.dcRecent || []).slice(0, 3);
+    const meta = gid => GAMES.find(g => g.id === gid) || { label: gid, tag: "" };
+    const tagColor = tag => /NO LIMIT/.test(tag) ? "#3f9152" : /POT LIMIT/.test(tag) ? "#b08a2e" : /SPLIT/.test(tag) ? "#8a6ab0" : "#4f6f92";
+    if (!ch.hero) {
+        const m = meta(ch.gid), name = st.players.find(p => p.id === ch.dealer)?.name || "Dealer";
+        return (React.createElement("div", { style: DC.overlay },
+            React.createElement("div", { style: DC.face },
+                React.createElement("div", { style: DC.faceName }, m.label),
+                React.createElement("div", { style: { ...DC.faceTag, color: tagColor(m.tag), borderColor: tagColor(m.tag) + "66" } }, m.tag),
+                React.createElement("div", { style: DC.faceWins }, GAME_WINS[ch.gid] || "")),
+            React.createElement("div", { style: DC.who },
+                name,
+                " \u00B7 chooses"),
+            React.createElement("div", { style: DC.pick }, m.label),
+            React.createElement("div", { style: DC.why },
+                "\u201C",
+                ch.reason,
+                "\u201D")));
+    }
+    const N = seq.length, spread = 42;
+    return (React.createElement("div", { style: DC.overlay },
+        React.createElement("div", { style: DC.kicker }, "your button"),
+        React.createElement("div", { style: DC.title }, "Deal the game"),
+        React.createElement("div", { style: DC.sub }, "You have the button \u2014 pick what everyone plays."),
+        React.createElement("div", { style: DC.ring },
+            React.createElement("div", { style: DC.ringFill })),
+        recent.length > 0 && (React.createElement("div", { style: DC.rail }, recent.map((g, i) => (React.createElement("button", { key: g, onClick: () => onPick(g), style: DC.chip },
+            React.createElement("span", { style: { color: "#c9a84c" } },
+                i === 0 ? "★" : "↺",
+                " "),
+            meta(g).label))))),
+        React.createElement("div", { style: DC.fanwrap },
+            React.createElement("div", { style: DC.fan }, seq.map((g, i) => {
+                const t = N > 1 ? i / (N - 1) : 0.5, ang = -spread / 2 + t * spread, x = (i - (N - 1) / 2) * 22, y = Math.abs(ang) * 1.4;
+                const m = meta(g);
+                return (React.createElement("button", { key: g, onClick: () => onPick(g), style: { ...DC.card, transform: `translateX(${x}px) translateY(${y}px) rotate(${ang}deg)`, zIndex: 10 + i } },
+                    React.createElement("div", { style: DC.cardName }, m.label),
+                    React.createElement("div", { style: { ...DC.cardTag, color: tagColor(m.tag), borderColor: tagColor(m.tag) + "55" } }, m.tag),
+                    React.createElement("div", { style: DC.cardWins }, GAME_WINS[g] || "")));
+            }))),
+        React.createElement("div", { style: DC.hint }, "Tap a game to deal it \u00B7 auto-deals your last pick if the clock runs out")));
+}
+const DC = {
+    overlay: { position: "fixed", inset: 0, zIndex: 70, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        textAlign: "center", padding: "0 16px 40px", fontFamily: "Georgia,serif",
+        background: "radial-gradient(ellipse at 50% 38%,rgba(16,23,37,0.72),rgba(9,13,20,0.95))", backdropFilter: "blur(3px)" },
+    kicker: { fontSize: 9, letterSpacing: 3, color: "#c9a84c", textTransform: "uppercase" },
+    title: { fontSize: 24, letterSpacing: 1, color: "#f0e4c4", margin: "4px 0 2px" },
+    sub: { fontSize: 11, color: "#8b95a1", marginBottom: 6 },
+    ring: { width: 30, height: 4, borderRadius: 3, background: "rgba(201,168,76,0.15)", overflow: "hidden", margin: "6px 0 2px" },
+    ringFill: { height: "100%", background: "#c9a84c", borderRadius: 3, animation: "dcClock 12s linear forwards" },
+    rail: { display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", margin: "12px 0 2px" },
+    chip: { fontSize: 10, fontFamily: "Georgia,serif", padding: "6px 11px", borderRadius: 20, cursor: "pointer",
+        border: "1px solid rgba(201,168,76,0.35)", background: "rgba(201,168,76,0.07)", color: "#e0d4ad" },
+    fanwrap: { position: "relative", height: 210, width: "100%", maxWidth: 400, marginTop: 6 },
+    fan: { position: "absolute", left: "50%", bottom: 0, width: 0, height: 0 },
+    card: { position: "absolute", left: -38, bottom: 0, width: 76, height: 116, borderRadius: 11, cursor: "pointer", transformOrigin: "50% 130%",
+        background: "linear-gradient(160deg,#fbf6e9,#efe4c9)", border: "1px solid rgba(120,90,30,0.5)", boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+        padding: "8px 7px", display: "flex", flexDirection: "column", alignItems: "flex-start", textAlign: "left", transition: "transform .2s" },
+    cardName: { fontSize: 10.5, fontWeight: "bold", color: "#241a08", lineHeight: 1.05, letterSpacing: 0.2 },
+    cardTag: { fontSize: 6, letterSpacing: 1, fontWeight: "bold", textTransform: "uppercase", padding: "2px 4px", borderRadius: 4,
+        borderStyle: "solid", borderWidth: 1, marginTop: 4 },
+    cardWins: { fontSize: 7, color: "#6a5a38", lineHeight: 1.2, marginTop: "auto", fontStyle: "italic" },
+    hint: { fontSize: 9, color: "#6f6048", marginTop: 8, letterSpacing: 0.3 },
+    face: { width: 120, height: 168, borderRadius: 14, background: "linear-gradient(160deg,#fbf6e9,#efe4c9)", border: "1px solid rgba(120,90,30,0.5)",
+        boxShadow: "0 14px 34px rgba(0,0,0,0.6)", padding: 14, textAlign: "left", marginBottom: 16, display: "flex", flexDirection: "column",
+        alignItems: "flex-start", animation: "dcFlip .5s cubic-bezier(.2,.9,.25,1)" },
+    faceName: { fontSize: 15, fontWeight: "bold", color: "#241a08", lineHeight: 1.1 },
+    faceTag: { fontSize: 7, letterSpacing: 1, fontWeight: "bold", textTransform: "uppercase", padding: "2px 5px", borderRadius: 4, borderStyle: "solid", borderWidth: 1, marginTop: 6 },
+    faceWins: { fontSize: 9, color: "#6a5a38", fontStyle: "italic", marginTop: "auto" },
+    who: { fontSize: 10, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c" },
+    pick: { fontSize: 24, color: "#f4ead0", margin: "8px 0 4px" },
+    why: { fontSize: 11, color: "#9c8f70", fontStyle: "italic", maxWidth: 240, lineHeight: 1.5 },
+};
 function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
     const L = LOBBY_S;
     const parked = tsLoad();
@@ -3358,7 +3464,20 @@ const LOBBY_S = {
 function dealHand(s0) {
     if (s0.tour?.on && s0.tour.result)
         return s0;
-    const s = s0.tour?.on ? refillTable(rotateTour(s0)) : s0;
+    return dealCards(s0.tour?.on ? refillTable(rotateTour(s0)) : s0);
+}
+function peekDealer(s) {
+    const nP = s.players.length;
+    if (s.dealerIdx == null)
+        return 0;
+    for (let step = 1; step <= nP; step++) {
+        const c = (s.dealerIdx + step) % nP;
+        if (s.players[c].chips > 0)
+            return c;
+    }
+    return s.dealerIdx;
+}
+function dealCards(s) {
     const deck = mkDeck();
     const nP = s.players.length;
     let dealer;
@@ -3565,8 +3684,8 @@ function App() {
             : [st.gid];
         const gid = seq[0] || st.gid;
         const bbDepth = Math.max(5, Math.round((cfg.startBB || 200) / 2));
-        const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250, bba: cfg.bba !== false,
-            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0,
+        const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250, bba: cfg.bba !== false, dc: cfg.mix === "dealers",
+            seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0, dcRecent: [],
             field: { total: cfg.runners, startStack: tourStartStack(gid, bbDepth) } };
         setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
         setView("play");
@@ -3669,7 +3788,39 @@ function App() {
     }, [st.seq, st.phase]);
     const switchGame = g => { if (!g.available)
         return; setSt(s => mkState(g.id, s)); };
-    const deal = () => setSt(dealHand);
+    const deal = () => setSt(s => {
+        if (s.tour?.on && s.tour?.dc && !s.tour.result) {
+            const prep = refillTable(rotateTour(s));
+            const dealer = s.dealerIdx == null ? 0 : peekDealer(prep);
+            if (dealer === 0)
+                return { ...prep, phase: "choosing", chooser: { dealer, hero: true } };
+            const gid = botChooseGame(prep, dealer);
+            return { ...prep, phase: "choosing", chooser: { dealer, hero: false, gid, reason: chooseReason(gid) } };
+        }
+        return dealHand(s);
+    });
+    const pickGame = gid => setSt(s => {
+        const recent = [gid, ...((s.tour?.dcRecent || []).filter(g => g !== gid))].slice(0, 4);
+        return dealCards({ ...s, gid, phase: "acting", chooser: null, tour: { ...s.tour, dcRecent: recent } });
+    });
+    useEffect(() => {
+        if (st.phase === "choosing" && st.chooser && !st.chooser.hero) {
+            const gid = st.chooser.gid;
+            const t = setTimeout(() => setSt(s => (s.phase === "choosing" ? dealCards({ ...s, gid, phase: "acting", chooser: null }) : s)), 1500);
+            return () => clearTimeout(t);
+        }
+    }, [st.phase, st.chooser]);
+    useEffect(() => {
+        if (st.phase === "choosing" && st.chooser?.hero) {
+            const t = setTimeout(() => setSt(s => {
+                if (s.phase !== "choosing")
+                    return s;
+                const gid = (s.tour?.dcRecent && s.tour.dcRecent[0]) || (s.tour?.seq && s.tour.seq[0]) || s.gid;
+                return dealCards({ ...s, gid, phase: "acting", chooser: null });
+            }), 12000);
+            return () => clearTimeout(t);
+        }
+    }, [st.phase, st.chooser]);
     const act = (action, amount = 0) => { logBet(action, amount); setSt(s => applyAction(s, action, amount)); };
     const flip = i => {
         if (st.phase !== "drawing")
@@ -3876,6 +4027,8 @@ function App() {
           0% { opacity:0; letter-spacing: 10px; }
           100% { opacity:1; letter-spacing: 5px; }
         }
+        @keyframes dcClock { from { width:100%; } to { width:0%; } }
+        @keyframes dcFlip { from { transform: rotateY(90deg) scale(0.8); opacity:0; } to { transform: rotateY(0) scale(1); opacity:1; } }
       `),
         React.createElement("div", { style: S.brandRow },
             React.createElement("div", { style: S.fmtQuick },
@@ -3918,6 +4071,7 @@ function App() {
                 setSt(q);
                 setView("play");
             } }, curGid: st.gid })),
+        st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame }),
         st.tour?.result && (() => {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
