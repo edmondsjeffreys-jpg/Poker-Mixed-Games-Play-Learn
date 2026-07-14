@@ -1583,6 +1583,10 @@ function coachDrawBet(st, me, callAmt) {
             return { tone: "good", text: `Premium start${eqTxt} — ${M.txt}. Raise to build the pot and take the lead.` };
         if (eq >= 0.44)
             return { tone: "good", text: `Strong holding or smooth draw${eqTxt}. Call, and raise in position to thin the field.` };
+        if (M.made && M.top <= 11 && eq >= 0.30)
+            return facing
+                ? { tone: "ok", text: `A rough made ${M.txt}, but convertible${eqTxt} — break it and draw at your smooth base. ${oddsTxt} pot odds make this an easy call; reassess if it's raised behind you.` }
+                : { tone: "ok", text: `A convertible ${M.txt}${eqTxt} — break it and draw at your smooth base. Fine to continue; stay cautious out of position.` };
         if (eq >= 0.32)
             return facing
                 ? { tone: "ok", text: `Playable but rough${eqTxt}. One bet is fine; let it go if it's raised behind you.` }
@@ -3147,7 +3151,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03af";
+const APP_VERSION = "2026.07.03ag";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3713,7 +3717,7 @@ function App() {
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250, bba: cfg.bba !== false, dc: cfg.mix === "dealers",
             seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0, dcRecent: [], dcPicker: 0,
             field: { total: cfg.runners, startStack: tourStartStack(gid, bbDepth) } };
-        setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: (s.players || []).map(p => ({ ...p, name: undefined })) }));
+        setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: [] }));
         setView("play");
     };
     useEffect(() => {
