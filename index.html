@@ -790,7 +790,7 @@ function cpuDecide(st, idx) {
     let keepers, good, ok;
     if (st.gid === "badugi") {
         keepers = badugiKeepIndices(hand).size;
-        good = ev && ev.size === 4 && ev.vs[0] <= 8;
+        good = ev && ev.size === 4 && ev.vs[0] <= 10;
         ok = ev && (ev.size === 4 || (ev.size === 3 && ev.vs[0] <= 6));
     }
     else {
@@ -845,11 +845,14 @@ function cpuDecide(st, idx) {
             return { action: "bet", amount: pl.betSt + size() };
         return { action: "check", amount: 0 };
     }
+    const patLead = patOpp && st.currentBet > 0 && st.players.some(p => p.id !== idx && live(p) && p.drewLast === 0 && p.betSt >= st.currentBet);
     if (good)
+        return (!isSlow && (isAggr || Math.random() < 0.5))
+            ? { action: "raise", amount: pl.betSt + Math.max(0, call) + size() }
+            : { action: "call", amount: 0 };
+    if (ok && !patLead && call <= callTolPD)
         return { action: "call", amount: 0 };
-    if (ok && !patOpp && call <= callTolPD)
-        return { action: "call", amount: 0 };
-    if ((isBluff || isCry) && !patOpp && call <= callTolPD * 0.8)
+    if ((isBluff || isCry) && !patLead && call <= callTolPD * 0.8)
         return { action: "call", amount: 0 };
     if (isNL && (ok || keepers >= minKeep) && call <= callTolPD * 1.25 && Math.random() < 0.38)
         return { action: "call", amount: 0 };
@@ -3184,7 +3187,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ai";
+const APP_VERSION = "2026.07.03ak";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -4351,7 +4354,7 @@ function App() {
         React.createElement("div", { style: S.brandRow },
             React.createElement("div", { style: S.fmtQuick },
                 React.createElement("button", { onClick: () => { if (st.format !== "cash") {
-                        setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null }));
+                        setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] }));
                         setView("play");
                     } }, style: { ...S.fmtQuickBtn, ...(st.format === "cash" ? S.fmtQuickOn : {}) } }, "CASH"),
                 React.createElement("button", { onClick: () => { if (view !== "lobby")
@@ -4385,7 +4388,7 @@ function App() {
                         g.tag && React.createElement("span", { style: { ...S.gTag, ...(g.id === st.gid ? { color: "#c9a84c" } : {}) } }, g.tag),
                         React.createElement("span", { style: S.gName }, g.label),
                         !g.available && React.createElement("span", { style: S.gSoon }, "\uFF0B")))))))))))),
-        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, scen: scenCfg, setScen: setScenCfg, onScenario: startScenario, onCash: () => setView("play"), onResume: () => { const q = tsLoad(); if (q) {
+        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, scen: scenCfg, setScen: setScenCfg, onScenario: startScenario, onCash: () => { setSt(s => s.format !== "cash" ? mkState(s.gid, { ...s, format: "cash", tour: null, players: [] }) : s); setView("play"); }, onResume: () => { const q = tsLoad(); if (q) {
                 setSt(q);
                 setView("play");
             } }, curGid: st.gid })),
@@ -4448,7 +4451,7 @@ function App() {
                                     : React.createElement(React.Fragment, null, " \u2014 short of the spot's value this run.")))),
                     scen && React.createElement("button", { style: S.resultBtn, onClick: () => startScenario(scen.cfg) }, "RUN IT BACK \u2014 SAME SCENARIO"),
                     React.createElement("button", { style: scen ? S.resultBtn2 : S.resultBtn, onClick: () => { setSt(s => ({ ...s, tour: null })); setView("lobby"); } }, scen ? "New scenario" : "NEW TOURNAMENT"),
-                    React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null })); setView("play"); } }, "Back to cash game"))));
+                    React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setView("play"); } }, "Back to cash game"))));
         })(),
         st.tour?.on && view === "play" && (() => {
             const T = st.tour, F = T.field, sb = tourSb(T.level || 0);
@@ -4460,9 +4463,11 @@ function App() {
                 const model = fieldLeft(F.total, T.level || 0);
                 const fll = fieldLeftLive(F, T.level || 0, T.busted);
                 const aliveN = st.players.filter(p => p.chips > 0).length;
-                const left = (model <= seatsN || fll <= seatsN) ? aliveN : Math.max(seatsN + 1, fll);
+                const single = model <= seatsN || fll <= seatsN;
+                const left = single ? aliveN : Math.max(seatsN + 1, fll);
                 const avg = Math.round(F.total * F.startStack / Math.max(1, left));
-                const rank = fieldRank(me.chips, avg, left);
+                const rank = single ? 1 + st.players.filter(p => p.chips > me.chips).length
+                    : fieldRank(me.chips, avg, left);
                 const paid = paidSpots(F.total);
                 const bb = STK(st).bblind || STK(st).bbet || 1;
                 const toMoney = left - paid;
@@ -4584,11 +4589,7 @@ function App() {
                 st.format === "cash" && (React.createElement("div", { style: { ...S.segRow, marginTop: 8 } }, CASH_STAKES.map((s, i) => (React.createElement("button", { key: i, onClick: () => setStake(i), style: { ...S.segBtn, ...(st.stakeIdx === i ? S.segBtnOn : {}) } },
                     React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
                 st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
-                React.createElement("button", { onClick: () => { if (!window.confirm("Reset everything? Clears the saved tournament, hand history, and all settings."))
-                        return; try {
-                        localStorage.clear();
-                    }
-                    catch { } window.location.reload(); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET EVERYTHING"),
+                React.createElement("button", { onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setShowSettings(false); setView("play"); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET TABLE \u2014 fresh stacks"),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#c9a84c", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
