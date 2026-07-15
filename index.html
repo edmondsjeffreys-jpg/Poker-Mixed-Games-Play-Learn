@@ -3187,7 +3187,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03al";
+const APP_VERSION = "2026.07.03am";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3387,15 +3387,15 @@ const DC = {
         border: "none", cursor: "pointer", textDecoration: "underline" },
 };
 const SCEN_STAGES = [
-    { n: "Early", u: "full field", avgBB: 250, left: (F, P) => Math.round(F * 0.9) },
-    { n: "Midway", u: "half gone", avgBB: 70, left: (F, P) => Math.round(F * 0.5) },
-    { n: "Near the money", u: "tension", avgBB: 45, left: (F, P) => Math.round(P * 1.15) + 1 },
-    { n: "Stone bubble", u: "one out", avgBB: 36, left: (F, P) => P + 1 },
-    { n: "Three tables", u: "24 left", avgBB: 30, left: () => 24 },
-    { n: "Two tables", u: "16 left", avgBB: 26, left: () => 16 },
-    { n: "Final table", u: "8 left", avgBB: 24, left: () => 8 },
-    { n: "Short-handed", u: "5 left", avgBB: 26, left: () => 5 },
-    { n: "Heads-up", u: "for it all", avgBB: 40, left: () => 2 },
+    { n: "Early", u: "full field", avgBB: 250, skill: 0, left: (F, P) => Math.round(F * 0.9) },
+    { n: "Midway", u: "half gone", avgBB: 70, skill: 0.15, left: (F, P) => Math.round(F * 0.5) },
+    { n: "Near the money", u: "tension", avgBB: 45, skill: 0.3, left: (F, P) => Math.round(P * 1.15) + 1 },
+    { n: "Stone bubble", u: "one out", avgBB: 36, skill: 0.4, left: (F, P) => P + 1 },
+    { n: "Three tables", u: "24 left", avgBB: 30, skill: 0.5, left: () => 24 },
+    { n: "Two tables", u: "16 left", avgBB: 26, skill: 0.6, left: () => 16 },
+    { n: "Final table", u: "8 left", avgBB: 24, skill: 0.7, left: () => 8 },
+    { n: "Short-handed", u: "5 left", avgBB: 26, skill: 0.75, left: () => 5 },
+    { n: "Heads-up", u: "for it all", avgBB: 40, skill: 0.85, left: () => 2 },
 ];
 const SCEN_STACKS = [
     { n: "Chip leader", u: "1st", m: 2.6 },
@@ -3468,7 +3468,11 @@ function buildScenarioState(baseSt, cfg) {
     if (pv.inMoney)
         icm0 = Math.max(icm0, pv.mincash);
     const scen = { on: true, icm0, mincash: pv.mincash, stageN: pv.SC.n, stackN: pv.SK.n, cfg: { ...cfg } };
-    return { ...s, players, tour: { ...tour, scen } };
+    const skill = pv.SC.skill || 0;
+    const bt = { ...(s.botTight || {}) };
+    for (const k of Object.keys(bt))
+        bt[k] = Math.round(bt[k] + (85 - bt[k]) * skill * 0.85);
+    return { ...s, players, botTight: bt, tour: { ...tour, scen } };
 }
 function scenGrade(cash, icm0, mincash) {
     if (!cash || cash <= 0)
@@ -3585,7 +3589,8 @@ function ScenarioPanel({ cfg, setCfg, onStart, curGid }) {
                                 pv.toMoney.toLocaleString(),
                                 " eliminations to the money (",
                                 pv.paid.toLocaleString(),
-                                " paid).")),
+                                " paid)."),
+                    (pv.SC.skill || 0) >= 0.5 && React.createElement(React.Fragment, null, " These survivors are battle-tested \u2014 expect sharper opponents than the early levels.")),
                 React.createElement("div", { style: SCN.stats },
                     React.createElement("div", { style: SCN.stat },
                         React.createElement("div", { style: SCN.statV },
@@ -4357,9 +4362,11 @@ function App() {
         }
         @keyframes dcClock { from { width:100%; } to { width:0%; } }
         @keyframes dcFlip { from { transform: rotateY(90deg) scale(0.8); opacity:0; } to { transform: rotateY(0) scale(1); opacity:1; } }
-        button { -webkit-tap-highlight-color: transparent; }
-        button:focus { outline: none; }
-        button:focus-visible { outline: 2px solid rgba(201,168,76,0.55); outline-offset: 1px; }
+        * { -webkit-tap-highlight-color: transparent; }
+        button:focus, button:focus-visible { outline: none; }
+        @media (hover: hover) and (pointer: fine) {
+          button:focus-visible { outline: 2px solid rgba(201,168,76,0.55); outline-offset: 1px; }
+        }
       `),
         React.createElement("div", { style: S.brandRow },
             React.createElement("div", { style: S.fmtQuick },
