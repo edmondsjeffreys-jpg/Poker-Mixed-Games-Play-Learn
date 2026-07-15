@@ -143,7 +143,7 @@ function botChooseGame(s, seatId) {
         return s.gid;
     const pr = PROF[seatId] || { aggr: 0.5 };
     const aggr = pr.aggr ?? 0.5;
-    const scored = seq.map(g => ({ g, w: (BET_MODE(g) !== "fl" ? aggr : (1 - aggr) * 0.9) + Math.random() * 0.5 }))
+    const scored = seq.map(g => ({ g, w: ((BET_MODE(g) !== "fl" ? aggr : (1 - aggr) * 0.9) + Math.random() * 0.5) * (g === "lhe" ? 0.28 : 1) }))
         .sort((a, b) => b.w - a.w);
     return scored[0].g;
 }
@@ -217,10 +217,10 @@ function refillTable(s) {
     const t = s.tour, F = t.field;
     if (!t || !t.on || !F)
         return s;
-    const modelLeft = fieldLeft(F.total, t.level || 0);
-    if (modelLeft <= s.players.length)
+    const liveLeft = fieldLeftLive(F, t.level || 0, t.busted);
+    if (liveLeft <= s.players.length)
         return s;
-    const avg = Math.round(F.total * F.startStack / modelLeft);
+    const avg = Math.round(F.total * F.startStack / liveLeft);
     const seats = s.players.length;
     const cap = Math.round(avg * seats * 1.15);
     let running = s.players.reduce((a, p) => a + Math.max(0, p.chips), 0);
@@ -838,17 +838,18 @@ function cpuDecide(st, idx) {
             return { action: "call", amount: 0 };
         return { action: "fold", amount: 0 };
     }
+    const patOpp = (st.drawN || 0) > 0 && st.players.some(p => p.id !== idx && live(p) && p.drewLast === 0);
     if (call <= 0) {
         const patSnow = isNL && pl.drewLast === 0 && !good;
-        if ((good && !isSlow) || (ok && isAggr) || isBluff || (patSnow && !isSlow && Math.random() < 0.72))
+        if ((good && !isSlow) || (ok && isAggr && !patOpp) || (isBluff && !patOpp) || (patSnow && !isSlow && Math.random() < 0.72))
             return { action: "bet", amount: pl.betSt + size() };
         return { action: "check", amount: 0 };
     }
     if (good)
         return { action: "call", amount: 0 };
-    if (ok && call <= callTolPD)
+    if (ok && !patOpp && call <= callTolPD)
         return { action: "call", amount: 0 };
-    if ((isBluff || isCry) && call <= callTolPD * 0.8)
+    if ((isBluff || isCry) && !patOpp && call <= callTolPD * 0.8)
         return { action: "call", amount: 0 };
     if (isNL && (ok || keepers >= minKeep) && call <= callTolPD * 1.25 && Math.random() < 0.38)
         return { action: "call", amount: 0 };
@@ -896,8 +897,8 @@ function flopStrength(st, pl) {
     const gid = st.gid, board = st.board || [];
     const hole = pl.hand;
     if (board.length === 0) {
-        if (gid === "lhe" || gid === "nlhe") {
-            const [a, b] = [...hole].sort((x, y) => y.v - x.v);
+        const hePre = (x, y) => {
+            const [a, b] = x.v >= y.v ? [x, y] : [y, x];
             const pair = a.v === b.v;
             const suited = a.s === b.s;
             const gap = a.v - b.v;
@@ -916,6 +917,15 @@ function flopStrength(st, pl) {
                     s += 0.05;
             }
             return Math.max(0, Math.min(1, s));
+        };
+        if (gid === "lhe" || gid === "nlhe")
+            return hePre(hole[0], hole[1]);
+        if (IS_PINEAPPLE(gid)) {
+            let best = 0;
+            for (let i = 0; i < hole.length; i++)
+                for (let j = i + 1; j < hole.length; j++)
+                    best = Math.max(best, hePre(hole[i], hole[j]));
+            return Math.min(1, best + 0.04);
         }
         const vs = hole.map(c => c.v);
         const suitCounts = {};
@@ -1015,7 +1025,7 @@ function cpuDecideFlop(st, idx) {
     const mode = BET_MODE(st.gid);
     const pre = (st.board || []).length === 0;
     const str = flopStrength(st, pl);
-    const pfC = st.gid === "bigo" ? 0.64 : st.gid === "omaha8" ? 0.52 : IS_OMAHA(st.gid) ? 0.44 : 0.66;
+    const pfC = st.gid === "bigo" ? 0.64 : st.gid === "omaha8" ? 0.52 : IS_OMAHA(st.gid) ? 0.44 : IS_PINEAPPLE(st.gid) ? 0.72 : 0.66;
     const openThresh = pre ? pfC + 0.06 - L * 0.24 : 0.40 - L * 0.18;
     const callThresh = pre ? pfC - L * 0.26 : 0.30 - L * 0.16;
     const raiseThresh = pre ? Math.max(0.68, pfC + 0.14) - L * 0.12 : 0.74 - L * 0.10;
@@ -1051,9 +1061,13 @@ function cpuDecideFlop(st, idx) {
         callT += icm.tighten;
         raiseT += icm.tighten * 0.5;
     }
+    const potOdds = call / (st.pot + call);
+    if (mode !== "fl")
+        callT += Math.max(0, potOdds - 0.22) * 0.9;
+    if (!pre && (st.streetN || 0) >= 2)
+        callT += 0.05 * Math.min(2, st.streetN - 1);
     if (str >= raiseT && !slow)
         return { action: "raise", amount: sizedTotal(true) };
-    const potOdds = call / (st.pot + call);
     const mayBluff = bluff && !reraised && liveOpp <= 2 && !(icm && icm.tighten > 0);
     const cheapCall = str >= callT - 0.08 && potOdds < 0.2 && liveOpp <= 2;
     if (str >= callT || cheapCall || mayBluff)
@@ -1270,6 +1284,11 @@ function plan27(hand, drawsLeft) {
         if (rk[3] - rk[0] === 3)
             return mk(keep, "draw 1", `Four to a seven, but they run consecutively (${keepLabel(hand, keep)}) — straight-prone, so essentially only a deuce makes your seven. Drawable, but don't overrate it as premium.`, "ok");
         return mk(keep, "draw 1", `Keep four to a seven (${keepLabel(hand, keep)}) — the premium one-card draw.`, "good");
+    }
+    const eightsAll = uniq.filter(x => x.v <= 8);
+    if (sevens.length === 3 && eightsAll.length >= 4) {
+        const keep = eightsAll.slice(0, 4).map(x => x.i);
+        return mk(keep, "draw 1", `Keep four to an eight (${keepLabel(hand, keep)}) — the premium one-card draw. Drawing two at the bare seven is a big equity give-up.`, "good");
     }
     if (sevens.length === 3) {
         if (!last) {
@@ -1617,10 +1636,14 @@ function coachDrawBet(st, me, callAmt) {
         const strong = M.made && M.top <= goodTop;
         const held = M.made ? M.txt : `${ev && ev.desc ? ev.desc : "a weak hand"} at showdown`;
         if (facing) {
-            if (strong || (e != null && eq >= 0.6))
+            if (strong)
                 return { tone: "good", text: `You hold ${held}${eqTxt} — this is the last action, so raise for value and get paid by worse.` };
-            if (patBetting && !strong)
-                return { tone: "warn", text: `A player stood pat and is betting${eqTxt} — that reps a made hand. With ${held} and no draw left, fold.` };
+            if (patBetting)
+                return M.made && M.top <= 9
+                    ? { tone: "ok", text: `A pat player is betting, but ${held} can look one pat hand up at ${oddsTxt} — call; never raise into shown strength.` }
+                    : { tone: "warn", text: `A player stood pat and is betting${eqTxt} — that reps a made hand. With ${held} and no draw left, fold.` };
+            if (M.made && M.top <= 11)
+                return { tone: "ok", text: `${held} is a bluff-catcher against a bet with no draws left — call at ${oddsTxt}. Raising only gets called by better.` };
             if (e != null && eq >= 0.45)
                 return { tone: "ok", text: `Marginal at showdown${eqTxt} — call to bluff-catch at ${oddsTxt}. No draw left, so don't raise a hand this thin.` };
             return { tone: "warn", text: `Weak at showdown${eqTxt} — the draws are done, there's nothing left to improve to. Fold.` };
@@ -1672,10 +1695,12 @@ function coachDrawRec(st, me, callAmt) {
     if (dl === 0) {
         const strong = M.made && M.top <= goodTop;
         if (facing) {
-            if (strong || (eq != null && eq >= 0.6))
+            if (strong)
                 return "raise";
-            if (patBetting && !strong)
-                return "fold";
+            if (patBetting)
+                return (M.made && M.top <= 9) ? "call" : "fold";
+            if (M.made && M.top <= 11)
+                return "call";
             if (eq != null && eq >= 0.45)
                 return "call";
             return "fold";
@@ -2448,7 +2473,12 @@ function execDraw(st, playerDiscards, playerFolds = false) {
         }
         if (p.folded)
             return { ...p };
-        const disc = cpuDrawCards(p.hand, PROF[p.id], st.gid, st.gid === "veronica" ? (st.board || []) : []);
+        let disc = cpuDrawCards(p.hand, PROF[p.id], st.gid, st.gid === "veronica" ? (st.board || []) : []);
+        if (disc.length > 1 && (st.maxDraws || 1) > 1 && (st.drawN || 0) === st.maxDraws - 1
+            && !IS_SPLITDRAW(st.gid) && !IS_DRAMAHA(st.gid)) {
+            const bad = i => st.gid === "badugi" ? BV(p.hand[i].v) : p.hand[i].v;
+            disc = [disc.reduce((w, i) => bad(i) > bad(w) ? i : w, disc[0])];
+        }
         const hand = p.hand.map((c, i) => disc.includes(i) ? (muck.push(c), draw1()) : c);
         return { ...p, hand, betSt: 0, drewLast: disc.length,
             lastAct: { text: disc.length === 0 ? "Stands Pat" : `Drew ${disc.length}`, color: "#94a3b8" } };
@@ -3005,7 +3035,10 @@ function settle(st, players, potWon, result, msg, winnerIds = []) {
         const alive = players.filter(p => p.chips > 0).length;
         const F = tour.field || { total: 8 };
         if (players[0].chips <= 0) {
-            const place = F.total <= 9 ? alive + 1 : fieldLeftLive(F, tour.level || 0, tour.busted);
+            const endgame = F.total <= 9
+                || fieldLeft(F.total, tour.level || 0) <= players.length
+                || fieldLeftLive(F, tour.level || 0, tour.busted) <= players.length;
+            const place = endgame ? alive + 1 : fieldLeftLive(F, tour.level || 0, tour.busted);
             tour = { ...tour, result: { type: "bust", place, total: F.total } };
         }
         else if (alive === 1) {
@@ -3151,7 +3184,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ag";
+const APP_VERSION = "2026.07.03ai";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3350,9 +3383,237 @@ const DC = {
     again: { marginTop: 12, fontSize: 10, color: "#8b95a1", letterSpacing: 1, textTransform: "uppercase", background: "none",
         border: "none", cursor: "pointer", textDecoration: "underline" },
 };
-function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
+const SCEN_STAGES = [
+    { n: "Early", u: "full field", avgBB: 250, left: (F, P) => Math.round(F * 0.9) },
+    { n: "Midway", u: "half gone", avgBB: 70, left: (F, P) => Math.round(F * 0.5) },
+    { n: "Near the money", u: "tension", avgBB: 45, left: (F, P) => Math.round(P * 1.15) + 1 },
+    { n: "Stone bubble", u: "one out", avgBB: 36, left: (F, P) => P + 1 },
+    { n: "Three tables", u: "24 left", avgBB: 30, left: () => 24 },
+    { n: "Two tables", u: "16 left", avgBB: 26, left: () => 16 },
+    { n: "Final table", u: "8 left", avgBB: 24, left: () => 8 },
+    { n: "Short-handed", u: "5 left", avgBB: 26, left: () => 5 },
+    { n: "Heads-up", u: "for it all", avgBB: 40, left: () => 2 },
+];
+const SCEN_STACKS = [
+    { n: "Chip leader", u: "1st", m: 2.6 },
+    { n: "Top 10%", u: "big", m: 1.8 },
+    { n: "Above avg", u: "healthy", m: 1.3 },
+    { n: "Average", u: "the pack", m: 1.0 },
+    { n: "Bottom ¼", u: "grinding", m: 0.55 },
+    { n: "Short", u: "10bb", bb: 10 },
+    { n: "Micro", u: "4bb", bb: 4 },
+];
+const SCEN_FIELDS = [45, 180, 1000];
+function scenPreview(cfg, gid) {
+    const F = cfg.field || 45, paid = paidSpots(F);
+    const SC = SCEN_STAGES[cfg.stage] || SCEN_STAGES[0];
+    const SK = SCEN_STACKS[cfg.stack] || SCEN_STACKS[3];
+    const left = Math.max(2, Math.min(F, Math.round(SC.left(F, paid))));
+    let level = 0;
+    for (let L2 = 0; L2 < 45; L2++) {
+        if (fieldLeft(F, L2) >= left)
+            level = L2;
+        else
+            break;
+    }
+    level = Math.min(level, TOUR_SB.length - 1);
+    const buyIn = TOUR_BUYIN[cfg.stakes || "high"] || 250;
+    const bb = 2 * tourSb(level);
+    const nominalAvgBB = Math.round(F * tourStartStack(gid, 100) / left / bb);
+    const avgBB = Math.max(2, Math.min(nominalAvgBB, SC.avgBB || 999));
+    const startStack = Math.max(1, Math.round(avgBB * bb * left / F));
+    const avgChips = Math.max(bb * 4, Math.round(F * startStack / left));
+    const heroBB = SK.bb ? SK.bb : Math.max(1, Math.round(avgBB * SK.m));
+    const rank = SK.m >= 2.6 ? 1
+        : SK.m >= 1.8 ? Math.max(1, Math.round(left * 0.07))
+            : SK.m >= 1.3 ? Math.max(1, Math.round(left * 0.3))
+                : SK.m === 1 ? Math.max(1, Math.round(left * 0.5))
+                    : SK.bb === 4 ? left
+                        : Math.min(left, Math.round(left * 0.8));
+    const first = payoutFor(1, F, buyIn), mincash = payoutFor(paid, F, buyIn) || Math.round(buyIn * 1.8);
+    return { F, paid, left, level, buyIn, startStack, avgChips, avgBB, heroBB, rank, first, mincash,
+        toMoney: left - paid, inMoney: left <= paid, SC, SK };
+}
+function buildScenarioState(baseSt, cfg) {
+    const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
+    const seq = (preset && preset.games)
+        ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
+        : [baseSt.gid];
+    const gid = seq[0] || baseSt.gid;
+    const pv = scenPreview(cfg, gid);
+    const levelSec = 35 * 60;
+    const tour = { on: true, mix: cfg.mix, runners: pv.F, stakes: cfg.stakes || "high", buyIn: pv.buyIn, bba: true,
+        dc: cfg.mix === "dealers", seq: seq.length ? seq : [gid], mixIdx: 0,
+        level: pv.level, clock: pv.level * levelSec + 60, levelSec, hands: pv.level * 16,
+        busted: Math.max(0, pv.F - pv.left), dcRecent: [], dcPicker: 0,
+        field: { total: pv.F, startStack: pv.startStack } };
+    let s = mkState(gid, { ...baseSt, format: "tourney", bbDepth: 100, tour, players: [] });
+    const bbv = STK(s).bblind || STK(s).bbet || 1;
+    const heroChips = Math.max(bbv, pv.SK.bb ? Math.round(pv.SK.bb * bbv) : Math.round(pv.avgChips * pv.SK.m));
+    const aliveSeats = Math.min(s.players.length, pv.left);
+    const players = s.players.map((p, i) => {
+        if (p.id === 0)
+            return { ...p, chips: heroChips };
+        if (i >= aliveSeats)
+            return { ...p, chips: 0 };
+        const spread = 0.55 + ((i * 37) % 91) / 100;
+        return { ...p, chips: Math.max(bbv * 2, Math.round(pv.avgChips * spread)) };
+    });
+    const pool = pv.F * pv.buyIn;
+    const share = heroChips / Math.max(1, pv.avgChips * pv.left);
+    let icm0 = Math.round(pool * Math.min(0.26, Math.max(0.004, share * 0.8)));
+    if (pv.inMoney)
+        icm0 = Math.max(icm0, pv.mincash);
+    const scen = { on: true, icm0, mincash: pv.mincash, stageN: pv.SC.n, stackN: pv.SK.n, cfg: { ...cfg } };
+    return { ...s, players, tour: { ...tour, scen } };
+}
+function scenGrade(cash, icm0, mincash) {
+    if (!cash || cash <= 0)
+        return icm0 < mincash * 0.5 ? "C" : icm0 < mincash ? "D" : "F";
+    const r = cash / Math.max(1, icm0);
+    return r >= 2.2 ? "A+" : r >= 1.4 ? "A" : r >= 0.95 ? "A−" : r >= 0.6 ? "B" : "C+";
+}
+const SCN = {
+    surprise: { display: "block", width: "100%", maxWidth: 410, margin: "16px auto 0", padding: 12, borderRadius: 11, cursor: "pointer",
+        fontFamily: "Georgia,serif", fontSize: 13, letterSpacing: 2, fontWeight: "bold", color: "#e8dcb8",
+        background: "linear-gradient(135deg,rgba(138,106,176,0.30),rgba(138,106,176,0.12))", border: "1px solid rgba(160,130,200,0.55)" },
+    ov: { position: "fixed", inset: 0, zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 18px",
+        background: "radial-gradient(ellipse at 50% 38%,rgba(16,23,37,0.78),rgba(9,13,20,0.96))", backdropFilter: "blur(3px)" },
+    card: { width: "100%", maxWidth: 340, borderRadius: 16, padding: "20px 20px 18px", textAlign: "left",
+        background: "linear-gradient(180deg,rgba(30,24,10,0.94),rgba(16,13,6,0.96))", border: "1px solid rgba(201,168,76,0.5)",
+        boxShadow: "0 18px 44px rgba(0,0,0,0.6)" },
+    kick: { fontSize: 8.5, letterSpacing: 3, color: "#c9a84c", textTransform: "uppercase" },
+    big: { fontSize: 21, color: "#f0e4c4", margin: "6px 0 10px", lineHeight: 1.15, fontFamily: "Georgia,serif" },
+    line: { fontSize: 11.5, color: "#cfc3a0", lineHeight: 1.65 },
+    stats: { display: "flex", gap: 8, margin: "12px 0 4px" },
+    stat: { flex: 1, textAlign: "center", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 9, padding: "7px 2px", background: "rgba(201,168,76,0.05)" },
+    statV: { fontSize: 15, color: "#e3c87a", fontFamily: "monospace", fontWeight: "bold" },
+    statK: { fontSize: 7, letterSpacing: 1.4, color: "#9d8659", textTransform: "uppercase", marginTop: 2 },
+    warn: { marginTop: 10, fontSize: 10, color: "#fbbf24", letterSpacing: 0.5 },
+    go: { display: "block", width: "100%", marginTop: 14, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e", border: "none",
+        borderRadius: 11, padding: 13, fontSize: 14, fontWeight: "bold", letterSpacing: 2, fontFamily: "Georgia,serif", cursor: "pointer" },
+    ghost: { display: "block", width: "100%", marginTop: 9, background: "none", border: "none", color: "#8b95a1", fontSize: 10, letterSpacing: 1,
+        textTransform: "uppercase", textDecoration: "underline", cursor: "pointer", fontFamily: "Georgia,serif" },
+};
+function ScenarioPanel({ cfg, setCfg, onStart, curGid }) {
     const L = LOBBY_S;
+    const [brief, setBrief] = useState(false);
+    const mixes = MIX_PRESETS.filter(m => m.id !== "custom");
+    const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
+    const gid = (preset && preset.games && preset.games[0]) || curGid;
+    const pv = cfg.mix ? scenPreview(cfg, gid) : null;
+    const SC = SCEN_STAGES[cfg.stage], SK = SCEN_STACKS[cfg.stack];
+    const surprise = () => setCfg(c => ({ ...c,
+        stage: (Math.random() * SCEN_STAGES.length) | 0, stack: (Math.random() * SCEN_STACKS.length) | 0,
+        field: SCEN_FIELDS[(Math.random() * SCEN_FIELDS.length) | 0] }));
+    return (React.createElement(React.Fragment, null,
+        React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "GAME \u2014 always your pick, never randomized"),
+            React.createElement("div", { style: L.grid }, mixes.map(m => (React.createElement("button", { key: m.id, onClick: () => setCfg(c => ({ ...c, mix: m.id })), style: { ...L.tile, ...(cfg.mix === m.id ? L.tileOn : {}) } },
+                React.createElement("span", { style: { ...L.tileN, ...(cfg.mix === m.id ? { color: "#f4ead0" } : {}) } }, m.name),
+                React.createElement("span", { style: { ...L.tileD, ...(cfg.mix === m.id ? { color: "#c9b98c" } : {}) } }, m.desc)))))),
+        React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "STAGE OF THE TOURNAMENT"),
+            React.createElement("div", { style: L.pills }, SCEN_STAGES.map((x, i) => (React.createElement("button", { key: x.n, onClick: () => setCfg(c => ({ ...c, stage: i })), style: { ...L.pill, flex: "1 1 30%", ...(cfg.stage === i ? L.pillOn : {}) } },
+                x.n,
+                React.createElement("span", { style: L.pillU }, x.u)))))),
+        React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "YOUR STACK"),
+            React.createElement("div", { style: L.pills }, SCEN_STACKS.map((x, i) => (React.createElement("button", { key: x.n, onClick: () => setCfg(c => ({ ...c, stack: i })), style: { ...L.pill, flex: "1 1 22%", ...(cfg.stack === i ? L.pillOn : {}) } },
+                x.n,
+                React.createElement("span", { style: L.pillU }, x.u)))))),
+        React.createElement("div", { style: L.sec },
+            React.createElement("div", { style: L.lbl }, "FIELD"),
+            React.createElement("div", { style: L.pills }, SCEN_FIELDS.map(f => (React.createElement("button", { key: f, onClick: () => setCfg(c => ({ ...c, field: f })), style: { ...L.pill, ...(cfg.field === f ? L.pillOn : {}) } },
+                f.toLocaleString(),
+                React.createElement("span", { style: L.pillU }, "runners")))))),
+        React.createElement("button", { onClick: surprise, style: SCN.surprise }, "\uD83C\uDFB2 SURPRISE ME \u2014 random stage, stack & field"),
+        React.createElement("div", { style: L.summary }, cfg.mix && pv
+            ? React.createElement(React.Fragment, null,
+                React.createElement("b", null, preset.name),
+                " \u00B7 ",
+                cfg.field.toLocaleString(),
+                " runners \u00B7 ",
+                React.createElement("b", null, SC.n),
+                " (",
+                pv.left.toLocaleString(),
+                " left) \u00B7 you ",
+                React.createElement("b", null,
+                    pv.heroBB,
+                    "bb"),
+                " vs avg ",
+                pv.avgBB,
+                "bb")
+            : React.createElement(React.Fragment, null,
+                "Pick a ",
+                React.createElement("b", null, "game"),
+                " to arm the scenario \u2014 everything else can be randomized, the game never is.")),
+        React.createElement("button", { style: { ...L.start, ...(cfg.mix ? {} : { opacity: 0.35, boxShadow: "none", cursor: "default" }) }, disabled: !cfg.mix, onClick: () => setBrief(true) }, "DEAL ME IN"),
+        React.createElement("div", { style: L.note }, "Every scenario plays to completion \u2014 down to your bust or the win. The debrief grades your finish against what the starting spot was worth."),
+        brief && pv && (React.createElement("div", { style: SCN.ov },
+            React.createElement("div", { style: SCN.card },
+                React.createElement("div", { style: SCN.kick }, "THE SITUATION"),
+                React.createElement("div", { style: SCN.big },
+                    SC.n,
+                    " \u2014 ",
+                    preset.name),
+                React.createElement("div", { style: SCN.line },
+                    pv.left.toLocaleString(),
+                    " of ",
+                    cfg.field.toLocaleString(),
+                    " remain. You're roughly ",
+                    React.createElement("b", { style: { color: "#e8d9a8" } }, ordinal(pv.rank)),
+                    " in chips with ",
+                    React.createElement("b", { style: { color: "#e8d9a8" } },
+                        pv.heroBB,
+                        "bb"),
+                    "; the field averages ",
+                    pv.avgBB,
+                    "bb. ",
+                    pv.inMoney
+                        ? React.createElement(React.Fragment, null,
+                            "You're ",
+                            React.createElement("b", { style: { color: "#86efac" } }, "in the money"),
+                            " \u2014 every bust from here is a pay jump.")
+                        : pv.toMoney === 1 ? React.createElement(React.Fragment, null,
+                            React.createElement("b", { style: { color: "#f87171" } }, "Stone bubble."),
+                            " The next player out gets nothing.")
+                            : React.createElement(React.Fragment, null,
+                                pv.toMoney.toLocaleString(),
+                                " eliminations to the money (",
+                                pv.paid.toLocaleString(),
+                                " paid).")),
+                React.createElement("div", { style: SCN.stats },
+                    React.createElement("div", { style: SCN.stat },
+                        React.createElement("div", { style: SCN.statV },
+                            pv.heroBB,
+                            "bb"),
+                        React.createElement("div", { style: SCN.statK }, "YOU")),
+                    React.createElement("div", { style: SCN.stat },
+                        React.createElement("div", { style: SCN.statV }, ordinal(pv.rank)),
+                        React.createElement("div", { style: SCN.statK },
+                            "OF ",
+                            pv.left.toLocaleString())),
+                    React.createElement("div", { style: SCN.stat },
+                        React.createElement("div", { style: SCN.statV },
+                            "$",
+                            pv.first.toLocaleString()),
+                        React.createElement("div", { style: SCN.statK }, "UP TOP"))),
+                React.createElement("div", { style: SCN.warn }, "Plays to completion \u2014 bust or win, then the debrief."),
+                React.createElement("button", { style: SCN.go, onClick: () => { setBrief(false); onStart({ ...cfg }); } }, "DEAL \u25B8"),
+                React.createElement("button", { style: SCN.ghost, onClick: () => setBrief(false) }, "back to the dials"))))));
+}
+function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid, scen, setScen, onScenario }) {
+    const L = LOBBY_S;
+    const [tab, setTab] = useState("tour");
     const parked = tsLoad();
+    if (tab === "scen")
+        return (React.createElement("div", { style: L.screen },
+            React.createElement("div", { style: L.tabs },
+                React.createElement("button", { style: L.tab, onClick: onCash }, "CASH"),
+                React.createElement("button", { style: L.tab, onClick: () => setTab("tour") }, "TOURNAMENT"),
+                React.createElement("button", { style: { ...L.tab, ...L.tabOn } }, "SCENARIO")),
+            React.createElement(ScenarioPanel, { cfg: scen, setCfg: setScen, onStart: onScenario, curGid: curGid })));
     const preset = MIX_PRESETS.find(m => m.id === cfg.mix) || MIX_PRESETS[0];
     const rot = preset.games
         ? preset.games.map(id => (GAMES.find(g => g.id === id)?.label) || id)
@@ -3363,7 +3624,8 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid }) {
     return (React.createElement("div", { style: L.screen },
         React.createElement("div", { style: L.tabs },
             React.createElement("button", { style: L.tab, onClick: onCash }, "CASH"),
-            React.createElement("button", { style: { ...L.tab, ...L.tabOn } }, "TOURNAMENT")),
+            React.createElement("button", { style: { ...L.tab, ...L.tabOn } }, "TOURNAMENT"),
+            React.createElement("button", { style: L.tab, onClick: () => setTab("scen") }, "SCENARIO")),
         parked && onResume && (React.createElement("button", { onClick: onResume, style: { width: "100%", margin: "0 0 14px", padding: "13px 15px", borderRadius: 12, cursor: "pointer",
                 border: "1px solid rgba(134,239,172,0.55)", background: "linear-gradient(180deg,rgba(63,145,82,0.28),rgba(28,66,40,0.22))",
                 textAlign: "left", display: "flex", flexDirection: "column", gap: 3 } },
@@ -3699,6 +3961,7 @@ function App() {
     const [tourRect, setTourRect] = useState(null);
     const [view, setView] = useState("play");
     const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard", startBB: 200, bba: true });
+    const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
     useEffect(() => {
         const t = st.tour;
         if (t?.on && !t.result && st.phase === "showdown")
@@ -3718,6 +3981,12 @@ function App() {
             seq: seq.length ? seq : [gid], mixIdx: 0, level: 0, clock: 0, levelSec: (SPEED_OPTS.find(s => s.id === cfg.speed)?.min || 35) * 60, hands: 0, busted: 0, dcRecent: [], dcPicker: 0,
             field: { total: cfg.runners, startStack: tourStartStack(gid, bbDepth) } };
         setSt(s => mkState(gid, { ...s, format: "tourney", bbDepth, tour, players: [] }));
+        setView("play");
+    };
+    const startScenario = (cfg) => {
+        tsClear();
+        setScenCfg(cfg);
+        setSt(s => buildScenarioState(s, cfg));
         setView("play");
     };
     useEffect(() => {
@@ -4086,7 +4355,7 @@ function App() {
                         setView("play");
                     } }, style: { ...S.fmtQuickBtn, ...(st.format === "cash" ? S.fmtQuickOn : {}) } }, "CASH"),
                 React.createElement("button", { onClick: () => { if (view !== "lobby")
-                        setView("lobby"); }, style: { ...S.fmtQuickBtn, ...(st.format === "tourney" ? S.fmtQuickOn : {}) } }, "TOUR")),
+                        setView("lobby"); }, style: { ...S.fmtQuickBtn, ...(st.format === "tourney" ? S.fmtQuickOn : {}) } }, "TRMNT")),
             React.createElement("div", { style: S.brandStack },
                 React.createElement("div", { style: S.suitRow },
                     React.createElement("span", { style: S.suitB }, "\u2660"),
@@ -4116,7 +4385,7 @@ function App() {
                         g.tag && React.createElement("span", { style: { ...S.gTag, ...(g.id === st.gid ? { color: "#c9a84c" } : {}) } }, g.tag),
                         React.createElement("span", { style: S.gName }, g.label),
                         !g.available && React.createElement("span", { style: S.gSoon }, "\uFF0B")))))))))))),
-        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, onCash: () => setView("play"), onResume: () => { const q = tsLoad(); if (q) {
+        view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, scen: scenCfg, setScen: setScenCfg, onScenario: startScenario, onCash: () => setView("play"), onResume: () => { const q = tsLoad(); if (q) {
                 setSt(q);
                 setView("play");
             } }, curGid: st.gid })),
@@ -4125,6 +4394,8 @@ function App() {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
             const first = payoutFor(1, R.total, buyIn);
+            const scen = st.tour.scen;
+            const grade = scen ? scenGrade(prize, scen.icm0, scen.mincash || Math.round(buyIn * 1.8)) : null;
             return (React.createElement("div", { style: S.resultOverlay },
                 React.createElement("div", { style: S.resultCard },
                     React.createElement("div", { style: { fontSize: 46, lineHeight: 1 } }, win ? "🏆" : cashed ? "💵" : "♠"),
@@ -4141,12 +4412,42 @@ function App() {
                     React.createElement("div", { style: S.resultSub }, win ? "Last player standing — you took the whole thing down."
                         : cashed ? "You made the money before falling. Solid run."
                             : `${(R.place - paidSpots(R.total)).toLocaleString()} spots short of the cash.`),
-                    buyIn > 0 && React.createElement("div", { style: S.resultPool },
+                    !scen && buyIn > 0 && React.createElement("div", { style: S.resultPool },
                         "Prize pool $",
                         pool.toLocaleString(),
                         " \u00B7 1st paid $",
                         first.toLocaleString()),
-                    React.createElement("button", { style: S.resultBtn, onClick: () => { setSt(s => ({ ...s, tour: null })); setView("lobby"); } }, "NEW TOURNAMENT"),
+                    scen && (React.createElement("div", { style: { margin: "10px 0 2px", padding: "10px 12px", borderRadius: 10, textAlign: "center",
+                            border: "1px solid rgba(201,168,76,0.3)", background: "rgba(201,168,76,0.06)" } },
+                        React.createElement("div", { style: { fontSize: 8, letterSpacing: 2, color: "#9d8659" } },
+                            "SCENARIO DEBRIEF \u00B7 ",
+                            scen.stageN.toUpperCase(),
+                            " \u00B7 ",
+                            scen.stackN.toUpperCase()),
+                        React.createElement("div", { style: { fontSize: 30, fontFamily: "Georgia,serif", margin: "4px 0",
+                                color: /^A/.test(grade) ? "#86efac" : grade === "B" || grade === "C+" || grade === "C" ? "#e3c87a" : "#f0a8a0" } }, grade),
+                        React.createElement("div", { style: { fontSize: 10.5, color: "#cfc3a0", lineHeight: 1.55 } },
+                            "The starting spot was worth ",
+                            React.createElement("b", { style: { color: "#e8d9a8" } },
+                                "~$",
+                                scen.icm0.toLocaleString()),
+                            " (ICM). You cashed ",
+                            React.createElement("b", { style: { color: "#e8d9a8" } },
+                                "$",
+                                prize.toLocaleString()),
+                            prize > scen.icm0 ? React.createElement(React.Fragment, null,
+                                " \u2014 ",
+                                React.createElement("b", { style: { color: "#86efac" } },
+                                    "+$",
+                                    (prize - scen.icm0).toLocaleString(),
+                                    " over expectation."))
+                                : prize > 0 ? React.createElement(React.Fragment, null,
+                                    " \u2014 $",
+                                    (scen.icm0 - prize).toLocaleString(),
+                                    " under expectation.")
+                                    : React.createElement(React.Fragment, null, " \u2014 short of the spot's value this run.")))),
+                    scen && React.createElement("button", { style: S.resultBtn, onClick: () => startScenario(scen.cfg) }, "RUN IT BACK \u2014 SAME SCENARIO"),
+                    React.createElement("button", { style: scen ? S.resultBtn2 : S.resultBtn, onClick: () => { setSt(s => ({ ...s, tour: null })); setView("lobby"); } }, scen ? "New scenario" : "NEW TOURNAMENT"),
                     React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null })); setView("play"); } }, "Back to cash game"))));
         })(),
         st.tour?.on && view === "play" && (() => {
@@ -4157,8 +4458,9 @@ function App() {
             if (F) {
                 const seatsN = st.players.length;
                 const model = fieldLeft(F.total, T.level || 0);
+                const fll = fieldLeftLive(F, T.level || 0, T.busted);
                 const aliveN = st.players.filter(p => p.chips > 0).length;
-                const left = model <= seatsN ? aliveN : Math.max(seatsN + 1, fieldLeftLive(F, T.level || 0, T.busted));
+                const left = (model <= seatsN || fll <= seatsN) ? aliveN : Math.max(seatsN + 1, fll);
                 const avg = Math.round(F.total * F.startStack / Math.max(1, left));
                 const rank = fieldRank(me.chips, avg, left);
                 const paid = paidSpots(F.total);
@@ -4218,12 +4520,19 @@ function App() {
                             "/",
                             2 * sb)),
                     React.createElement("div", { style: S.tourHudDiv }),
-                    React.createElement("div", { style: S.tourHudCol },
-                        React.createElement("div", { style: S.tourHudLbl }, "GAME"),
-                        React.createElement("div", { style: S.tourHudVal },
-                            (T.mixIdx || 0) + 1,
-                            "/",
-                            T.seq?.length || 1)),
+                    T.dc
+                        ? React.createElement("div", { style: S.tourHudCol },
+                            React.createElement("div", { style: S.tourHudLbl }, "HAND"),
+                            React.createElement("div", { style: S.tourHudVal },
+                                (((T.hands || 1) - 1) % Math.max(2, st.players.length)) + 1,
+                                "/",
+                                Math.max(2, st.players.length)))
+                        : React.createElement("div", { style: S.tourHudCol },
+                            React.createElement("div", { style: S.tourHudLbl }, "GAME"),
+                            React.createElement("div", { style: S.tourHudVal },
+                                (T.mixIdx || 0) + 1,
+                                "/",
+                                T.seq?.length || 1)),
                     fieldCells),
                 moneyTier));
         })(),
@@ -4275,6 +4584,11 @@ function App() {
                 st.format === "cash" && (React.createElement("div", { style: { ...S.segRow, marginTop: 8 } }, CASH_STAKES.map((s, i) => (React.createElement("button", { key: i, onClick: () => setStake(i), style: { ...S.segBtn, ...(st.stakeIdx === i ? S.segBtnOn : {}) } },
                     React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
                 st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
+                React.createElement("button", { onClick: () => { if (!window.confirm("Reset everything? Clears the saved tournament, hand history, and all settings."))
+                        return; try {
+                        localStorage.clear();
+                    }
+                    catch { } window.location.reload(); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET EVERYTHING"),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#c9a84c", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
@@ -4652,7 +4966,7 @@ function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid
         }
     }
     const win = won || p.id === wid;
-    const speaks = won && p.name === "Martin";
+    const speaks = won && reveal && p.name === "Martin";
     const faceDownOf = c => p.sittingOut ? true : stud ? !(c.up || reveal) : !reveal;
     const showCards = stud ? p.hand.length > 0 : p.hand.length === hs;
     return (React.createElement("div", { style: { ...S.seat, ...(p.folded || p.sittingOut ? S.seatDim : {}),
@@ -4703,7 +5017,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
     const lo = (reveal && !p.folded && IS_HILO(gid)) ? (stud ? bestLow7(p.hand) : (board.length >= 3 ? bestOmahaLow(p.hand, board) : null)) : null;
     const loTxt = lo ? ` · ${lo.slice(0, 5).map(v => LOWNAME[v] || v).join("-")} low` : "";
     const win = won || p.id === wid;
-    const speaks = won && p.name === "Martin";
+    const speaks = won && reveal && p.name === "Martin";
     const backCount = p.hand.length > 0 ? p.hand.length : hs;
     return (React.createElement("div", { style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, position: "relative",
             opacity: p.folded || p.sittingOut ? 0.3 : 1,
