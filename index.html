@@ -3187,7 +3187,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03am";
+const APP_VERSION = "2026.07.03an";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3292,7 +3292,7 @@ const SPEED_OPTS = [
     { id: "standard", label: "Standard", min: 35 },
     { id: "slow", label: "Slow", min: 60 },
 ];
-function DealersChooser({ st, onPick, onConfirm, onAgain }) {
+function DealersChooser({ st, onPick, onConfirm, onAgain, kicker, title, sub, clock, onCancel }) {
     const seq = st.tour?.seq || [];
     const ch = st.chooser || {};
     const recent = (st.tour?.dcRecent || []).slice(0, 3);
@@ -3328,10 +3328,10 @@ function DealersChooser({ st, onPick, onConfirm, onAgain }) {
     }
     const N = seq.length, spread = 42;
     return (React.createElement("div", { style: DC.overlay },
-        React.createElement("div", { style: DC.kicker }, "new orbit \u00B7 your choice"),
-        React.createElement("div", { style: DC.title }, "Deal the game"),
-        React.createElement("div", { style: DC.sub }, "Your pick sets the game for this whole orbit."),
-        React.createElement("div", { style: DC.ring },
+        React.createElement("div", { style: DC.kicker }, kicker || "new orbit · your choice"),
+        React.createElement("div", { style: DC.title }, title || "Deal the game"),
+        React.createElement("div", { style: DC.sub }, sub || "Your pick sets the game for this whole orbit."),
+        clock !== false && React.createElement("div", { style: DC.ring },
             React.createElement("div", { style: DC.ringFill })),
         recent.length > 0 && (React.createElement("div", { style: DC.rail }, recent.map((g, i) => (React.createElement("button", { key: g, onClick: () => onPick(g), style: DC.chip },
             React.createElement("span", { style: { color: "#c9a84c" } },
@@ -3347,7 +3347,16 @@ function DealersChooser({ st, onPick, onConfirm, onAgain }) {
                     React.createElement("div", { style: { ...DC.cardTag, color: tagColor(m.tag), borderColor: tagColor(m.tag) + "55" } }, m.tag),
                     React.createElement("div", { style: DC.cardWins }, GAME_WINS[g] || "")));
             }))),
-        React.createElement("div", { style: DC.hint }, "Tap a game to deal it \u00B7 auto-deals your last pick if the clock runs out")));
+        React.createElement("div", { style: DC.hint }, clock !== false ? "Tap a game to deal it · auto-deals your last pick if the clock runs out" : "Tap a game — it's the game for the whole tournament"),
+        onCancel && React.createElement("button", { style: { ...DC.ghost, marginTop: 14 }, onClick: onCancel }, "back to the lobby")));
+}
+function SingleGamePicker({ curGid, onDone, onCancel }) {
+    const [confirm, setConfirm] = useState(null);
+    const pool = MIX_PRESETS.find(m => m.id === "dealers").games.slice();
+    if (curGid && !pool.includes(curGid) && GAMES.find(g => g.id === curGid && g.available))
+        pool.push(curGid);
+    const fakeSt = { tour: { seq: pool, dcRecent: pool.includes(curGid) ? [curGid] : [] }, chooser: { hero: true, confirm }, players: [] };
+    return React.createElement(DealersChooser, { st: fakeSt, onPick: g => setConfirm(g), onConfirm: () => confirm && onDone(confirm), onAgain: () => setConfirm(null), kicker: "single game tournament", title: "Pick your game", sub: "One game, the whole way down.", clock: false, onCancel: onCancel });
 }
 const DC = {
     overlay: { position: "fixed", inset: 0, zIndex: 70, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -3441,7 +3450,7 @@ function buildScenarioState(baseSt, cfg) {
     const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
     const seq = (preset && preset.games)
         ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
-        : [baseSt.gid];
+        : [cfg.gid || baseSt.gid];
     const gid = seq[0] || baseSt.gid;
     const pv = scenPreview(cfg, gid);
     const levelSec = 35 * 60;
@@ -3971,6 +3980,7 @@ function App() {
     const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard", startBB: 200, bba: true });
     const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
     const [pendingCash, setPendingCash] = useState(false);
+    const [gamePick, setGamePick] = useState(null);
     useEffect(() => {
         const t = st.tour;
         if (t?.on && !t.result && st.phase === "showdown")
@@ -3979,11 +3989,15 @@ function App() {
             tsClear();
     }, [st.phase, st.tour?.on, st.tour?.result, st.tour?.hands]);
     const startTournament = (cfg) => {
+        if (cfg.mix === "single" && !cfg.gid) {
+            setGamePick({ kind: "tour", cfg });
+            return;
+        }
         tsClear();
         const preset = MIX_PRESETS.find(m => m.id === cfg.mix);
         const seq = (preset && preset.games)
             ? preset.games.filter(g => GAMES.find(x => x.id === g && x.available))
-            : [st.gid];
+            : [cfg.gid || st.gid];
         const gid = seq[0] || st.gid;
         const bbDepth = Math.max(5, Math.round((cfg.startBB || 200) / 2));
         const tour = { on: true, mix: cfg.mix, runners: cfg.runners, stakes: cfg.stakes, buyIn: TOUR_BUYIN[cfg.stakes] || 250, bba: cfg.bba !== false, dc: cfg.mix === "dealers",
@@ -3993,6 +4007,10 @@ function App() {
         setView("play");
     };
     const startScenario = (cfg) => {
+        if (cfg.mix === "single" && !cfg.gid) {
+            setGamePick({ kind: "scen", cfg });
+            return;
+        }
         tsClear();
         setScenCfg(cfg);
         setSt(s => buildScenarioState(s, cfg));
@@ -4419,6 +4437,15 @@ function App() {
                 setView("play");
             } }, curGid: st.gid })),
         st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
+        gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
+                const gp = gamePick;
+                setGamePick(null);
+                const cfg = { ...gp.cfg, gid };
+                if (gp.kind === "tour")
+                    startTournament(cfg);
+                else
+                    startScenario(cfg);
+            }, onCancel: () => setGamePick(null) }),
         st.tour?.result && (() => {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
