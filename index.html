@@ -1754,6 +1754,33 @@ function studHandName(hand) {
     }
     return null;
 }
+function studLiveTax(st, me) {
+    if (!IS_STUD(st.gid) || !me.hand || me.hand.length < 4)
+        return { tax: 0, note: "" };
+    const vs = me.hand.map(c => c.v), cnt = {};
+    vs.forEach(v => cnt[v] = (cnt[v] || 0) + 1);
+    const counts = Object.values(cnt);
+    if (Math.max(...counts) !== 2 || counts.filter(n => n === 2).length !== 1)
+        return { tax: 0, note: "" };
+    const pairRank = +Object.keys(cnt).find(v => cnt[v] === 2);
+    const kick = [...new Set(vs.filter(v => v !== pairRank))];
+    let dead = 0;
+    st.players.forEach(p => {
+        if (p.id !== me.id && p.hand)
+            p.hand.forEach(c => {
+                if (c.up && (c.v === pairRank || kick.includes(c.v)))
+                    dead++;
+            });
+    });
+    const heat = (st.betCount || 0) >= 2;
+    const tax = (heat ? 0.08 : 0) + Math.min(0.14, dead * 0.045);
+    let note = "";
+    if (dead >= 2 && heat)
+        note = `Your pair and kicker outs are dead (${dead} showing) and you're facing a raise — one pair shrivels here. `;
+    else if (dead >= 2)
+        note = `${dead} of your improvement cards are showing in other boards — your outs are thinner than they look. `;
+    return { tax, note, dead, heat };
+}
 function coachBet(st, me, callAmt) {
     if (PURE_DRAW(st.gid))
         return coachDrawBet(st, me, callAmt);
@@ -1782,6 +1809,10 @@ function coachBet(st, me, callAmt) {
         const nm = studHandName(me.hand);
         if (nm)
             tag = nm + tag;
+        const lv = studLiveTax(st, me);
+        valueCut += lv.tax;
+        if (lv.note)
+            tag += lv.note;
     }
     if (k > 0) {
         const r = tableRead(st);
@@ -1870,6 +1901,7 @@ function coachRecAction(st, me, callAmt) {
     const icm = icmContext(st, me.chips);
     if (icm)
         valueCut += icm.tighten;
+    valueCut += studLiveTax(st, me).tax;
     let locked = false;
     if (st.gid === "razzdugi") {
         const bd = me.hand.length >= 4 ? evalBadugi(me.hand) : null;
@@ -3187,7 +3219,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03an";
+const APP_VERSION = "2026.07.03ao";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3480,7 +3512,7 @@ function buildScenarioState(baseSt, cfg) {
     const skill = pv.SC.skill || 0;
     const bt = { ...(s.botTight || {}) };
     for (const k of Object.keys(bt))
-        bt[k] = Math.round(bt[k] + (85 - bt[k]) * skill * 0.85);
+        bt[k] = Math.max(bt[k], Math.round(bt[k] + (75 - bt[k]) * skill * 0.55));
     return { ...s, players, botTight: bt, tour: { ...tour, scen } };
 }
 function scenGrade(cash, icm0, mincash) {
@@ -3981,6 +4013,7 @@ function App() {
     const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
     const [pendingCash, setPendingCash] = useState(false);
     const [gamePick, setGamePick] = useState(null);
+    const [showPayouts, setShowPayouts] = useState(false);
     useEffect(() => {
         const t = st.tour;
         if (t?.on && !t.result && st.phase === "showdown")
@@ -4446,6 +4479,65 @@ function App() {
                 else
                     startScenario(cfg);
             }, onCancel: () => setGamePick(null) }),
+        showPayouts && st.tour?.on && st.tour.field && (() => {
+            const F = st.tour.field, buyIn = st.tour.buyIn || 0, P = paidSpots(F.total);
+            const rows = [];
+            let a = 1;
+            while (a <= P) {
+                const amt = payoutFor(a, F.total, buyIn);
+                let b = a;
+                while (b + 1 <= P && payoutFor(b + 1, F.total, buyIn) === amt)
+                    b++;
+                rows.push({ a, b, amt });
+                a = b + 1;
+            }
+            const seatsN = st.players.length, model = fieldLeft(F.total, st.tour.level || 0);
+            const fll = fieldLeftLive(F, st.tour.level || 0, st.tour.busted);
+            const single = model <= seatsN || fll <= seatsN;
+            const left = single ? st.players.filter(p => p.chips > 0).length : Math.max(seatsN + 1, fll);
+            const avg = Math.round(F.total * F.startStack / Math.max(1, left));
+            const rank = single ? 1 + st.players.filter(p => p.chips > st.players[0].chips).length : fieldRank(st.players[0].chips, avg, left);
+            const inMoney = left <= P;
+            const myRow = inMoney ? rows.findIndex(r => rank >= r.a && rank <= r.b) : -1;
+            const jump = myRow > 0 ? rows[myRow - 1].amt - rows[myRow].amt : null;
+            return (React.createElement("div", { style: S.resultOverlay, onClick: () => setShowPayouts(false) },
+                React.createElement("div", { style: { ...S.resultCard, textAlign: "left", maxHeight: "78vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+                    React.createElement("div", { style: { fontSize: 9, letterSpacing: 2, color: "#9d8659" } },
+                        "PAYOUTS \u00B7 ",
+                        F.total.toLocaleString(),
+                        " RUNNERS \u00B7 $",
+                        (F.total * buyIn).toLocaleString(),
+                        " POOL"),
+                    myRow >= 0 && jump != null && React.createElement("div", { style: { fontSize: 11.5, color: "#86efac", margin: "7px 0 2px" } },
+                        "Next pay jump: ",
+                        React.createElement("b", null,
+                            "+$",
+                            jump.toLocaleString()),
+                        " when the field reaches ",
+                        rows[myRow - 1].b.toLocaleString()),
+                    myRow === 0 && React.createElement("div", { style: { fontSize: 11.5, color: "#86efac", margin: "7px 0 2px" } },
+                        "You're playing for it all \u2014 $",
+                        rows[0].amt.toLocaleString(),
+                        " up top."),
+                    !inMoney && React.createElement("div", { style: { fontSize: 11.5, color: "#fbbf24", margin: "7px 0 2px" } },
+                        Math.max(0, left - P).toLocaleString(),
+                        " eliminations to the money \u00B7 ",
+                        P.toLocaleString(),
+                        " paid"),
+                    React.createElement("div", { style: { marginTop: 9, display: "flex", flexDirection: "column", gap: 3 } }, rows.map((r, i) => {
+                        const mine = i === myRow;
+                        return (React.createElement("div", { key: r.a, style: { display: "flex", justifyContent: "space-between", padding: "5px 10px", borderRadius: 7, fontSize: 12,
+                                fontFamily: "monospace", color: mine ? "#0a1a0e" : "#d8c79a", fontWeight: mine ? "bold" : "normal",
+                                background: mine ? "linear-gradient(135deg,#e6c669,#c9a84c)" : "rgba(255,255,255,0.04)" } },
+                            React.createElement("span", null,
+                                r.a === r.b ? ordinal(r.a) : `${ordinal(r.a)}–${ordinal(r.b)}`,
+                                mine ? " · YOU" : ""),
+                            React.createElement("span", null,
+                                "$",
+                                r.amt.toLocaleString())));
+                    })),
+                    React.createElement("button", { style: { ...S.resultBtn2, marginTop: 12 }, onClick: () => setShowPayouts(false) }, "Close"))));
+        })(),
         st.tour?.result && (() => {
             const R = st.tour.result, win = R.type === "win", cashed = R.place <= paidSpots(R.total);
             const buyIn = st.tour.buyIn || 0, prize = payoutFor(R.place, R.total, buyIn), pool = R.total * buyIn;
@@ -4564,7 +4656,7 @@ function App() {
                     moneyTier = React.createElement("div", { style: { ...S.tourHudTier, color: mColor, fontWeight: "bold", fontSize: 10, letterSpacing: 0.6 } }, money);
                 }
             }
-            return (React.createElement("div", { style: { ...S.tourHud, ...(accent || {}) } },
+            return (React.createElement("div", { style: { ...S.tourHud, ...(accent || {}), cursor: "pointer" }, onClick: () => setShowPayouts(true), title: "Payouts & pay jumps" },
                 React.createElement("div", { style: S.tourHudRow },
                     React.createElement("div", { style: S.tourHudCol },
                         React.createElement("div", { style: S.tourHudLbl }, "LEVEL"),
