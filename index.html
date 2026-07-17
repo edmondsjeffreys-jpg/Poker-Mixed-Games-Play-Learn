@@ -66,6 +66,9 @@ const SECTIONS = [
             { id: "crazyp", label: "Crazy Pineapple", tag: "POT LIMIT", available: true },
             { id: "dbcrazyp", label: "Double Board Crazy Pineapple", tag: "POT LIMIT", available: true },
             { id: "dbbomb", label: "Double Board Bomb Pot", tag: "POT LIMIT", available: true },
+            { id: "pl27td", label: "PL 2-7 Triple Draw", tag: "POT LIMIT", available: true },
+            { id: "plo8", label: "Pot-Limit Omaha-8", tag: "POT LIMIT", available: true },
+            { id: "plbad", label: "Pot-Limit Badugi", tag: "POT LIMIT", available: true },
             { id: "soon1", label: "More soon", tag: "", available: false },
         ] },
     { title: "SPLIT-POT DRAW GAMES", games: [
@@ -79,12 +82,12 @@ const SECTIONS = [
         ] },
 ];
 const GAMES = SECTIONS.flatMap(s => s.games);
-const IS_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi";
-const IS_FLOP = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp" || gid === "dbbomb";
+const IS_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad";
+const IS_FLOP = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp" || gid === "dbbomb" || gid === "plo8";
 const IS_STUD = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud" || gid === "razzdugi";
 const IS_RAZZDUGI = gid => gid === "razzdugi";
-const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo" || gid === "dbbomb";
-const IS_HILO = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud";
+const IS_OMAHA = gid => gid === "omaha8" || gid === "plo" || gid === "bigo" || gid === "dbbomb" || gid === "plo8";
+const IS_HILO = gid => gid === "omaha8" || gid === "stud8" || gid === "bigo" || gid === "superstud" || gid === "plo8";
 const IS_STUD8 = gid => gid === "stud8" || gid === "superstud";
 const IS_PINEAPPLE = gid => gid === "crazyp" || gid === "dbcrazyp";
 const IS_DOUBLE = gid => gid === "dbcrazyp" || gid === "dbbomb";
@@ -96,8 +99,9 @@ const IS_VERONICA = gid => gid === "veronica";
 const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
 const DRAW_CAP = gid => gid === "dramadugi" ? 3 : 5;
 const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
-    : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb") ? "pl" : "fl";
-const HAND_SIZE = gid => (gid === "badugi" ? 4 : 5);
+    : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb" || gid === "plo8" || gid === "pl27td" || gid === "plbad") ? "pl" : "fl";
+const HAND_SIZE = gid => (gid === "badugi" || gid === "plbad" ? 4 : 5);
+const IS_BADUGI = gid => gid === "badugi" || gid === "plbad";
 const HOLE_SIZE = gid => (gid === "bigo" || gid === "dbbomb" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
@@ -653,10 +657,10 @@ function cmpVecLow(a, b) { for (let i = 0; i < Math.max(a.length, b.length); i++
         return x < y ? -1 : 1;
 } return 0; }
 function evalHand(gid, cards) {
-    return gid === "badugi" ? evalBadugi(cards) : eval27(cards);
+    return (gid === "badugi" || gid === "plbad") ? evalBadugi(cards) : eval27(cards);
 }
 function cmpHand(gid, a, b) {
-    return gid === "badugi" ? cmpBadugi(a, b) : cmp27(a, b);
+    return (gid === "badugi" || gid === "plbad") ? cmpBadugi(a, b) : cmp27(a, b);
 }
 function cpuDrawCards(hand, pr, gid, community = []) {
     if (IS_DRAMAHA(gid))
@@ -664,7 +668,7 @@ function cpuDrawCards(hand, pr, gid, community = []) {
     if (IS_SPLITDRAW(gid))
         return cpuDrawCardsSplit(hand, gid, pr, community);
     let discard;
-    if (gid === "badugi") {
+    if (IS_BADUGI(gid)) {
         const keepIdx = badugiKeepIndices(hand);
         discard = hand.map((_, i) => i).filter(i => !keepIdx.has(i));
     }
@@ -679,7 +683,7 @@ function cpuDrawCards(hand, pr, gid, community = []) {
         });
     }
     if (discard.length === 1 && Math.random() < pr.standPat) {
-        const credible = gid !== "badugi" && eval27(hand).cat === 0 && eval27(hand).vs[0] <= 9;
+        const credible = !IS_BADUGI(gid) && eval27(hand).cat === 0 && eval27(hand).vs[0] <= 9;
         if (credible || Math.random() < 0.18)
             return [];
     }
@@ -788,7 +792,7 @@ function cpuDecide(st, idx) {
     const hand = pl.hand;
     const ev = evalHand(st.gid, hand);
     let keepers, good, ok;
-    if (st.gid === "badugi") {
+    if (IS_BADUGI(st.gid)) {
         keepers = badugiKeepIndices(hand).size;
         good = ev && ev.size === 4 && ev.vs[0] <= 10;
         ok = ev && (ev.size === 4 || (ev.size === 3 && ev.vs[0] <= 6));
@@ -1246,7 +1250,7 @@ function heroDrawStrength(st, me) {
         ls = Math.min(0.95, ls);
         return Math.max(0, Math.min(1, 0.5 * hs + 0.5 * ls));
     }
-    if (st.gid === "badugi") {
+    if (IS_BADUGI(st.gid)) {
         if (ev && ev.size === 4)
             return ev.vs[0] <= 7 ? 0.92 : ev.vs[0] <= 9 ? 0.76 : 0.6;
         const keepIdx = [...badugiKeepIndices(me.hand)];
@@ -1460,7 +1464,7 @@ function coachDrawPlan(st, me) {
     if (IS_DRAMAHA(st.gid))
         return planDramaha(st, me);
     const dl = drawsLeftOf(st);
-    if (st.gid === "badugi")
+    if (IS_BADUGI(st.gid))
         return planBadugi(me.hand, dl);
     if (st.gid === "archie" || st.gid === "veronica")
         return planArchie(me.hand, dl, st.gid === "veronica" ? (st.board || []) : []);
@@ -1544,10 +1548,10 @@ function drawEquity(st, me, sims = 1200) {
             if (pat) {
                 for (let t = 0; t < 6; t++) {
                     const e = evalHand(gid, oh);
-                    if (gid === "badugi" ? (e && e.size === 4) : (e && e.cat === 0 && e.vs[0] <= 10))
+                    if (IS_BADUGI(gid) ? (e && e.size === 4) : (e && e.cat === 0 && e.vs[0] <= 10))
                         break;
                     let disc;
-                    if (gid === "badugi") {
+                    if (IS_BADUGI(gid)) {
                         const keep = badugiKeepIndices(oh);
                         disc = oh.map((_, i) => i).filter(i => !keep.has(i));
                     }
@@ -1582,9 +1586,9 @@ function drawEquity(st, me, sims = 1200) {
     }
     return wins / sims;
 }
-const PURE_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi";
+const PURE_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad";
 function heroMade(gid, ev) {
-    if (gid === "badugi")
+    if (IS_BADUGI(gid))
         return { made: !!(ev && ev.size === 4), top: ev && ev.size === 4 ? ev.vs[0] : 99, txt: ev && ev.size === 4 ? `a ${ev.desc} badugi` : "an incomplete badugi" };
     const made = !!(ev && ev.cat === 0 && ev.vs[0] <= 10);
     return { made, top: made ? ev.vs[0] : 99, txt: made ? `a pat ${ev.desc}` : "a draw" };
@@ -1601,8 +1605,8 @@ function coachDrawBet(st, me, callAmt) {
     const eq = drawEquity(st, me, 700);
     const e = eq == null ? null : Math.round(eq * 100);
     const eqTxt = e == null ? "" : ` (~${e}% to win)`;
-    const goodTop = gid === "badugi" ? 9 : 8;
-    const smoothTop = gid === "badugi" ? 7 : 8;
+    const goodTop = IS_BADUGI(gid) ? 9 : 8;
+    const smoothTop = IS_BADUGI(gid) ? 7 : 8;
     const opps = st.players.filter(p => p.id !== 0 && live(p));
     const pats = opps.filter(p => p.drewLast === 0);
     const heavy = opps.filter(p => p.drewLast >= 2);
@@ -1708,7 +1712,7 @@ function coachDrawRec(st, me, callAmt) {
     const dl = drawsLeftOf(st);
     const M = heroMade(gid, ev);
     const eq = drawEquity(st, me, 500);
-    const goodTop = gid === "badugi" ? 9 : 8, smoothTop = gid === "badugi" ? 7 : 8;
+    const goodTop = IS_BADUGI(gid) ? 9 : 8, smoothTop = IS_BADUGI(gid) ? 7 : 8;
     const pats = st.players.filter(p => p.id !== 0 && live(p) && p.drewLast === 0);
     const patBetting = facing && pats.length > 0;
     if (predraw) {
@@ -2277,7 +2281,7 @@ const mkState = (gid, prev = null) => {
     return {
         gid, phase: "idle", deck: [], players: mkPs(prev?.players, startChips, nSeats), board: [], board2: [],
         pot: 0, currentBet: 0, betCount: 0, queue: [], streetN: 0, drawN: 0, seq: 0,
-        maxDraws: (gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid)) ? 3 : 1, nlBet: 40,
+        maxDraws: (gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid) || gid === "pl27td" || gid === "plbad") ? 3 : 1, nlBet: 40,
         dealerIdx: Math.floor(Math.random() * nSeats), reveal: false,
         msg: "Press Deal to start", result: null, sel: [],
         cpuTilt: prev?.cpuTilt || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 },
@@ -2536,7 +2540,7 @@ function execDraw(st, playerDiscards, playerFolds = false) {
         let disc = cpuDrawCards(p.hand, PROF[p.id], st.gid, st.gid === "veronica" ? (st.board || []) : []);
         if (disc.length > 1 && (st.maxDraws || 1) > 1 && (st.drawN || 0) === st.maxDraws - 1
             && !IS_SPLITDRAW(st.gid) && !IS_DRAMAHA(st.gid)) {
-            const bad = i => st.gid === "badugi" ? BV(p.hand[i].v) : p.hand[i].v;
+            const bad = i => IS_BADUGI(st.gid) ? BV(p.hand[i].v) : p.hand[i].v;
             disc = [disc.reduce((w, i) => bad(i) > bad(w) ? i : w, disc[0])];
         }
         const hand = p.hand.map((c, i) => disc.includes(i) ? (muck.push(c), draw1()) : c);
@@ -3244,7 +3248,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ap";
+const APP_VERSION = "2026.07.03aq";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3328,7 +3332,7 @@ const MIX_PRESETS = [
     { id: "hose", name: "HOSE", desc: "4 games · fixed-limit", games: ["lhe", "omaha8", "stud", "stud8"] },
     { id: "horseo", name: "HORSEO", desc: "HORSE + Big O", games: ["lhe", "omaha8", "razz", "stud", "stud8", "bigo"] },
     { id: "tstud", name: "TRIPLE STUD", desc: "razz · stud · stud-8", games: ["razz", "stud", "stud8"] },
-    { id: "bigbet", name: "BIG BET MIX", desc: "no-limit + pot-limit", games: ["nlhe", "plo", "bigo", "single", "crazyp"] },
+    { id: "bigbet", name: "BIG BET MIX", desc: "the WSOP big-bet eight", games: ["nlhe", "plo", "bigo", "single", "crazyp", "pl27td", "plo8", "plbad"] },
     { id: "omahamix", name: "OMAHA MIX", desc: "PLO · Omaha-8 · Big O", games: ["plo", "omaha8", "bigo"] },
     { id: "draw", name: "TRIPLE DRAW MIX", desc: "2-7 · badugi", games: ["triple", "badugi"] },
     { id: "dramaha", name: "DRAMAHA MIX", desc: "split-pot draw games", games: ["dramahaH", "dramaha27", "dramadugi", "badacey", "badeucey"] },
