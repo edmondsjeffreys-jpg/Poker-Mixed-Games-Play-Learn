@@ -69,6 +69,7 @@ const SECTIONS = [
             { id: "pl27td", label: "PL 2-7 Triple Draw", tag: "POT LIMIT", available: true },
             { id: "plo8", label: "Pot-Limit Omaha-8", tag: "POT LIMIT", available: true },
             { id: "plbad", label: "Pot-Limit Badugi", tag: "POT LIMIT", available: true },
+            { id: "pl5d", label: "PL 5-Card Draw", tag: "POT LIMIT", available: true },
             { id: "soon1", label: "More soon", tag: "", available: false },
         ] },
     { title: "SPLIT-POT DRAW GAMES", games: [
@@ -82,7 +83,7 @@ const SECTIONS = [
         ] },
 ];
 const GAMES = SECTIONS.flatMap(s => s.games);
-const IS_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad";
+const IS_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad" || gid === "pl5d";
 const IS_FLOP = gid => gid === "lhe" || gid === "omaha8" || gid === "nlhe" || gid === "plo" || gid === "bigo" || gid === "crazyp" || gid === "dbcrazyp" || gid === "dbbomb" || gid === "plo8";
 const IS_STUD = gid => gid === "razz" || gid === "stud" || gid === "stud8" || gid === "superstud" || gid === "razzdugi";
 const IS_RAZZDUGI = gid => gid === "razzdugi";
@@ -99,9 +100,10 @@ const IS_VERONICA = gid => gid === "veronica";
 const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
 const DRAW_CAP = gid => gid === "dramadugi" ? 3 : 5;
 const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
-    : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb" || gid === "plo8" || gid === "pl27td" || gid === "plbad") ? "pl" : "fl";
+    : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb" || gid === "plo8" || gid === "pl27td" || gid === "plbad" || gid === "pl5d") ? "pl" : "fl";
 const HAND_SIZE = gid => (gid === "badugi" || gid === "plbad" ? 4 : 5);
 const IS_BADUGI = gid => gid === "badugi" || gid === "plbad";
+const IS_HIGHDRAW = gid => gid === "pl5d";
 const HOLE_SIZE = gid => (gid === "bigo" || gid === "dbbomb" ? 5 : IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : (gid === "lhe" || gid === "nlhe") ? 2 : HAND_SIZE(gid));
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
@@ -657,10 +659,50 @@ function cmpVecLow(a, b) { for (let i = 0; i < Math.max(a.length, b.length); i++
         return x < y ? -1 : 1;
 } return 0; }
 function evalHand(gid, cards) {
+    if (IS_HIGHDRAW(gid))
+        return evalHigh5(cards);
     return (gid === "badugi" || gid === "plbad") ? evalBadugi(cards) : eval27(cards);
 }
 function cmpHand(gid, a, b) {
+    if (IS_HIGHDRAW(gid))
+        return cmpHigh(a, b);
     return (gid === "badugi" || gid === "plbad") ? cmpBadugi(a, b) : cmp27(a, b);
+}
+function highDrawDiscard(hand) {
+    const cnt = {};
+    hand.forEach(c => cnt[c.v] = (cnt[c.v] || 0) + 1);
+    const groups = Object.entries(cnt).map(([v, c]) => ({ v: +v, c })).sort((a, b) => b.c - a.c || b.v - a.v);
+    const ev = evalHigh5(hand);
+    if (ev.cat >= 4)
+        return [];
+    if (ev.cat === 3 || ev.cat === 6 || ev.cat === 7) {
+        const keepV = new Set(groups.filter(g => g.c >= (ev.cat === 3 ? 3 : 2)).map(g => g.v));
+        return hand.map((c, i) => i).filter(i => !keepV.has(hand[i].v));
+    }
+    if (ev.cat === 2) {
+        const keepV = new Set(groups.filter(g => g.c === 2).map(g => g.v));
+        return hand.map((c, i) => i).filter(i => !keepV.has(hand[i].v));
+    }
+    const suits = {};
+    hand.forEach(c => suits[c.s] = (suits[c.s] || 0) + 1);
+    const flushSuit = Object.keys(suits).find(s => suits[s] === 4);
+    if (flushSuit)
+        return hand.map((c, i) => i).filter(i => hand[i].s !== flushSuit);
+    const uv = [...new Set(hand.map(c => c.v))].sort((a, b) => a - b);
+    for (let i = 0; i + 3 < uv.length || i === 0 && uv.length >= 4; i++) {
+        const run = uv.slice(i, i + 4);
+        if (run.length === 4 && run[3] - run[0] === 3) {
+            const keepV = new Set(run);
+            return hand.map((c, j) => j).filter(j => !keepV.has(hand[j].v));
+        }
+    }
+    if (ev.cat === 1) {
+        const keepV = new Set(groups.filter(g => g.c === 2).map(g => g.v));
+        return hand.map((c, i) => i).filter(i => !keepV.has(hand[i].v));
+    }
+    const byHigh = hand.map((c, i) => ({ i, v: c.v })).sort((a, b) => b.v - a.v);
+    const keep = new Set([byHigh[0].i]);
+    return hand.map((c, i) => i).filter(i => !keep.has(i));
 }
 function cpuDrawCards(hand, pr, gid, community = []) {
     if (IS_DRAMAHA(gid))
@@ -668,7 +710,10 @@ function cpuDrawCards(hand, pr, gid, community = []) {
     if (IS_SPLITDRAW(gid))
         return cpuDrawCardsSplit(hand, gid, pr, community);
     let discard;
-    if (IS_BADUGI(gid)) {
+    if (IS_HIGHDRAW(gid)) {
+        discard = highDrawDiscard(hand);
+    }
+    else if (IS_BADUGI(gid)) {
         const keepIdx = badugiKeepIndices(hand);
         discard = hand.map((_, i) => i).filter(i => !keepIdx.has(i));
     }
@@ -681,6 +726,15 @@ function cpuDrawCards(hand, pr, gid, community = []) {
             else
                 discard.push(i);
         });
+    }
+    if (IS_HIGHDRAW(gid)) {
+        if (discard.length === 0)
+            return [];
+        if (discard.length <= 1 && evalHigh5(hand).cat >= 2 && Math.random() < pr.standPat * 0.5)
+            return [];
+        if (discard.length > 0 && Math.random() < pr.leak)
+            return discard.slice(0, -1);
+        return discard;
     }
     if (discard.length === 1 && Math.random() < pr.standPat) {
         const credible = !IS_BADUGI(gid) && eval27(hand).cat === 0 && eval27(hand).vs[0] <= 9;
@@ -792,7 +846,14 @@ function cpuDecide(st, idx) {
     const hand = pl.hand;
     const ev = evalHand(st.gid, hand);
     let keepers, good, ok;
-    if (IS_BADUGI(st.gid)) {
+    if (IS_HIGHDRAW(st.gid)) {
+        const cnt = {};
+        hand.forEach(c => cnt[c.v] = (cnt[c.v] || 0) + 1);
+        keepers = hand.filter(c => cnt[c.v] >= 2).length;
+        good = ev && ev.cat >= 2;
+        ok = ev && (ev.cat >= 2 || (ev.cat === 1 && (ev.tb[0] || 0) >= 9));
+    }
+    else if (IS_BADUGI(st.gid)) {
         keepers = badugiKeepIndices(hand).size;
         good = ev && ev.size === 4 && ev.vs[0] <= 10;
         ok = ev && (ev.size === 4 || (ev.size === 3 && ev.vs[0] <= 6));
@@ -1043,6 +1104,7 @@ function cpuDecideFlop(st, idx) {
     const fb = st.streetN <= 1 ? STK(st).sbet : STK(st).bbet;
     const tight = st.botTight?.[idx] ?? 50;
     const L = (100 - tight) / 100;
+    const skill = (st.botSkill?.[idx] ?? 50) / 100;
     const mode = BET_MODE(st.gid);
     const pre = (st.board || []).length === 0;
     const str = flopStrength(st, pl);
@@ -1050,8 +1112,8 @@ function cpuDecideFlop(st, idx) {
     const openThresh = pre ? pfC + 0.06 - L * 0.24 : 0.40 - L * 0.18;
     const callThresh = pre ? pfC - L * 0.26 : 0.30 - L * 0.16;
     const raiseThresh = pre ? Math.max(0.68, pfC + 0.14) - L * 0.12 : 0.74 - L * 0.10;
-    const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32));
-    const slow = tilt === 0 && Math.random() < pr.slow;
+    const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32)) * (1 - skill * 0.35);
+    const slow = tilt === 0 && Math.random() < pr.slow * (1 - skill * 0.4);
     const sizedTotal = (raising) => {
         if (mode === "fl")
             return pl.betSt + (raising ? call + fb : fb);
@@ -1086,7 +1148,7 @@ function cpuDecideFlop(st, idx) {
     if (mode !== "fl")
         callT += Math.max(0, potOdds - 0.22) * 0.9;
     if (!pre && (st.streetN || 0) >= 2)
-        callT += 0.05 * Math.min(2, st.streetN - 1);
+        callT += (0.05 + skill * 0.04) * Math.min(2, st.streetN - 1);
     if (str >= raiseT && !slow)
         return { action: "raise", amount: sizedTotal(true) };
     const shove = call >= pl.chips * 0.6 || (!pre && call >= (st.pot - call) * 1.1);
@@ -1249,6 +1311,20 @@ function heroDrawStrength(st, me) {
         }
         ls = Math.min(0.95, ls);
         return Math.max(0, Math.min(1, 0.5 * hs + 0.5 * ls));
+    }
+    if (IS_HIGHDRAW(st.gid)) {
+        const CAT = [0.20, 0.40, 0.60, 0.74, 0.85, 0.90, 0.95, 0.99, 1];
+        let s = CAT[ev.cat] ?? 0.2;
+        if (ev.cat <= 1 && future > 0) {
+            const suits = {};
+            me.hand.forEach(c => suits[c.s] = (suits[c.s] || 0) + 1);
+            const uv = [...new Set(me.hand.map(c => c.v))].sort((a, b) => a - b);
+            const fourFlush = Object.values(suits).some(n => n === 4);
+            const fourStr = uv.length >= 4 && uv.some((_, i) => uv[i + 3] !== undefined && uv[i + 3] - uv[i] === 3);
+            if (fourFlush || fourStr)
+                s = Math.max(s, 0.5 + future * 0.04);
+        }
+        return Math.max(0, Math.min(1, s));
     }
     if (IS_BADUGI(st.gid)) {
         if (ev && ev.size === 4)
@@ -1464,6 +1540,8 @@ function coachDrawPlan(st, me) {
     if (IS_DRAMAHA(st.gid))
         return planDramaha(st, me);
     const dl = drawsLeftOf(st);
+    if (IS_HIGHDRAW(st.gid))
+        return planDrawHigh(me.hand);
     if (IS_BADUGI(st.gid))
         return planBadugi(me.hand, dl);
     if (st.gid === "archie" || st.gid === "veronica")
@@ -1586,8 +1664,12 @@ function drawEquity(st, me, sims = 1200) {
     }
     return wins / sims;
 }
-const PURE_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad";
+const PURE_DRAW = gid => gid === "single" || gid === "triple" || gid === "badugi" || gid === "pl27td" || gid === "plbad" || gid === "pl5d";
 function heroMade(gid, ev) {
+    if (IS_HIGHDRAW(gid)) {
+        const made = !!(ev && ev.cat >= 2);
+        return { made, top: made ? ev.cat : 0, txt: made ? `a pat ${ev.desc}` : (ev && ev.cat === 1 ? "a pair" : "a draw") };
+    }
     if (IS_BADUGI(gid))
         return { made: !!(ev && ev.size === 4), top: ev && ev.size === 4 ? ev.vs[0] : 99, txt: ev && ev.size === 4 ? `a ${ev.desc} badugi` : "an incomplete badugi" };
     const made = !!(ev && ev.cat === 0 && ev.vs[0] <= 10);
@@ -2281,12 +2363,13 @@ const mkState = (gid, prev = null) => {
     return {
         gid, phase: "idle", deck: [], players: mkPs(prev?.players, startChips, nSeats), board: [], board2: [],
         pot: 0, currentBet: 0, betCount: 0, queue: [], streetN: 0, drawN: 0, seq: 0,
-        maxDraws: (gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid) || gid === "pl27td" || gid === "plbad") ? 3 : 1, nlBet: 40,
+        maxDraws: (gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid) || gid === "pl27td" || gid === "plbad") ? 3 : gid === "pl5d" ? 2 : 1, nlBet: 40,
         dealerIdx: Math.floor(Math.random() * nSeats), reveal: false,
         msg: "Press Deal to start", result: null, sel: [],
         cpuTilt: prev?.cpuTilt || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 },
         stats: prev?.stats || { hands: 0, wins: 0 },
         botTight: prev?.botTight || { 1: 62, 2: 18, 3: 38, 4: 78, 5: 45, 6: 20, 7: 30 },
+        botSkill: prev?.botSkill || { 1: 50, 2: 45, 3: 58, 4: 60, 5: 62, 6: 40, 7: 55 },
         coach: prev?.coach ?? true,
         exploitDial: prev?.exploitDial ?? 0,
         format, stakeIdx, bbDepth,
@@ -3248,7 +3331,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03aq";
+const APP_VERSION = "2026.07.03ar";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3332,7 +3415,7 @@ const MIX_PRESETS = [
     { id: "hose", name: "HOSE", desc: "4 games · fixed-limit", games: ["lhe", "omaha8", "stud", "stud8"] },
     { id: "horseo", name: "HORSEO", desc: "HORSE + Big O", games: ["lhe", "omaha8", "razz", "stud", "stud8", "bigo"] },
     { id: "tstud", name: "TRIPLE STUD", desc: "razz · stud · stud-8", games: ["razz", "stud", "stud8"] },
-    { id: "bigbet", name: "BIG BET MIX", desc: "the WSOP big-bet eight", games: ["nlhe", "plo", "bigo", "single", "crazyp", "pl27td", "plo8", "plbad"] },
+    { id: "bigbet", name: "BIG BET MIX", desc: "the WSOP big-bet nine", games: ["nlhe", "plo", "bigo", "single", "crazyp", "pl27td", "plo8", "plbad", "pl5d"] },
     { id: "omahamix", name: "OMAHA MIX", desc: "PLO · Omaha-8 · Big O", games: ["plo", "omaha8", "bigo"] },
     { id: "draw", name: "TRIPLE DRAW MIX", desc: "2-7 · badugi", games: ["triple", "badugi"] },
     { id: "dramaha", name: "DRAMAHA MIX", desc: "split-pot draw games", games: ["dramahaH", "dramaha27", "dramadugi", "badacey", "badeucey"] },
@@ -3464,8 +3547,8 @@ const SCEN_STAGES = [
     { n: "Three tables", u: "24 left", avgBB: 30, skill: 0.5, left: () => 24 },
     { n: "Two tables", u: "16 left", avgBB: 26, skill: 0.6, left: () => 16 },
     { n: "Final table", u: "8 left", avgBB: 24, skill: 0.7, left: () => 8 },
-    { n: "Short-handed", u: "5 left", avgBB: 26, skill: 0.75, left: () => 5 },
-    { n: "Heads-up", u: "for it all", avgBB: 40, skill: 0.85, left: () => 2 },
+    { n: "Short-handed", u: "5 left", avgBB: 26, skill: 0.85, left: () => 5 },
+    { n: "Heads-up", u: "for it all", avgBB: 40, skill: 0.95, left: () => 2 },
 ];
 const SCEN_STACKS = [
     { n: "Chip leader", u: "1st", m: 2.6 },
@@ -3540,10 +3623,35 @@ function buildScenarioState(baseSt, cfg) {
     const scen = { on: true, icm0, mincash: pv.mincash, stageN: pv.SC.n, stackN: pv.SK.n, cfg: { ...cfg } };
     const skill = pv.SC.skill || 0;
     const bt = { ...(s.botTight || {}) };
+    const bs = { ...(s.botSkill || {}) };
     for (const k of Object.keys(bt))
-        bt[k] = Math.max(bt[k], Math.round(bt[k] + (75 - bt[k]) * skill * 0.55));
-    return { ...s, players, botTight: bt, tour: { ...tour, scen } };
+        bt[k] = Math.max(bt[k], Math.round(bt[k] + (68 - bt[k]) * skill * 0.30));
+    for (const k of Object.keys(bs))
+        bs[k] = Math.round(bs[k] + (95 - bs[k]) * skill * 0.8);
+    return { ...s, players, botTight: bt, botSkill: bs, tour: { ...tour, scen } };
 }
+function scenReview(log) {
+    const graded = (log || []).filter(d => d && d.verdict);
+    const n = graded.length;
+    if (!n)
+        return null;
+    const leaks = graded.filter(d => d.verdict === "leak");
+    const sharp = Math.round(100 * (n - leaks.length) / n);
+    const byCat = {};
+    leaks.forEach(d => { byCat[d.category] = (byCat[d.category] || 0) + (d.severity || 0.4); });
+    const ranked = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    const biggest = ranked.length ? ranked[0][0] : null;
+    const bigCount = biggest ? leaks.filter(d => d.category === biggest).length : 0;
+    return { n, leaks: leaks.length, sharp, biggest, bigCount };
+}
+const SCENARIO_TIPS = {
+    "Value aggression": "you left value on the table — bet and raise your strong hands harder.",
+    "Over-folding": "you folded hands that were priced in — defend a little wider.",
+    "Calling discipline": "you called too light — those chips add up; fold the marginal spots.",
+    "Bluff control": "you fired too often into bad spots — pick cleaner bluffing lines.",
+    "Preflop selection": "tighten (or widen) your starting hands to fit the stage.",
+    "Solid lines": "a few lines drifted from the sharp play — small tweaks.",
+};
 function scenGrade(cash, icm0, mincash) {
     if (!cash || cash <= 0)
         return icm0 < mincash * 0.5 ? "C" : icm0 < mincash ? "D" : "F";
@@ -4002,7 +4110,7 @@ function dealCards(s) {
         cursor += 1;
     return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, pot, queue, board: vBoard,
         currentBet: stk.bblind,
-        phase: "acting", maxDraws: (s.gid === "triple" || s.gid === "badugi" || IS_SPLITDRAW(s.gid)) ? 3 : 1, dealerIdx: dealer,
+        phase: "acting", maxDraws: (s.gid === "triple" || s.gid === "badugi" || s.gid === "pl27td" || s.gid === "plbad" || IS_SPLITDRAW(s.gid)) ? 3 : s.gid === "pl5d" ? 2 : 1, dealerIdx: dealer,
         nlBet: Math.max(40, Math.floor(pot * 0.65)),
         dealKey: (s.dealKey || 0) + 1, seq: (s.seq || 0) + 1,
         msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
@@ -4079,6 +4187,7 @@ function App() {
             return;
         }
         tsClear();
+        scenLogRef.current = [];
         setScenCfg(cfg);
         setSt(s => buildScenarioState(s, cfg));
         setView("play");
@@ -4115,6 +4224,7 @@ function App() {
     const mobile = screenW < 560;
     const curGame = GAMES.find(g => g.id === st.gid);
     const histRef = useRef({ dealKey: -1, decisions: [], startChips: null, startHole: null });
+    const scenLogRef = useRef([]);
     const recordedRef = useRef(-1);
     useEffect(() => {
         if (st.phase === "idle" || st.phase === "showdown")
@@ -4151,13 +4261,19 @@ function App() {
         catch { }
     }, [st.phase, st.dealKey]);
     const logBet = (action, amount) => { try {
-        histRef.current.decisions.push(gradeDecision(st, action, amount));
+        const g = gradeDecision(st, action, amount);
+        histRef.current.decisions.push(g);
+        if (st.tour?.scen)
+            scenLogRef.current.push(g);
     }
     catch { } };
     const logDraw = (sel) => { try {
         const g = gradeDraw(st, sel);
-        if (g)
+        if (g) {
             histRef.current.decisions.push(g);
+            if (st.tour?.scen)
+                scenLogRef.current.push(g);
+        }
     }
     catch { } };
     useEffect(() => {
@@ -4645,7 +4761,35 @@ function App() {
                                     " \u2014 $",
                                     (scen.icm0 - prize).toLocaleString(),
                                     " under expectation.")
-                                    : React.createElement(React.Fragment, null, " \u2014 short of the spot's value this run.")))),
+                                    : React.createElement(React.Fragment, null, " \u2014 short of the spot's value this run.")),
+                        (() => {
+                            const rev = scenReview(scenLogRef.current);
+                            if (!rev)
+                                return null;
+                            return (React.createElement("div", { style: { marginTop: 9, paddingTop: 9, borderTop: "1px solid rgba(201,168,76,0.18)" } },
+                                React.createElement("div", { style: { fontSize: 10.5, color: "#cfc3a0" } },
+                                    "You played ",
+                                    React.createElement("b", { style: { color: rev.sharp >= 80 ? "#86efac" : rev.sharp >= 60 ? "#e3c87a" : "#f0a8a0" } },
+                                        rev.sharp,
+                                        "% sharp"),
+                                    " across ",
+                                    rev.n,
+                                    " decision",
+                                    rev.n === 1 ? "" : "s",
+                                    rev.leaks > 0 ? React.createElement(React.Fragment, null,
+                                        " \u00B7 ",
+                                        rev.leaks,
+                                        " leak",
+                                        rev.leaks === 1 ? "" : "s",
+                                        ".") : React.createElement(React.Fragment, null, " \u00B7 clean run.")),
+                                rev.biggest && (React.createElement("div", { style: { marginTop: 5, fontSize: 10, color: "#c7a86a" } },
+                                    "Biggest leak \u2014 ",
+                                    React.createElement("b", null, rev.biggest),
+                                    " (",
+                                    rev.bigCount,
+                                    "\u00D7): ",
+                                    SCENARIO_TIPS[rev.biggest] || "review these spots."))));
+                        })())),
                     scen && React.createElement("button", { style: S.resultBtn, onClick: () => startScenario(scen.cfg) }, "RUN IT BACK \u2014 SAME SCENARIO"),
                     React.createElement("button", { style: scen ? S.resultBtn2 : S.resultBtn, onClick: () => { setSt(s => ({ ...s, tour: null })); setView("lobby"); } }, scen ? "New scenario" : "NEW TOURNAMENT"),
                     React.createElement("button", { style: S.resultBtn2, onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setView("play"); } }, "Back to cash game"))));
