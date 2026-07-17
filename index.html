@@ -982,6 +982,20 @@ function flopStrength(st, pl) {
             const flushish = Math.max(1, ...Object.values(suits)) >= 4;
             if (boardPaired && !pocketPair && !matches && !flushish)
                 s = Math.min(s, 0.23);
+            if (bd.length >= 5 && !pocketPair && !flushish) {
+                const boardHi = flopHigh(gid, [], bd);
+                const beatsBoard = boardHi && cmpHigh(hi, boardHi) < 0;
+                if (!beatsBoard)
+                    s = Math.min(s, 0.16);
+                else if (hi.cat === 2) {
+                    const boardVals = [...new Set(bd.map(c => c.v))].sort((a, b) => b - a);
+                    const madeFrom = hv.filter(v => bc[v]).sort((a, b) => b - a);
+                    const topPairVal = (hi.tb || [])[0] || 0;
+                    const overcards = boardVals.filter(v => v > topPairVal).length;
+                    if (madeFrom.length && topPairVal <= 6 && overcards >= 2)
+                        s = Math.min(s, 0.26);
+                }
+            }
         }
         if (gid === "lhe" && bd.length < 5) {
             const allSuits = {};
@@ -1071,6 +1085,12 @@ function cpuDecideFlop(st, idx) {
         callT += 0.05 * Math.min(2, st.streetN - 1);
     if (str >= raiseT && !slow)
         return { action: "raise", amount: sizedTotal(true) };
+    const shove = call >= pl.chips * 0.6 || (!pre && call >= (st.pot - call) * 1.1);
+    if (shove) {
+        const need = pre ? 0.40 : 0.48;
+        return (str >= Math.max(callT, need - L * 0.06))
+            ? { action: "call", amount: 0 } : { action: "fold", amount: 0 };
+    }
     const mayBluff = bluff && !reraised && liveOpp <= 2 && !(icm && icm.tighten > 0);
     const cheapCall = str >= callT - 0.08 && potOdds < 0.2 && liveOpp <= 2;
     if (str >= callT || cheapCall || mayBluff)
@@ -1092,8 +1112,11 @@ function studStrength(st, pl) {
                 s = top <= 8 ? Math.max(s, 0.60 + (8 - top) * 0.06)
                     : Math.min(s, 0.50 - (top - 8) * 0.04);
             }
-            else
-                s = Math.min(s, 0.30);
+            else {
+                const lowCount = [...new Set(pl.hand.map(c => lowVal(c.v)).filter(v => v <= 8))].length;
+                const deadNoDraw = lowCount <= 3 || n >= 6;
+                s = Math.min(s, deadNoDraw ? 0.05 : 0.20);
+            }
         }
         s = Math.max(0, Math.min(1, s));
         if (gid === "razzdugi") {
@@ -1180,7 +1203,7 @@ function cpuDecideStud(st, idx) {
         return { action: "raise", amount: pl.betSt + call + fb };
     const potOdds = call / (st.pot + call);
     const mayBluff = bluff && !reraised && liveOpp <= 2 && !(icm && icm.tighten > 0);
-    const cheapCall = str >= callT - 0.08 && potOdds < 0.18 && liveOpp <= 2;
+    const cheapCall = str >= Math.max(0.28, callT - 0.08) && potOdds < 0.18 && liveOpp <= 2;
     if (str >= callT || cheapCall || mayBluff)
         return { action: "call", amount: 0 };
     return { action: "fold", amount: 0 };
@@ -2264,6 +2287,8 @@ const mkState = (gid, prev = null) => {
         exploitDial: prev?.exploitDial ?? 0,
         format, stakeIdx, bbDepth,
         tour: format === "tourney" ? (prev?.tour ?? null) : null,
+        cashSeq: format === "tourney" ? null : (prev?.cashSeq ?? null),
+        cashIdx: format === "tourney" ? 0 : (prev?.cashIdx ?? 0),
         drawDone: false,
         discardDone: false,
     };
@@ -3219,7 +3244,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ao";
+const APP_VERSION = "2026.07.03ap";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3796,7 +3821,12 @@ const LOBBY_S = {
 function dealHand(s0) {
     if (s0.tour?.on && s0.tour.result)
         return s0;
-    return dealCards(s0.tour?.on ? refillTable(rotateTour(s0)) : s0);
+    let s0b = s0;
+    if (!s0.tour?.on && s0.cashSeq && s0.cashSeq.length > 1) {
+        const idx = ((s0.cashIdx || 0) + 1) % s0.cashSeq.length;
+        s0b = { ...s0, gid: s0.cashSeq[idx], cashIdx: idx };
+    }
+    return dealCards(s0b.tour?.on ? refillTable(rotateTour(s0b)) : s0b);
 }
 function peekDealer(s) {
     const nP = s.players.length;
@@ -4155,7 +4185,15 @@ function App() {
         return () => clearTimeout(t);
     }, [st.seq, st.phase]);
     const switchGame = g => { if (!g.available)
-        return; setSt(s => mkState(g.id, s)); };
+        return; setSt(s => mkState(g.id, { ...s, cashSeq: null, cashIdx: 0 })); };
+    const startCashMix = mixId => {
+        const preset = MIX_PRESETS.find(m => m.id === mixId);
+        const seq = (preset?.games || []).filter(g => GAMES.find(x => x.id === g && x.available));
+        if (!seq.length)
+            return;
+        setSt(s => mkState(seq[0], { ...s, format: "cash", tour: null, cashSeq: seq, cashIdx: 0 }));
+        setMenuOpen(false);
+    };
     const deal = () => setSt(s => {
         if (s.tour?.on && s.tour?.dc && !s.tour.result) {
             const prep = refillTable(rotateTour(s));
@@ -4452,19 +4490,29 @@ function App() {
                     curGame?.tag && React.createElement("span", { style: S.menuTrigTag }, curGame.tag),
                     React.createElement("span", { style: S.menuTrigName }, curGame?.label || "Choose a game"),
                     st.format === "tourney" && React.createElement("span", { style: { fontSize: 7, letterSpacing: 1, color: "#9d8659", border: "1px solid #9d865955", borderRadius: 3, padding: "1px 4px", marginLeft: 6, fontWeight: "bold", alignSelf: "center" } }, "ROTATION"),
+                    st.format !== "tourney" && st.cashSeq && React.createElement("span", { style: { fontSize: 7, letterSpacing: 1, color: "#9d8659", border: "1px solid #9d865955", borderRadius: 3, padding: "1px 4px", marginLeft: 6, fontWeight: "bold", alignSelf: "center" } }, "MIX"),
                     IS_BETA && st.format !== "tourney" && React.createElement("span", { style: { fontSize: 7, letterSpacing: 1, color: "#c9a84c", border: "1px solid #c9a84c55", borderRadius: 3, padding: "1px 4px", marginLeft: 6, fontWeight: "bold", alignSelf: "center" } }, "BETA")),
                 React.createElement("span", { style: { transform: menuOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", color: "#e0bd5e", fontSize: 16, fontWeight: "bold", lineHeight: 1, marginLeft: 6 } }, st.format === "tourney" ? "🔒" : "▾")),
             menuOpen && st.format !== "tourney" && (React.createElement(React.Fragment, null,
                 React.createElement("div", { style: S.menuBackdrop, onClick: () => setMenuOpen(false) }),
-                React.createElement("div", { style: S.menuDropdown }, SECTIONS.map(sec => (React.createElement("div", { key: sec.title, style: S.selSection },
-                    React.createElement("div", { style: S.selSecTitle }, sec.title),
-                    React.createElement("div", { style: S.selGrid }, sec.games.map(g => (React.createElement("button", { key: g.id, onClick: () => { if (g.available) {
-                            switchGame(g);
-                            setMenuOpen(false);
-                        } }, disabled: !g.available, style: { ...S.gBtn, ...(g.id === st.gid ? S.gOn : {}), ...(!g.available ? S.gOff : {}) } },
-                        g.tag && React.createElement("span", { style: { ...S.gTag, ...(g.id === st.gid ? { color: "#c9a84c" } : {}) } }, g.tag),
-                        React.createElement("span", { style: S.gName }, g.label),
-                        !g.available && React.createElement("span", { style: S.gSoon }, "\uFF0B")))))))))))),
+                React.createElement("div", { style: S.menuDropdown },
+                    React.createElement("div", { style: S.selSection },
+                        React.createElement("div", { style: S.selSecTitle }, "MIXED ROTATIONS \u00B7 one game per hand"),
+                        React.createElement("div", { style: S.selGrid }, MIX_PRESETS.filter(m => m.games && m.id !== "dealers").map(m => {
+                            const on = st.cashSeq && st.cashSeq.length === m.games.filter(g => GAMES.find(x => x.id === g && x.available)).length && st.cashSeq[0] === m.games[0];
+                            return (React.createElement("button", { key: m.id, onClick: () => startCashMix(m.id), style: { ...S.gBtn, ...(on ? S.gOn : {}) } },
+                                React.createElement("span", { style: { ...S.gTag, ...(on ? { color: "#c9a84c" } : {}) } }, "MIX"),
+                                React.createElement("span", { style: S.gName }, m.name)));
+                        }))),
+                    SECTIONS.map(sec => (React.createElement("div", { key: sec.title, style: S.selSection },
+                        React.createElement("div", { style: S.selSecTitle }, sec.title),
+                        React.createElement("div", { style: S.selGrid }, sec.games.map(g => (React.createElement("button", { key: g.id, onClick: () => { if (g.available) {
+                                switchGame(g);
+                                setMenuOpen(false);
+                            } }, disabled: !g.available, style: { ...S.gBtn, ...(g.id === st.gid ? S.gOn : {}), ...(!g.available ? S.gOff : {}) } },
+                            g.tag && React.createElement("span", { style: { ...S.gTag, ...(g.id === st.gid ? { color: "#c9a84c" } : {}) } }, g.tag),
+                            React.createElement("span", { style: S.gName }, g.label),
+                            !g.available && React.createElement("span", { style: S.gSoon }, "\uFF0B")))))))))))),
         view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, scen: scenCfg, setScen: setScenCfg, onScenario: startScenario, onCash: () => { setSt(s => s.format !== "cash" ? mkState(s.gid, { ...s, format: "cash", tour: null, players: [] }) : s); setView("play"); }, onResume: () => { const q = tsLoad(); if (q) {
                 setSt(q);
                 setView("play");
