@@ -37,6 +37,19 @@
   <script>
 "use strict";
 const { useState, useEffect, useRef, useMemo } = React;
+let _rngState = null;
+function seedRng(n) { _rngState = (n >>> 0) || 1; }
+function clearRng() { _rngState = null; }
+function getRngSeed() { return _rngState; }
+function rnd() {
+    if (_rngState === null)
+        return Math.random();
+    _rngState = (_rngState + 0x6D2B79F5) >>> 0;
+    let t = _rngState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 function useWidth() {
     const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 800);
     useEffect(() => {
@@ -139,7 +152,7 @@ function rotateTour(s) {
     const autoIdx = Math.floor((hands - 1) / orbitLen) % t.seq.length;
     const gid = t.dc ? s.gid : (t.seq[autoIdx] || s.gid);
     const mixIdx = t.dc ? Math.max(0, t.seq.indexOf(gid)) : autoIdx;
-    const clock = (t.clock || 0) + Math.round(TOUR_HAND_SECS * (0.85 + Math.random() * 0.3));
+    const clock = (t.clock || 0) + Math.round(TOUR_HAND_SECS * (0.85 + rnd() * 0.3));
     const level = tourLevelFromClock(clock, t.levelSec || TOUR_LEVEL_SEC);
     return { ...s, gid, tour: { ...t, hands, mixIdx, clock, level } };
 }
@@ -149,7 +162,7 @@ function botChooseGame(s, seatId) {
         return s.gid;
     const pr = PROF[seatId] || { aggr: 0.5 };
     const aggr = pr.aggr ?? 0.5;
-    const scored = seq.map(g => ({ g, w: ((BET_MODE(g) !== "fl" ? aggr : (1 - aggr) * 0.9) + Math.random() * 0.5) * (g === "lhe" ? 0.28 : 1) }))
+    const scored = seq.map(g => ({ g, w: ((BET_MODE(g) !== "fl" ? aggr : (1 - aggr) * 0.9) + rnd() * 0.5) * (g === "lhe" ? 0.28 : 1) }))
         .sort((a, b) => b.w - a.w);
     return scored[0].g;
 }
@@ -235,7 +248,7 @@ function refillTable(s) {
     const taken = s.players.map(p => p.name).filter(Boolean);
     const players = s.players.map((p, i) => {
         if (p.id === 0 || p.chips > 0)
-            return p;
+            return p.justSeated ? { ...p, justSeated: false } : p;
         refilled = true;
         busted += 1;
         const name = freshName(taken, (t.hands || 0) * 7 + i * 13 + busted);
@@ -243,7 +256,7 @@ function refillTable(s) {
         let stack = Math.round(avg * (0.5 + ((i * 7 + 3) % 10) / 10));
         stack = Math.max(Math.round(F.startStack * 0.15), Math.min(stack, cap - running));
         running += stack;
-        return { ...p, chips: stack, name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, lastAct: { text: "New seat", color: "#9d8659" } };
+        return { ...p, chips: stack, name, folded: false, sittingOut: false, busted: false, hand: [], betSt: 0, justSeated: true, lastAct: { text: "New seat", color: "#9d8659" } };
     });
     return refilled ? { ...s, players, tour: { ...t, busted } } : s;
 }
@@ -281,7 +294,7 @@ function mkDeck() {
         for (const r of RANKS)
             d.push({ s, r, v: RV[r] });
     for (let i = d.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(rnd() * (i + 1));
         [d[i], d[j]] = [d[j], d[i]];
     }
     return d;
@@ -730,22 +743,22 @@ function cpuDrawCards(hand, pr, gid, community = []) {
     if (IS_HIGHDRAW(gid)) {
         if (discard.length === 0)
             return [];
-        if (discard.length <= 1 && evalHigh5(hand).cat >= 2 && Math.random() < pr.standPat * 0.5)
+        if (discard.length <= 1 && evalHigh5(hand).cat >= 2 && rnd() < pr.standPat * 0.5)
             return [];
-        if (discard.length > 0 && Math.random() < pr.leak)
+        if (discard.length > 0 && rnd() < pr.leak)
             return discard.slice(0, -1);
         return discard;
     }
-    if (discard.length === 1 && Math.random() < pr.standPat) {
+    if (discard.length === 1 && rnd() < pr.standPat) {
         const credible = !IS_BADUGI(gid) && eval27(hand).cat === 0 && eval27(hand).vs[0] <= 9;
-        if (credible || Math.random() < 0.18)
+        if (credible || rnd() < 0.18)
             return [];
     }
-    if (discard.length === 0 && Math.random() < pr.over) {
+    if (discard.length === 0 && rnd() < pr.over) {
         const worst = hand.reduce((w, c, i) => c.v > w.v ? { v: c.v, i } : w, { v: 0, i: 0 });
         return [worst.i];
     }
-    if (discard.length > 0 && Math.random() < pr.leak)
+    if (discard.length > 0 && rnd() < pr.leak)
         return discard.slice(0, -1);
     return discard;
 }
@@ -793,9 +806,9 @@ function cpuDrawCardsSplit(hand, gid, pr, community = []) {
         } });
     }
     let discard = hand.map((_, i) => i).filter(i => !keep.has(i));
-    if (discard.length === 1 && Math.random() < pr.standPat)
+    if (discard.length === 1 && rnd() < pr.standPat)
         return [];
-    if (discard.length > 0 && Math.random() < pr.leak)
+    if (discard.length > 0 && rnd() < pr.leak)
         return discard.slice(0, -1);
     return discard;
 }
@@ -820,6 +833,8 @@ function badugiKeepIndices(hand) {
     return best.idx;
 }
 function cpuDecide(st, idx) {
+    if (!PROF[idx])
+        return { action: Math.max(0, st.currentBet - (st.players[idx]?.betSt || 0)) > 0 ? "fold" : "check", amount: 0 };
     if (IS_FLOP(st.gid))
         return cpuDecideFlop(st, idx);
     if (IS_STUD(st.gid))
@@ -839,10 +854,10 @@ function cpuDecide(st, idx) {
     const effBluff = Math.min(0.55, pr.bluff * looseMul * (st.gid === "single" ? 1.25 : 0.75) * (1 + tilt * 0.35));
     const effCry = Math.min(0.6, pr.cry * looseMul * (1 + tilt * 0.32));
     const effSlow = tilt > 0 ? 0 : pr.slow;
-    const isBluff = Math.random() < effBluff;
-    const isSlow = Math.random() < effSlow;
-    const isAggr = Math.random() < effAggr;
-    const isCry = Math.random() < effCry;
+    const isBluff = rnd() < effBluff;
+    const isSlow = rnd() < effSlow;
+    const isAggr = rnd() < effAggr;
+    const isCry = rnd() < effCry;
     const hand = pl.hand;
     const ev = evalHand(st.gid, hand);
     let keepers, good, ok;
@@ -885,7 +900,7 @@ function cpuDecide(st, idx) {
     const size = () => {
         if (!isNL)
             return fb;
-        const noise = (Math.floor(Math.random() * 5) - 2) * 5;
+        const noise = (Math.floor(rnd() * 5) - 2) * 5;
         return Math.min(Math.max(Math.floor(st.pot * pr.sz) + noise, 20), pl.chips);
     };
     if (st.streetN === 0) {
@@ -906,20 +921,20 @@ function cpuDecide(st, idx) {
     const patOpp = (st.drawN || 0) > 0 && st.players.some(p => p.id !== idx && live(p) && p.drewLast === 0);
     if (call <= 0) {
         const patSnow = isNL && pl.drewLast === 0 && !good;
-        if ((good && !isSlow) || (ok && isAggr && !patOpp) || (isBluff && !patOpp) || (patSnow && !isSlow && Math.random() < 0.72))
+        if ((good && !isSlow) || (ok && isAggr && !patOpp) || (isBluff && !patOpp) || (patSnow && !isSlow && rnd() < 0.72))
             return { action: "bet", amount: pl.betSt + size() };
         return { action: "check", amount: 0 };
     }
     const patLead = patOpp && st.currentBet > 0 && st.players.some(p => p.id !== idx && live(p) && p.drewLast === 0 && p.betSt >= st.currentBet);
     if (good)
-        return (!isSlow && (isAggr || Math.random() < 0.5))
+        return (!isSlow && (isAggr || rnd() < 0.5))
             ? { action: "raise", amount: pl.betSt + Math.max(0, call) + size() }
             : { action: "call", amount: 0 };
     if (ok && !patLead && call <= callTolPD)
         return { action: "call", amount: 0 };
     if ((isBluff || isCry) && !patLead && call <= callTolPD * 0.8)
         return { action: "call", amount: 0 };
-    if (isNL && (ok || keepers >= minKeep) && call <= callTolPD * 1.25 && Math.random() < 0.38)
+    if (isNL && (ok || keepers >= minKeep) && call <= callTolPD * 1.25 && rnd() < 0.38)
         return { action: "call", amount: 0 };
     return { action: "fold", amount: 0 };
 }
@@ -1096,6 +1111,42 @@ function potLimitMaxTotal(st, pl) {
     const toCall = Math.max(0, st.currentBet - pl.betSt);
     return Math.min(pl.betSt + pl.chips, st.currentBet + st.pot + toCall);
 }
+function legalActions(st) {
+    if (!st || st.phase !== "acting" || !st.queue?.length)
+        return null;
+    const seat = st.queue[0];
+    const pl = st.players[seat];
+    if (!pl)
+        return null;
+    const mode = BET_MODE(st.gid);
+    const stk = STK(st);
+    const toCall = Math.max(0, st.currentBet - pl.betSt);
+    const canFold = true;
+    const canCheck = toCall === 0;
+    const canCall = toCall > 0;
+    const cap = mode === "fl" ? 4 : 99;
+    const raiseLocked = st.currentBet > 0 && (st.betCount || 0) >= cap;
+    const hasChips = pl.chips > 0;
+    const aggressive = hasChips && !raiseLocked;
+    const opening = st.currentBet === 0;
+    const capTot = mode === "pl" ? potLimitMaxTotal(st, pl) : (pl.betSt + pl.chips);
+    const minInc = opening ? stk.bblind : st.currentBet + stk.bblind;
+    const stackTot = pl.betSt + pl.chips;
+    const capTot2 = Math.min(capTot, stackTot);
+    const canIncrease = capTot2 > st.currentBet;
+    const minTotal = Math.min(capTot2, Math.max(minInc, st.currentBet + 1));
+    const maxTotal = capTot2;
+    const aggressive2 = aggressive && canIncrease;
+    return {
+        seat, toCall,
+        canFold, canCheck, canCall,
+        canBet: aggressive2 && opening,
+        canRaise: aggressive2 && !opening,
+        betLabel: opening ? "Bet" : "Raise",
+        minTotal, maxTotal,
+        isAllInToCall: canCall && toCall >= pl.chips,
+    };
+}
 function cpuDecideFlop(st, idx) {
     const pr = PROF[idx];
     const pl = st.players[idx];
@@ -1112,8 +1163,8 @@ function cpuDecideFlop(st, idx) {
     const openThresh = pre ? pfC + 0.06 - L * 0.24 : 0.40 - L * 0.18;
     const callThresh = pre ? pfC - L * 0.26 : 0.30 - L * 0.16;
     const raiseThresh = pre ? Math.max(0.68, pfC + 0.14) - L * 0.12 : 0.74 - L * 0.10;
-    const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32)) * (1 - skill * 0.35);
-    const slow = tilt === 0 && Math.random() < pr.slow * (1 - skill * 0.4);
+    const bluff = rnd() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32)) * (1 - skill * 0.35);
+    const slow = tilt === 0 && rnd() < pr.slow * (1 - skill * 0.4);
     const sizedTotal = (raising) => {
         if (mode === "fl")
             return pl.betSt + (raising ? call + fb : fb);
@@ -1243,8 +1294,8 @@ function cpuDecideStud(st, idx) {
     const openThresh = 0.42 - L * 0.18;
     const callThresh = 0.32 - L * 0.16;
     const raiseThresh = 0.76 - L * 0.10;
-    const bluff = Math.random() < Math.min(0.42, pr.bluff * (0.6 + L) * (1 + tilt * 0.3));
-    const slow = tilt === 0 && Math.random() < pr.slow;
+    const bluff = rnd() < Math.min(0.42, pr.bluff * (0.6 + L) * (1 + tilt * 0.3));
+    const slow = tilt === 0 && rnd() < pr.slow;
     if (call <= 0) {
         if ((str >= openThresh && !slow) || bluff)
             return { action: "bet", amount: pl.betSt + fb };
@@ -1863,6 +1914,53 @@ function studHandName(hand) {
     }
     return null;
 }
+function handName(st, me) {
+    const gid = st.gid, hand = me.hand || [];
+    if (IS_FLOP(gid) && !IS_PINEAPPLE(gid)) {
+        const bd = st.board || [];
+        if (bd.length < 3)
+            return "";
+        const hi = flopHigh(gid, hand, bd);
+        if (!hi)
+            return "";
+        const CAT = ["", "a pair of ", "", "", "", "", "", "", ""];
+        const bvals = [...new Set(bd.map(c => c.v))].sort((a, b) => b - a);
+        const rn = v => RANKS[v - 2];
+        if (hi.cat === 8)
+            return `${rn(hi.tb[0])}-high straight flush — `;
+        if (hi.cat === 7)
+            return `Quad ${rn(hi.tb[0])}s — `;
+        if (hi.cat === 6)
+            return `${rn(hi.tb[0])}s full — `;
+        if (hi.cat === 5)
+            return `${rn(hi.tb[0])}-high flush — `;
+        if (hi.cat === 4)
+            return `${rn(hi.tb[0])}-high straight — `;
+        if (hi.cat === 3) {
+            const holePair = hand.filter(c => c.v === hi.tb[0]).length >= 2;
+            return holePair ? `Set of ${rn(hi.tb[0])}s — ` : `Trip ${rn(hi.tb[0])}s — `;
+        }
+        if (hi.cat === 2)
+            return `Two pair, ${rn(hi.tb[0])}s & ${rn(hi.tb[1])}s — `;
+        if (hi.cat === 1) {
+            const p = hi.tb[0];
+            const rank = p >= bvals[0] ? "Top pair" : p >= (bvals[1] || 0) ? "Second pair" : "A low pair";
+            return `${rank}, ${rn(p)}s — `;
+        }
+        return "";
+    }
+    if (PURE_DRAW(gid)) {
+        const ev = evalHand(gid, hand);
+        if (IS_BADUGI(gid))
+            return ev && ev.size === 4 ? `Pat ${ev.desc.toLowerCase()} badugi — ` : "";
+        if (IS_HIGHDRAW(gid))
+            return ev && ev.cat >= 1 ? `${ev.desc} — ` : "";
+        if (ev && ev.cat === 0)
+            return `Pat ${ev.desc.toLowerCase()} — `;
+        return "";
+    }
+    return "";
+}
 function studLiveTax(st, me) {
     if (!IS_STUD(st.gid) || !me.hand || me.hand.length < 4)
         return { tax: 0, note: "" };
@@ -1922,6 +2020,11 @@ function coachBet(st, me, callAmt) {
         valueCut += lv.tax;
         if (lv.note)
             tag += lv.note;
+    }
+    else if (!tag) {
+        const nm = handName(st, me);
+        if (nm)
+            tag = nm + tag;
     }
     if (k > 0) {
         const r = tableRead(st);
@@ -2364,7 +2467,7 @@ const mkState = (gid, prev = null) => {
         gid, phase: "idle", deck: [], players: mkPs(prev?.players, startChips, nSeats), board: [], board2: [],
         pot: 0, currentBet: 0, betCount: 0, queue: [], streetN: 0, drawN: 0, seq: 0,
         maxDraws: (gid === "triple" || gid === "badugi" || IS_SPLITDRAW(gid) || gid === "pl27td" || gid === "plbad") ? 3 : gid === "pl5d" ? 2 : 1, nlBet: 40,
-        dealerIdx: Math.floor(Math.random() * nSeats), reveal: false,
+        dealerIdx: Math.floor(rnd() * nSeats), reveal: false,
         msg: "Press Deal to start", result: null, sel: [],
         cpuTilt: prev?.cpuTilt || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 },
         stats: prev?.stats || { hands: 0, wins: 0 },
@@ -2376,6 +2479,7 @@ const mkState = (gid, prev = null) => {
         tour: format === "tourney" ? (prev?.tour ?? null) : null,
         cashSeq: format === "tourney" ? null : (prev?.cashSeq ?? null),
         cashIdx: format === "tourney" ? 0 : (prev?.cashIdx ?? 0),
+        cashRep: format === "tourney" ? 0 : (prev?.cashRep ?? 0),
         drawDone: false,
         discardDone: false,
     };
@@ -2403,6 +2507,7 @@ function applyAction(st, action, amount = 0) {
             const c = Math.min(currentBet - a.betSt, a.chips);
             a.chips -= c;
             a.betSt += c;
+            a.cmt = (a.cmt || 0) + c;
             pot += c;
             a.lastAct = { text: `Call $${a.betSt}`, color: "#60a5fa" };
             newQ = st.queue.slice(1);
@@ -2416,6 +2521,7 @@ function applyAction(st, action, amount = 0) {
                 const c = Math.min(currentBet - a.betSt, a.chips);
                 a.chips -= c;
                 a.betSt += c;
+                a.cmt = (a.cmt || 0) + c;
                 pot += c;
                 a.lastAct = { text: c > 0 ? `Call $${a.betSt}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
                 newQ = st.queue.slice(1);
@@ -2425,6 +2531,7 @@ function applyAction(st, action, amount = 0) {
             const put = Math.max(0, Math.min(want - a.betSt, a.chips));
             a.chips -= put;
             a.betSt += put;
+            a.cmt = (a.cmt || 0) + put;
             pot += put;
             if (a.betSt > st.currentBet && put > 0) {
                 const verb = st.currentBet > 0 ? "Raise" : "Bet";
@@ -2600,7 +2707,7 @@ function execDraw(st, playerDiscards, playerFolds = false) {
     const draw1 = () => {
         if (!deck.length && muck.length) {
             for (let i = muck.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
+                const j = Math.floor(rnd() * (i + 1));
                 [muck[i], muck[j]] = [muck[j], muck[i]];
             }
             deck = muck.splice(0);
@@ -2712,6 +2819,62 @@ function execDiscard(st, playerDiscards) {
         boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
         msg: nx === 0 ? `Your action on 4th street — Pot $${st.pot}` : `${players[nx].name} acts on 4th street…` };
 }
+function potLayers(players) {
+    const levels = [...new Set(players.map(p => p.cmt || 0).filter(c => c > 0))].sort((a, b) => a - b);
+    const layers = [];
+    let prev = 0;
+    for (const lvl of levels) {
+        let amount = 0;
+        players.forEach(p => { amount += Math.max(0, Math.min(p.cmt || 0, lvl) - prev); });
+        if (amount > 0) {
+            let eligible = players.filter(p => (p.cmt || 0) >= lvl && live(p)).map(p => p.id);
+            if (!eligible.length)
+                eligible = players.filter(live).map(p => p.id);
+            layers.push({ amount, eligible: new Set(eligible) });
+        }
+        prev = lvl;
+    }
+    return layers;
+}
+function awardLayers(layers, pickWinners) {
+    const award = {};
+    for (const L of layers) {
+        const ws = pickWinners([...L.eligible]);
+        if (!ws || !ws.length)
+            continue;
+        const per = Math.floor(L.amount / ws.length);
+        const rem = L.amount - per * ws.length;
+        ws.forEach((id, i) => { award[id] = (award[id] || 0) + per + (i === 0 ? rem : 0); });
+    }
+    return award;
+}
+function layerAwardLanes(st, evals, lanes) {
+    const layers = potLayers(st.players);
+    const award = {};
+    for (const L of layers) {
+        const conts = evals.filter(e => L.eligible.has(e.p.id));
+        if (!conts.length)
+            continue;
+        const laneWinners = lanes.map(ln => {
+            let best = null;
+            conts.forEach(e => { const v = ln.get(e); if (v && (!best || ln.cmp(v, best) < 0))
+                best = v; });
+            if (!best)
+                return null;
+            return conts.filter(e => { const v = ln.get(e); return v && ln.cmp(v, best) === 0; });
+        });
+        const active = laneWinners.filter(w => w && w.length);
+        if (!active.length)
+            continue;
+        const shares = active.length === 1 ? [L.amount]
+            : [Math.floor(L.amount / 2), L.amount - Math.floor(L.amount / 2)];
+        active.forEach((ws, li) => {
+            const amt = shares[li], per = Math.floor(amt / ws.length);
+            ws.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? amt - per * ws.length : 0));
+        });
+    }
+    return award;
+}
 function showdown(st) {
     const still = st.players.filter(live);
     if (!still.length)
@@ -2719,19 +2882,22 @@ function showdown(st) {
     const evaled = still.map(p => ({ ...p, ev: evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev));
     const best = evaled[0];
     const winners = evaled.filter(p => cmpHand(st.gid, p.ev, best.ev) === 0);
-    const split = Math.floor(st.pot / winners.length);
-    const rem = st.pot % winners.length;
-    const potWon = winners.some(w => w.id === 0) ? split : 0;
-    const players = st.players.map(p => {
-        const wi = winners.findIndex(w => w.id === p.id);
-        return wi >= 0 ? { ...p, chips: p.chips + split + (wi === 0 ? rem : 0) } : p;
+    const layers = potLayers(st.players);
+    const award = awardLayers(layers, ids => {
+        const conts = evaled.filter(e => ids.includes(e.id));
+        if (!conts.length)
+            return [];
+        const lb = conts[0].ev;
+        return conts.filter(e => cmpHand(st.gid, e.ev, lb) === 0).map(e => e.id);
     });
-    const youWin = winners.some(w => w.id === 0);
+    const potWon = award[0] || 0;
+    const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
+    const youWin = potWon > 0;
     const names = winners.map(w => w.id === 0 ? "You" : w.name).join(" & ");
     const msg = winners.length > 1
         ? `Chop — ${names} split $${st.pot} with ${best.ev.desc}`
         : `${names} win${!youWin ? "s" : ""} $${st.pot} with ${best.ev.desc}!`;
-    return settle(st, players, potWon, youWin ? "player" : "cpu", msg, winners.map(w => w.id));
+    return settle(st, players, potWon, youWin ? "player" : "cpu", msg, Object.keys(award).map(Number));
 }
 function showdownFlop(st) {
     const still = st.players.filter(live);
@@ -2749,15 +2915,35 @@ function showdownFlop(st) {
         bestLo = e.lo; });
     const loWinners = bestLo ? evals.filter(e => e.lo && cmpLow(e.lo, bestLo) === 0) : [];
     const pot = st.pot;
-    const award = {};
     let msg;
+    const layers = potLayers(st.players);
+    const award = {};
+    for (const L of layers) {
+        const conts = evals.filter(e => L.eligible.has(e.p.id));
+        if (!conts.length)
+            continue;
+        let lHi = null;
+        conts.forEach(e => { if (!lHi || cmpHigh(e.hi, lHi) < 0)
+            lHi = e.hi; });
+        const lHiW = conts.filter(e => cmpHigh(e.hi, lHi) === 0);
+        let lLo = null;
+        conts.forEach(e => { if (e.lo && (!lLo || cmpLow(e.lo, lLo) < 0))
+            lLo = e.lo; });
+        const lLoW = lLo ? conts.filter(e => e.lo && cmpLow(e.lo, lLo) === 0) : [];
+        if (IS_HILO(st.gid) && lLoW.length) {
+            const hiShare = Math.floor(L.amount / 2), loShare = L.amount - hiShare;
+            const perHi = Math.floor(hiShare / lHiW.length), perLo = Math.floor(loShare / lLoW.length);
+            lHiW.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perHi + (i === 0 ? hiShare - perHi * lHiW.length : 0));
+            lLoW.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perLo + (i === 0 ? loShare - perLo * lLoW.length : 0));
+        }
+        else {
+            const per = Math.floor(L.amount / lHiW.length);
+            lHiW.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? L.amount - per * lHiW.length : 0));
+        }
+    }
     if (IS_HILO(st.gid) && loWinners.length) {
         const hiShare = Math.floor(pot / 2);
         const loShare = pot - hiShare;
-        const perHi = Math.floor(hiShare / hiWinners.length);
-        const perLo = Math.floor(loShare / loWinners.length);
-        hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perHi + (i === 0 ? hiShare - perHi * hiWinners.length : 0));
-        loWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perLo + (i === 0 ? loShare - perLo * loWinners.length : 0));
         const nm = e => e.p.id === 0 ? "You" : e.p.name;
         const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
         if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
@@ -2771,8 +2957,6 @@ function showdownFlop(st) {
         }
     }
     else {
-        const per = Math.floor(pot / hiWinners.length);
-        hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? pot - per * hiWinners.length : 0));
         const names = hiWinners.map(e => e.p.id === 0 ? "You" : e.p.name).join(" & ");
         const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
         const scoop = IS_HILO(st.gid) ? " (no low)" : "";
@@ -2823,8 +3007,7 @@ function showdownStud(st) {
         evals.forEach(e => { if (!best || cmpRazz(e.lo, best) < 0)
             best = e.lo; });
         const winners = evals.filter(e => cmpRazz(e.lo, best) === 0);
-        const per = Math.floor(pot / winners.length);
-        winners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? pot - per * winners.length : 0));
+        Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.lo, cmp: cmpRazz }]));
         const names = winners.map(e => nm(e.p)).join(" & ");
         const single = winners.length === 1 && winners[0].p.id !== 0;
         msg = `${names} win${single ? "s" : ""} $${pot} with ${razzDesc(best)}.`;
@@ -2841,8 +3024,7 @@ function showdownStud(st) {
         const bdWinners = evals.filter(e => cmpBadugi(e.bd, bestBd) === 0);
         const loShare = Math.floor(pot / 2), bdShare = pot - loShare;
         const perLo = Math.floor(loShare / loWinners.length), perBd = Math.floor(bdShare / bdWinners.length);
-        loWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perLo + (i === 0 ? loShare - perLo * loWinners.length : 0));
-        bdWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perBd + (i === 0 ? bdShare - perBd * bdWinners.length : 0));
+        Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.lo, cmp: cmpRazz }, { get: e => e.bd, cmp: cmpBadugi }]));
         const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
         const scoop = loWinners.length === 1 && bdWinners.length === 1 && loWinners[0].p.id === bdWinners[0].p.id;
         if (scoop) {
@@ -2858,8 +3040,7 @@ function showdownStud(st) {
         evals.forEach(e => { if (!best || cmpHigh(e.hi, best) < 0)
             best = e.hi; });
         const winners = evals.filter(e => cmpHigh(e.hi, best) === 0);
-        const per = Math.floor(pot / winners.length);
-        winners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? pot - per * winners.length : 0));
+        Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }]));
         const names = winners.map(e => nm(e.p)).join(" & ");
         const single = winners.length === 1 && winners[0].p.id !== 0;
         msg = `${names} win${single ? "s" : ""} $${pot} with ${best.desc}.`;
@@ -2878,8 +3059,7 @@ function showdownStud(st) {
         if (loWinners.length) {
             const hiShare = Math.floor(pot / 2), loShare = pot - hiShare;
             const perHi = Math.floor(hiShare / hiWinners.length), perLo = Math.floor(loShare / loWinners.length);
-            hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perHi + (i === 0 ? hiShare - perHi * hiWinners.length : 0));
-            loWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + perLo + (i === 0 ? loShare - perLo * loWinners.length : 0));
+            Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }, { get: e => e.lo, cmp: cmpLow }]));
             if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
                 const who = nm(hiWinners[0].p);
                 msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
@@ -2889,8 +3069,7 @@ function showdownStud(st) {
             }
         }
         else {
-            const per = Math.floor(pot / hiWinners.length);
-            hiWinners.forEach((e, i) => award[e.p.id] = (award[e.p.id] || 0) + per + (i === 0 ? pot - per * hiWinners.length : 0));
+            Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }]));
             const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
             msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} win${single ? "s" : ""} $${pot} with ${bestHi.desc} (no low).`;
         }
@@ -3000,8 +3179,8 @@ function cpuDecideDramaha(st, idx) {
     const tight = st.botTight?.[idx] ?? 50, L = (100 - tight) / 100;
     const str = dramahaStrength(st, pl);
     const openThresh = 0.42 - L * 0.18, callThresh = 0.30 - L * 0.16, raiseThresh = 0.74 - L * 0.10;
-    const bluff = Math.random() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32));
-    const slow = tilt === 0 && Math.random() < pr.slow;
+    const bluff = rnd() < Math.min(0.5, pr.bluff * (0.7 + L) * (1 + tilt * 0.32));
+    const slow = tilt === 0 && rnd() < pr.slow;
     const betTot = raising => pl.betSt + (raising ? call + fb : fb);
     if (call <= 0) {
         if ((str >= openThresh && !slow) || bluff)
@@ -3163,7 +3342,7 @@ function settle(st, players, potWon, result, msg, winnerIds = []) {
     const cpuTilt = { ...st.cpuTilt };
     if (result === "player") {
         players.filter(p => p.id !== 0 && live(p)).forEach(p => {
-            if (Math.random() < 0.5)
+            if (rnd() < 0.5)
                 cpuTilt[p.id] = Math.min(2, (cpuTilt[p.id] || 0) + 1);
         });
         [1, 2, 3, 4, 5, 6, 7].forEach(i => { if (!players.find(p => p.id === i && live(p)) && cpuTilt[i] > 0)
@@ -3331,7 +3510,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03ar";
+const APP_VERSION = "2026.07.03aw";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3935,11 +4114,18 @@ function dealHand(s0) {
         return s0;
     let s0b = s0;
     if (!s0.tour?.on && s0.cashSeq && s0.cashSeq.length > 1) {
-        const idx = ((s0.cashIdx || 0) + 1) % s0.cashSeq.length;
-        s0b = { ...s0, gid: s0.cashSeq[idx], cashIdx: idx };
+        const rep = (s0.cashRep || 0) + 1;
+        if (rep >= CASH_MIX_HANDS) {
+            const idx = ((s0.cashIdx || 0) + 1) % s0.cashSeq.length;
+            s0b = { ...s0, gid: s0.cashSeq[idx], cashIdx: idx, cashRep: 0 };
+        }
+        else {
+            s0b = { ...s0, cashRep: rep };
+        }
     }
     return dealCards(s0b.tour?.on ? refillTable(rotateTour(s0b)) : s0b);
 }
+const CASH_MIX_HANDS = 3;
 function peekDealer(s) {
     const nP = s.players.length;
     if (s.dealerIdx == null)
@@ -3965,7 +4151,7 @@ function dealCards(s) {
     const nP = s.players.length;
     let dealer;
     if (s.dealerIdx == null) {
-        dealer = Math.floor(Math.random() * nP);
+        dealer = Math.floor(rnd() * nP);
     }
     else {
         dealer = s.dealerIdx;
@@ -3996,8 +4182,8 @@ function dealCards(s) {
                     { ...deck[cursor++], up: false },
                     { ...deck[cursor++], up: true },
                 ];
-            return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0,
-                chips: p.chips - stk.studAnte, lastAct: { text: `Ante $${stk.studAnte}`, color: "#475569" } };
+            return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0, cmt: 0,
+                chips: p.chips - stk.studAnte, cmt: stk.studAnte, lastAct: { text: `Ante $${stk.studAnte}`, color: "#475569" } };
         });
         let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
         const biId = bringInSeat(players, s.gid);
@@ -4006,7 +4192,7 @@ function dealCards(s) {
                 return p;
             const amt = Math.min(stk.bringin, p.chips);
             pot += amt;
-            return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `Bring-in $${amt}`, color: "#fbbf24" } };
+            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `Bring-in $${amt}`, color: "#fbbf24" } };
         });
         const queue = queueFromSeat(players, (biId + 1) % players.length);
         const nx = queue[0];
@@ -4024,8 +4210,8 @@ function dealCards(s) {
                 return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
-            return { ...p, sittingOut: false, folded: false, hand, betSt: 0,
-                chips: p.chips - ante, lastAct: { text: `Ante $${ante}`, color: "#475569" } };
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0,
+                chips: p.chips - ante, cmt: ante, lastAct: { text: `Ante $${ante}`, color: "#475569" } };
         });
         const pot = players.filter(p => !p.sittingOut).length * ante;
         cursor++;
@@ -4049,7 +4235,7 @@ function dealCards(s) {
                 return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
-            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, lastAct: null };
         });
         const order = liveFromDealer(players, dealer);
         const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
@@ -4059,13 +4245,13 @@ function dealCards(s) {
             if (p.id === sbId) {
                 const amt = Math.min(stk.sblind, p.chips);
                 pot += amt;
-                return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+                return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
             }
             if (p.id === bbId) {
                 const ante = Math.min(bbaAmt, p.chips);
                 const blind = Math.min(stk.bblind, p.chips - ante);
                 pot += ante + blind;
-                return { ...p, chips: p.chips - ante - blind, betSt: blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
+                return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
             }
             return p;
         });
@@ -4083,7 +4269,7 @@ function dealCards(s) {
             return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
         const hand = deck.slice(cursor, cursor + hs);
         cursor += hs;
-        return { ...p, sittingOut: false, folded: false, hand, betSt: 0, lastAct: null };
+        return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, lastAct: null };
     });
     const order = liveFromDealer(players, dealer);
     const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
@@ -4093,13 +4279,13 @@ function dealCards(s) {
         if (p.id === sbId) {
             const amt = Math.min(stk.sblind, p.chips);
             pot += amt;
-            return { ...p, chips: p.chips - amt, betSt: amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
         }
         if (p.id === bbId) {
             const ante = Math.min(bbaAmt, p.chips);
             const blind = Math.min(stk.bblind, p.chips - ante);
             pot += ante + blind;
-            return { ...p, chips: p.chips - ante - blind, betSt: blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
+            return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
         }
         return p;
     });
@@ -4115,30 +4301,35 @@ function dealCards(s) {
         dealKey: (s.dealKey || 0) + 1, seq: (s.seq || 0) + 1,
         msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
 }
-function stepTable(st) {
+const DEFAULT_HUMANS = new Set([0]);
+function stepTable(st, opts) {
+    const humans = opts?.humans instanceof Set ? opts.humans
+        : Array.isArray(opts?.humans) ? new Set(opts.humans)
+            : DEFAULT_HUMANS;
     let s = st;
     for (let guard = 0; guard < 1000; guard++) {
         if (s.phase === 'acting') {
             const actor = s.queue && s.queue[0];
             if (actor == null)
-                return { st: s, status: 'idle' };
-            if (actor === 0)
-                return { st: s, status: 'needs-bet' };
+                return { st: s, status: 'idle', seat: null };
+            if (humans.has(actor))
+                return { st: s, status: 'needs-bet', seat: actor };
             const { action, amount } = cpuDecide(s, actor);
             s = applyAction(s, action, amount);
             continue;
         }
         if (s.phase === 'drawing') {
-            if (live(s.players[0]))
-                return { st: s, status: 'needs-draw' };
+            const waiting = [...humans].filter(i => s.players[i] && live(s.players[i])).sort((a, b) => a - b);
+            if (waiting.length)
+                return { st: s, status: 'needs-draw', seat: waiting[0] };
             s = execDraw(s, [], false);
             continue;
         }
         if (s.phase === 'showdown')
-            return { st: s, status: 'showdown' };
-        return { st: s, status: 'idle' };
+            return { st: s, status: 'showdown', seat: null };
+        return { st: s, status: 'idle', seat: null };
     }
-    return { st: s, status: 'guard' };
+    return { st: s, status: 'guard', seat: null };
 }
 function App() {
     const [st, setSt] = useState(() => tsLoad() || mkState("triple"));
@@ -4311,7 +4502,7 @@ function App() {
         const seq = (preset?.games || []).filter(g => GAMES.find(x => x.id === g && x.available));
         if (!seq.length)
             return;
-        setSt(s => mkState(seq[0], { ...s, format: "cash", tour: null, cashSeq: seq, cashIdx: 0 }));
+        setSt(s => mkState(seq[0], { ...s, format: "cash", tour: null, cashSeq: seq, cashIdx: 0, cashRep: 0 }));
         setMenuOpen(false);
     };
     const deal = () => setSt(s => {
@@ -5136,7 +5327,7 @@ function App() {
                     : React.createElement(Btn, { s: S.bCall, onClick: () => act("call") },
                         "CALL $",
                         callAmt),
-                !(st.currentBet > 0 && (st.betCount || 0) >= 4) && (React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + callAmt + fb) }, st.currentBet > 0 ? `RAISE $${st.currentBet + fb}` : `BET $${fb}`)))),
+                legalActions(st)?.canRaise !== false && !(st.currentBet > 0 && (st.betCount || 0) >= 4) && (React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + callAmt + fb) }, st.currentBet > 0 ? `RAISE $${st.currentBet + fb}` : `BET $${fb}`)))),
             isOver && !gameOver && (React.createElement("div", { style: S.btnRow },
                 React.createElement(Btn, { s: S.bDeal, onClick: deal }, st.phase === "idle" ? "DEAL" : "DEAL AGAIN"))),
             gameOver && isOver && (React.createElement("div", { style: { ...S.btnRow, gap: 14 } },
@@ -5319,7 +5510,9 @@ function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid
         React.createElement("div", { style: S.seatBar },
             isDealer && React.createElement(DBtn, null),
             React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 0 } },
-                React.createElement("span", { style: S.seatName }, p.name),
+                React.createElement("span", { style: S.seatName },
+                    p.name,
+                    p.justSeated && React.createElement("span", { style: { marginLeft: 5, fontSize: 7, letterSpacing: 1, color: "#0a1a0e", background: "#c9a84c", borderRadius: 3, padding: "1px 3px", verticalAlign: "middle" } }, "NEW")),
                 profile && React.createElement("span", { style: S.seatTag },
                     profile.tag,
                     tilt > 0 ? ` 🔥${"!".repeat(Math.min(tilt, 3))}` : "")),
