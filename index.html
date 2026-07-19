@@ -37,6 +37,7 @@
   <script>
 "use strict";
 const { useState, useEffect, useRef, useMemo } = React;
+const MNY = n => (Number(n) || 0).toLocaleString();
 let _rngState = null;
 function seedRng(n) { _rngState = (n >>> 0) || 1; }
 function clearRng() { _rngState = null; }
@@ -1159,7 +1160,7 @@ function cpuDecideFlop(st, idx) {
     const mode = BET_MODE(st.gid);
     const pre = (st.board || []).length === 0;
     const str = flopStrength(st, pl);
-    const pfC = st.gid === "bigo" ? 0.64 : st.gid === "omaha8" ? 0.52 : IS_OMAHA(st.gid) ? 0.44 : IS_PINEAPPLE(st.gid) ? 0.72 : 0.66;
+    const pfC = st.gid === "bigo" ? 0.64 : st.gid === "omaha8" ? 0.52 : IS_OMAHA(st.gid) ? 0.44 : IS_PINEAPPLE(st.gid) ? 0.72 : st.gid === "nlhe" ? 0.64 : 0.66;
     const openThresh = pre ? pfC + 0.06 - L * 0.24 : 0.40 - L * 0.18;
     const callThresh = pre ? pfC - L * 0.26 : 0.30 - L * 0.16;
     const raiseThresh = pre ? Math.max(0.68, pfC + 0.14) - L * 0.12 : 0.74 - L * 0.10;
@@ -2509,7 +2510,7 @@ function applyAction(st, action, amount = 0) {
             a.betSt += c;
             a.cmt = (a.cmt || 0) + c;
             pot += c;
-            a.lastAct = { text: `Call $${a.betSt}`, color: "#60a5fa" };
+            a.lastAct = { text: `Call $${MNY(a.betSt)}`, color: "#60a5fa" };
             newQ = st.queue.slice(1);
             break;
         }
@@ -2523,7 +2524,7 @@ function applyAction(st, action, amount = 0) {
                 a.betSt += c;
                 a.cmt = (a.cmt || 0) + c;
                 pot += c;
-                a.lastAct = { text: c > 0 ? `Call $${a.betSt}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
+                a.lastAct = { text: c > 0 ? `Call $${MNY(a.betSt)}` : "Check", color: c > 0 ? "#60a5fa" : "#64748b" };
                 newQ = st.queue.slice(1);
                 break;
             }
@@ -2536,12 +2537,12 @@ function applyAction(st, action, amount = 0) {
             if (a.betSt > st.currentBet && put > 0) {
                 const verb = st.currentBet > 0 ? "Raise" : "Bet";
                 currentBet = a.betSt;
-                a.lastAct = { text: `${verb} $${a.betSt}`, color: "#fbbf24" };
+                a.lastAct = { text: `${verb} $${MNY(a.betSt)}`, color: "#fbbf24" };
                 newQ = reQueue(players, idx);
                 betCount = (st.currentBet === 0 ? 0 : (st.betCount || 0)) + 1;
             }
             else {
-                a.lastAct = put > 0 ? { text: `Call $${a.betSt}`, color: "#60a5fa" }
+                a.lastAct = put > 0 ? { text: `Call $${MNY(a.betSt)}`, color: "#60a5fa" }
                     : { text: "Check", color: "#64748b" };
                 newQ = st.queue.slice(1);
             }
@@ -2552,13 +2553,13 @@ function applyAction(st, action, amount = 0) {
     const still = players.filter(live);
     if (still.length === 1) {
         still[0].chips += pot;
-        return settle(st, players, 0, still[0].id === 0 ? "player" : "cpu", `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${pot} — all others folded!`, [still[0].id]);
+        return settle(st, players, 0, still[0].id === 0 ? "player" : "cpu", `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${MNY(pot)} — all others folded!`, [still[0].id]);
     }
     if (newQ.length === 0)
         return nextPhase({ ...st, players, pot, currentBet, queue: [] });
     const nx = newQ[0];
     return { ...st, players, pot, currentBet, betCount, queue: newQ, seq: (st.seq || 0) + 1,
-        msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
+        msg: nx === 0 ? `Your action — Pot $${MNY(pot)}` : `${players[nx].name} is thinking…` };
 }
 function nextPhase(st) {
     const players = st.players.map(p => ({ ...p, betSt: 0 }));
@@ -2604,7 +2605,7 @@ function nextPhase(st) {
         const lbl = ["", "4th", "5th", "6th", "7th"][streetN] + " street";
         return { ...st, players: ps, deck, streetN, queue, currentBet: 0, phase: "acting",
             boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-            msg: nx === 0 ? `Your action on ${lbl} — Pot $${st.pot}` : `${ps[nx].name} acts on ${lbl}…` };
+            msg: nx === 0 ? `Your action on ${lbl} — Pot $${MNY(st.pot)}` : `${ps[nx].name} acts on ${lbl}…` };
     }
     if (IS_DRAMAHA(st.gid)) {
         const deck = [...st.deck], board = [...st.board];
@@ -2617,7 +2618,7 @@ function nextPhase(st) {
             const queue = startQueue(players, st.dealerIdx), nx = queue[0];
             return { ...st, players, deck, board, streetN: 1, queue, currentBet: 0, phase: "acting",
                 boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-                msg: nx === 0 ? `Your action on the flop — Pot $${st.pot}` : `${players[nx].name} acts on the flop…` };
+                msg: nx === 0 ? `Your action on the flop — Pot $${MNY(st.pot)}` : `${players[nx].name} acts on the flop…` };
         }
         if (st.streetN === 1 && !st.drawDone) {
             if (canAct < 2)
@@ -2633,7 +2634,7 @@ function nextPhase(st) {
             const queue = startQueue(players, st.dealerIdx), nx = queue[0];
             return { ...st, players, deck, board, streetN: 3, queue, currentBet: 0, phase: "acting",
                 boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-                msg: nx === 0 ? `Your action on the river — Pot $${st.pot}` : `${players[nx].name} acts on the river…` };
+                msg: nx === 0 ? `Your action on the river — Pot $${MNY(st.pot)}` : `${players[nx].name} acts on the river…` };
         }
         return showdownDramaha({ ...st, players });
     }
@@ -2689,7 +2690,7 @@ function nextPhase(st) {
         const lbl = ["", "the flop", "the turn", "the river"][streetN];
         return { ...st, players, deck, board, board2, streetN, queue, currentBet: 0, phase: "acting",
             boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-            msg: nx === 0 ? `Your action on ${lbl} — Pot $${st.pot}` : `${players[nx].name} acts on ${lbl}…` };
+            msg: nx === 0 ? `Your action on ${lbl} — Pot $${MNY(st.pot)}` : `${players[nx].name} acts on ${lbl}…` };
     }
     if (st.drawN < st.maxDraws) {
         const n = st.drawN + 1;
@@ -2740,7 +2741,7 @@ function execDraw(st, playerDiscards, playerFolds = false) {
     const still = players.filter(live);
     if (still.length === 1) {
         still[0].chips += st.pot;
-        return settle({ ...st, players, deck }, players, st.pot, still[0].id === 0 ? "player" : "cpu", `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${st.pot} — all others folded!`, [still[0].id]);
+        return settle({ ...st, players, deck }, players, st.pot, still[0].id === 0 ? "player" : "cpu", `${still[0].id === 0 ? "You win" : still[0].name + " wins"} $${MNY(st.pot)} — all others folded!`, [still[0].id]);
     }
     const drawN = st.drawN + 1;
     const streetN = st.streetN + 1;
@@ -2759,10 +2760,10 @@ function execDraw(st, playerDiscards, playerFolds = false) {
         board.push(dk.shift());
         return { ...st, players, deck: dk, board, drawDone: true, streetN: 2, queue, currentBet: 0, phase: "acting", sel: [],
             boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-            msg: nx === 0 ? `Your action on the turn — Pot $${st.pot}` : `${players[nx]?.name || "Player"} acts on the turn…` };
+            msg: nx === 0 ? `Your action on the turn — Pot $${MNY(st.pot)}` : `${players[nx]?.name || "Player"} acts on the turn…` };
     }
     return { ...st, players, deck, drawN, streetN, queue, currentBet: 0, phase: "acting", sel: [], seq: (st.seq || 0) + 1,
-        msg: nx === 0 ? `Your action — Pot $${st.pot}` : `${players[nx]?.name || "Player"} is thinking…` };
+        msg: nx === 0 ? `Your action — Pot $${MNY(st.pot)}` : `${players[nx]?.name || "Player"} is thinking…` };
 }
 function worstPineIdx(hand, board) {
     if (!hand || hand.length <= 2)
@@ -2817,8 +2818,240 @@ function execDiscard(st, playerDiscards) {
     const nx = queue[0];
     return { ...st, players, deck, streetN: 1, discardDone: true, queue, currentBet: 0, phase: "acting", sel: [],
         boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
-        msg: nx === 0 ? `Your action on 4th street — Pot $${st.pot}` : `${players[nx].name} acts on 4th street…` };
+        msg: nx === 0 ? `Your action on 4th street — Pot $${MNY(st.pot)}` : `${players[nx].name} acts on 4th street…` };
 }
+function Spark({ vals, w = 300, h = 74 }) {
+    if (!vals || vals.length < 2)
+        return null;
+    const lo = Math.max(0, Math.min(...vals) - 8), hi = Math.min(100, Math.max(...vals) + 8);
+    const span = Math.max(1, hi - lo);
+    const pt = (v, i) => [8 + i * ((w - 16) / (vals.length - 1)), h - 10 - ((v - lo) / span) * (h - 22)];
+    const pts = vals.map(pt);
+    const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    const area = d + ` L${pts[pts.length - 1][0].toFixed(1)} ${h - 4} L${pts[0][0].toFixed(1)} ${h - 4} Z`;
+    const rising = vals[vals.length - 1] >= vals[0];
+    const col = rising ? "#86efac" : "#f0a8a0";
+    return (React.createElement("svg", { width: "100%", viewBox: `0 0 ${w} ${h}`, style: { display: "block" } },
+        React.createElement("defs", null,
+            React.createElement("linearGradient", { id: "sparkfill", x1: "0", y1: "0", x2: "0", y2: "1" },
+                React.createElement("stop", { offset: "0%", stopColor: col, stopOpacity: "0.28" }),
+                React.createElement("stop", { offset: "100%", stopColor: col, stopOpacity: "0" }))),
+        React.createElement("path", { d: area, fill: "url(#sparkfill)" }),
+        React.createElement("path", { d: d, fill: "none", stroke: col, strokeWidth: "2.2", strokeLinejoin: "round", strokeLinecap: "round" }),
+        pts.map((p, i) => React.createElement("circle", { key: i, cx: p[0], cy: p[1], r: i === pts.length - 1 ? 3.6 : 2.2, fill: col }))));
+}
+function BarRow({ label, value, max, suffix, color }) {
+    const pct = max > 0 ? Math.round(100 * value / max) : 0;
+    return (React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, margin: "5px 0" } },
+        React.createElement("div", { style: { width: 104, fontSize: 10, color: "#b7a98a", textAlign: "right", flexShrink: 0 } }, label),
+        React.createElement("div", { style: { flex: 1, height: 14, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" } },
+            React.createElement("div", { style: { width: pct + "%", height: "100%", background: color || "#c9a84c", borderRadius: 4, transition: "width .4s" } })),
+        React.createElement("div", { style: { width: 44, fontSize: 10, color: "#e8d9b0", flexShrink: 0 } },
+            value,
+            suffix || "")));
+}
+const sharpColor = s => s >= 80 ? "#86efac" : s >= 65 ? "#e3c87a" : s >= 50 ? "#f0a8a0" : "#f87171";
+function ProgressReport({ focus, onClose, onSetFocus, onClearFocus }) {
+    const log = psLoad();
+    const gid = focus?.gid || null;
+    const st = gameStats(log, gid);
+    const table = allGameStats(log);
+    const gname = g => (GAMES.find(x => x.id === g)?.label) || g;
+    const labels = gid ? streetLabels(gid) : STREET_NAMES.flop;
+    const catRows = st ? Object.entries(st.cat).sort((a, b) => b[1] - a[1]) : [];
+    const maxCat = catRows.length ? catRows[0][1] : 0;
+    const streetRows = st ? Object.entries(st.street).map(([k, v]) => ({ k: +k, name: labels[+k] || ("St " + k), pct: v.n ? Math.round(100 * (v.n - v.l) / v.n) : 0, n: v.n }))
+        .filter(r => r.n >= 4).sort((a, b) => a.k - b.k) : [];
+    const delta = st && st.earlySharp != null && st.lateSharp != null ? st.lateSharp - st.earlySharp : null;
+    return (React.createElement("div", { style: S.overlay, onClick: onClose },
+        React.createElement("div", { style: { ...S.modal, maxWidth: 460, maxHeight: "88vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+            React.createElement("div", { style: S.modalHead },
+                React.createElement("span", { style: S.modalTitle }, "YOUR PROGRESS"),
+                React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+            !st && (React.createElement("div", { style: { padding: "18px 4px", textAlign: "center", color: "#9d8659", fontSize: 12 } },
+                "No graded decisions yet",
+                gid ? ` in ${gname(gid)}` : "",
+                ". Play a few hands with Coach Mode on and your progress will build here.")),
+            st && (React.createElement(React.Fragment, null,
+                React.createElement("div", { style: { textAlign: "center", padding: "6px 0 2px" } },
+                    React.createElement("div", { style: { fontSize: 9, letterSpacing: 2, color: "#9d8659" } },
+                        gid ? gname(gid).toUpperCase() : "ALL GAMES",
+                        " \u00B7 LAST ",
+                        st.n,
+                        " DECISIONS"),
+                    React.createElement("div", { style: { fontSize: 46, fontWeight: "bold", color: sharpColor(st.sharp), lineHeight: 1.1 } },
+                        st.sharp,
+                        "%"),
+                    React.createElement("div", { style: { fontSize: 10, color: "#b7a98a" } },
+                        "matched the coach",
+                        delta != null && (React.createElement("span", { style: { color: delta >= 0 ? "#86efac" : "#f0a8a0", marginLeft: 6 } },
+                            delta >= 0 ? "▲" : "▼",
+                            " ",
+                            Math.abs(delta),
+                            " pts ",
+                            delta >= 0 ? "better" : "worse",
+                            " than earlier in the window")))),
+                st.buckets.length >= 3 && (React.createElement("div", { style: { marginTop: 12 } },
+                    React.createElement("div", { style: S.secTitle }, "TREND \u2014 oldest to newest"),
+                    React.createElement(Spark, { vals: st.buckets }),
+                    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 9, color: "#7d6f57", padding: "0 8px" } },
+                        React.createElement("span", null,
+                            st.buckets[0],
+                            "%"),
+                        React.createElement("span", null,
+                            st.buckets[st.buckets.length - 1],
+                            "%")))),
+                React.createElement("div", { style: { marginTop: 14 } },
+                    React.createElement("div", { style: S.secTitle },
+                        "WHERE THE CHIPS GO \u2014 ",
+                        st.leaks,
+                        " leak",
+                        st.leaks === 1 ? "" : "s",
+                        " in ",
+                        st.n),
+                    catRows.length ? catRows.map(([c, v]) => React.createElement(BarRow, { key: c, label: c, value: v, max: maxCat, color: "#e0705f" })) : React.createElement("div", { style: { fontSize: 11, color: "#86efac", padding: "6px 0" } }, "Clean window \u2014 no leaks recorded.")),
+                streetRows.length >= 2 && (React.createElement("div", { style: { marginTop: 14 } },
+                    React.createElement("div", { style: S.secTitle }, "SHARPNESS BY STREET"),
+                    streetRows.map(r => React.createElement(BarRow, { key: r.k, label: r.name, value: r.pct, max: 100, suffix: "%", color: sharpColor(r.pct) })))),
+                table.length >= 2 && (React.createElement("div", { style: { marginTop: 14 } },
+                    React.createElement("div", { style: S.secTitle }, "YOUR GAMES \u2014 weakest first"),
+                    table.map(t => React.createElement("div", { key: t.gid, onClick: () => onSetFocus(t.gid), style: { cursor: "pointer" } },
+                        React.createElement(BarRow, { label: gname(t.gid), value: t.sharp, max: 100, suffix: "%", color: t.gid === gid ? "#c9a84c" : sharpColor(t.sharp) }))),
+                    React.createElement("div", { style: { fontSize: 9, color: "#7d6f57", marginTop: 4 } }, "Tap a game to make it your focus."))),
+                st.topLeak && (React.createElement("div", { style: { marginTop: 14, padding: "9px 11px", borderRadius: 8, background: "rgba(201,168,76,0.09)", border: "1px solid rgba(201,168,76,0.22)" } },
+                    React.createElement("div", { style: { fontSize: 9, letterSpacing: 1.5, color: "#9d8659" } }, "WHAT TO WORK ON"),
+                    React.createElement("div", { style: { fontSize: 11.5, color: "#e8d9b0", marginTop: 3 } },
+                        React.createElement("b", null, st.topLeak[0]),
+                        " \u2014 ",
+                        SCENARIO_TIPS[st.topLeak[0]] || "review these spots."))),
+                React.createElement("div", { style: { marginTop: 12, fontSize: 9, color: "#6f6350", lineHeight: 1.5 } },
+                    "\"Sharp\" means your action matched the coach's recommendation. The coach is a strong heuristic, not a solver \u2014 treat this as a guide to your tendencies, not a verdict. ",
+                    st.lifetime > st.n && `${st.lifetime} decisions recorded all-time.`))),
+            React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14 } },
+                focus && React.createElement("button", { style: { ...S.resultBtn2, flex: 1 }, onClick: onClearFocus }, "Clear focus"),
+                React.createElement("button", { style: { ...S.modalDone, flex: 1 }, onClick: onClose }, "Done")))));
+}
+function FocusLine({ focus, onOpen }) {
+    const log = psLoad();
+    const gid = focus?.gid || null;
+    const st = gameStats(log, gid);
+    const gname = g => (GAMES.find(x => x.id === g)?.label) || g;
+    if (!st) {
+        const anyLog = log.length;
+        return (React.createElement("button", { onClick: onOpen, style: S.focusStrip },
+            React.createElement("span", { style: { color: "#9d8659" } }, anyLog ? "See your progress" : "Play with Coach Mode on to track your progress"),
+            React.createElement("span", { style: { color: "#c9a84c" } }, "\u203A")));
+    }
+    const d = st.earlySharp != null && st.lateSharp != null ? st.lateSharp - st.earlySharp : null;
+    return (React.createElement("button", { onClick: onOpen, style: S.focusStrip },
+        React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 7, minWidth: 0 } },
+            focus && React.createElement("span", { style: S.focusTag }, "FOCUS"),
+            React.createElement("span", { style: { color: "#e8d9b0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                gid ? gname(gid) : "All games",
+                " \u00B7 ",
+                React.createElement("b", { style: { color: sharpColor(st.sharp) } },
+                    st.sharp,
+                    "% sharp"),
+                d != null && React.createElement("span", { style: { color: d >= 0 ? "#86efac" : "#f0a8a0" } },
+                    " ",
+                    d >= 0 ? "▲" : "▼",
+                    Math.abs(d)),
+                React.createElement("span", { style: { color: "#7d6f57" } },
+                    " \u00B7 ",
+                    st.n,
+                    " decisions"))),
+        React.createElement("span", { style: { color: "#c9a84c" } }, "\u203A")));
+}
+const PS_KEY = "pmg_stats_v1", PS_CAP = 4000;
+const FOCUS_KEY = "pmg_focus_v1";
+const FOCUS_WIN = 150;
+function psLoad() { try {
+    return JSON.parse(localStorage.getItem(PS_KEY) || "[]");
+}
+catch {
+    return [];
+} }
+function psSave(a) {
+    const trim = a.slice(-PS_CAP);
+    try {
+        localStorage.setItem(PS_KEY, JSON.stringify(trim));
+        return true;
+    }
+    catch {
+        try {
+            localStorage.setItem(PS_KEY, JSON.stringify(trim.slice(-Math.floor(PS_CAP / 2))));
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+}
+function psPush(decs) {
+    if (!decs || !decs.length)
+        return;
+    const now = Date.now();
+    const add = decs.filter(d => d && d.verdict && d.gid).map(d => ({
+        t: now, g: d.gid, c: d.category || "Solid lines",
+        v: d.verdict === "leak" ? 0 : d.verdict === "ok" ? 1 : 2, s: d.street || 0
+    }));
+    if (add.length)
+        psSave(psLoad().concat(add));
+}
+function focusLoad() { try {
+    return JSON.parse(localStorage.getItem(FOCUS_KEY) || "null");
+}
+catch {
+    return null;
+} }
+function focusSave(f) { try {
+    f ? localStorage.setItem(FOCUS_KEY, JSON.stringify(f)) : localStorage.removeItem(FOCUS_KEY);
+}
+catch { } }
+function gameStats(log, gid, win) {
+    win = win || FOCUS_WIN;
+    const all = gid ? log.filter(r => r.g === gid) : log;
+    const rows = all.slice(-win);
+    const n = rows.length;
+    if (!n)
+        return null;
+    const leaks = rows.filter(r => r.v === 0).length;
+    const sharp = Math.round(100 * (n - leaks) / n);
+    const buckets = [];
+    if (n >= 12) {
+        const size = Math.ceil(n / 6);
+        for (let i = 0; i < n; i += size) {
+            const c = rows.slice(i, i + size);
+            if (c.length >= 3)
+                buckets.push(Math.round(100 * c.filter(r => r.v !== 0).length / c.length));
+        }
+    }
+    const cat = {};
+    rows.filter(r => r.v === 0).forEach(r => cat[r.c] = (cat[r.c] || 0) + 1);
+    const street = {};
+    rows.forEach(r => { const k = r.s || 0; if (!street[k])
+        street[k] = { n: 0, l: 0 }; street[k].n++; if (r.v === 0)
+        street[k].l++; });
+    const topLeak = Object.entries(cat).sort((a, b) => b[1] - a[1])[0] || null;
+    const half = Math.floor(n / 2);
+    const early = rows.slice(0, half), late = rows.slice(half);
+    const earlySharp = early.length >= 5 ? Math.round(100 * early.filter(r => r.v !== 0).length / early.length) : null;
+    const lateSharp = late.length >= 5 ? Math.round(100 * late.filter(r => r.v !== 0).length / late.length) : null;
+    return { n, leaks, sharp, buckets, cat, street, topLeak, earlySharp, lateSharp, lifetime: all.length };
+}
+function allGameStats(log, min) {
+    min = min || 15;
+    const by = {};
+    log.forEach(r => { if (!by[r.g])
+        by[r.g] = { n: 0, l: 0 }; by[r.g].n++; if (r.v === 0)
+        by[r.g].l++; });
+    return Object.entries(by).filter(function (e) { return e[1].n >= min; })
+        .map(function (e) { return { gid: e[0], n: e[1].n, sharp: Math.round(100 * (e[1].n - e[1].l) / e[1].n) }; })
+        .sort((a, b) => a.sharp - b.sharp);
+}
+function weakestGame(log, min) { const t = allGameStats(log, min || 25); return t.length ? t[0] : null; }
+const STREET_NAMES = { flop: ["Preflop", "Flop", "Turn", "River"], stud: ["3rd", "4th", "5th", "6th", "7th"], draw: ["Pre-draw", "Draw 1", "Draw 2", "Draw 3"] };
+function streetLabels(gid) { return IS_STUD(gid) ? STREET_NAMES.stud : PURE_DRAW(gid) ? STREET_NAMES.draw : STREET_NAMES.flop; }
 function potLayers(players) {
     const levels = [...new Set(players.map(p => p.cmt || 0).filter(c => c > 0))].sort((a, b) => a - b);
     const layers = [];
@@ -2875,6 +3108,17 @@ function layerAwardLanes(st, evals, lanes) {
     }
     return award;
 }
+function sidePotMsg(st, award, descOf) {
+    const ids = Object.keys(award).map(Number).filter(id => award[id] > 0);
+    if (ids.length < 2)
+        return null;
+    if (potLayers(st.players).length < 2)
+        return null;
+    const nm = id => id === 0 ? "You" : (st.players.find(p => p.id === id)?.name || "Player");
+    const parts = ids.sort((a, b) => award[b] - award[a])
+        .map(id => `${nm(id)} $${award[id].toLocaleString()} (${descOf(id)})`);
+    return `Side pots — ${parts.join("; ")}.`;
+}
 function showdown(st) {
     const still = st.players.filter(live);
     if (!still.length)
@@ -2894,9 +3138,10 @@ function showdown(st) {
     const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
     const youWin = potWon > 0;
     const names = winners.map(w => w.id === 0 ? "You" : w.name).join(" & ");
-    const msg = winners.length > 1
-        ? `Chop — ${names} split $${st.pot} with ${best.ev.desc}`
-        : `${names} win${!youWin ? "s" : ""} $${st.pot} with ${best.ev.desc}!`;
+    const msg = sidePotMsg(st, award, id => (evaled.find(e => e.id === id)?.ev?.desc) || "best hand")
+        || (winners.length > 1
+            ? `Chop — ${names} split $${MNY(st.pot)} with ${best.ev.desc}`
+            : `${names} win${!youWin ? "s" : ""} $${MNY(st.pot)} with ${best.ev.desc}!`);
     return settle(st, players, potWon, youWin ? "player" : "cpu", msg, Object.keys(award).map(Number));
 }
 function showdownFlop(st) {
@@ -2948,20 +3193,24 @@ function showdownFlop(st) {
         const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
         if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
             const who = nm(hiWinners[0]);
-            msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+            msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
         }
         else {
             const hiNames = hiWinners.map(nm).join(" & ");
             const loNames = loWinners.map(nm).join(" & ");
-            msg = `${hiNames} ${verb(hiWinners)} the high for $${hiShare} (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low for $${loShare} (${lowDesc(bestLo)}).`;
+            msg = `${hiNames} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
         }
     }
     else {
         const names = hiWinners.map(e => e.p.id === 0 ? "You" : e.p.name).join(" & ");
         const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
         const scoop = IS_HILO(st.gid) ? " (no low)" : "";
-        msg = `${names} win${single ? "s" : ""} $${pot} with ${bestHi.desc}${scoop}.`;
+        msg = `${names} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi.desc}${scoop}.`;
     }
+    msg = sidePotMsg(st, award, id => {
+        const e = evals.find(x => x.p.id === id);
+        return e ? (e.hi?.desc || "best hand") : "best hand";
+    }) || msg;
     const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
     const youWon = (award[0] || 0) > 0;
     return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
@@ -2989,8 +3238,8 @@ function showdownDoubleBoard(st) {
     const nm = e => e.p.id === 0 ? "You" : e.p.name;
     const scoop = a.w.length === 1 && b.w.length === 1 && a.w[0].p.id === b.w[0].p.id;
     const msg = scoop
-        ? `${nm(a.w[0])} scoop${a.w[0].p.id === 0 ? "" : "s"} $${pot} — both boards (${a.best.desc} top & ${b.best.desc} bottom).`
-        : `Top board: ${a.w.map(nm).join(" & ")} win${a.w.length === 1 ? "s" : ""} $${topShare} (${a.best.desc}).  Bottom board: ${b.w.map(nm).join(" & ")} win${b.w.length === 1 ? "s" : ""} $${botShare} (${b.best.desc}).`;
+        ? `${nm(a.w[0])} scoop${a.w[0].p.id === 0 ? "" : "s"} $${MNY(pot)} — both boards (${a.best.desc} top & ${b.best.desc} bottom).`
+        : `Top board: ${a.w.map(nm).join(" & ")} win${a.w.length === 1 ? "s" : ""} $${MNY(topShare)} (${a.best.desc}).  Bottom board: ${b.w.map(nm).join(" & ")} win${b.w.length === 1 ? "s" : ""} $${MNY(botShare)} (${b.best.desc}).`;
     const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
     const youWon = (award[0] || 0) > 0;
     return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
@@ -3010,7 +3259,7 @@ function showdownStud(st) {
         Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.lo, cmp: cmpRazz }]));
         const names = winners.map(e => nm(e.p)).join(" & ");
         const single = winners.length === 1 && winners[0].p.id !== 0;
-        msg = `${names} win${single ? "s" : ""} $${pot} with ${razzDesc(best)}.`;
+        msg = `${names} win${single ? "s" : ""} $${MNY(pot)} with ${razzDesc(best)}.`;
     }
     else if (st.gid === "razzdugi") {
         const evals = still.map(p => ({ p, lo: bestRazz(p.hand), bd: evalBadugi(p.hand) }));
@@ -3029,10 +3278,10 @@ function showdownStud(st) {
         const scoop = loWinners.length === 1 && bdWinners.length === 1 && loWinners[0].p.id === bdWinners[0].p.id;
         if (scoop) {
             const who = nm(loWinners[0].p);
-            msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${razzDesc(bestLo)} low + ${bestBd.desc}.`;
+            msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${razzDesc(bestLo)} low + ${bestBd.desc}.`;
         }
         else
-            msg = `${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${loShare} (${razzDesc(bestLo)}); ${bdWinners.map(e => nm(e.p)).join(" & ")} ${verb(bdWinners)} the badugi for $${bdShare} (${bestBd.desc}).`;
+            msg = `${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${MNY(loShare)} (${razzDesc(bestLo)}); ${bdWinners.map(e => nm(e.p)).join(" & ")} ${verb(bdWinners)} the badugi for $${MNY(bdShare)} (${bestBd.desc}).`;
     }
     else if (st.gid === "stud") {
         const evals = still.map(p => ({ p, hi: studHigh(p.hand) }));
@@ -3043,7 +3292,7 @@ function showdownStud(st) {
         Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }]));
         const names = winners.map(e => nm(e.p)).join(" & ");
         const single = winners.length === 1 && winners[0].p.id !== 0;
-        msg = `${names} win${single ? "s" : ""} $${pot} with ${best.desc}.`;
+        msg = `${names} win${single ? "s" : ""} $${MNY(pot)} with ${best.desc}.`;
     }
     else {
         const evals = still.map(p => ({ p, hi: studHigh(p.hand), lo: bestLow7(p.hand) }));
@@ -3062,18 +3311,27 @@ function showdownStud(st) {
             Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }, { get: e => e.lo, cmp: cmpLow }]));
             if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
                 const who = nm(hiWinners[0].p);
-                msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+                msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
             }
             else {
-                msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} ${verb(hiWinners)} the high for $${hiShare} (${bestHi.desc}); ${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${loShare} (${lowDesc(bestLo)}).`;
+                msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi.desc}); ${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
             }
         }
         else {
             Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }]));
             const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
-            msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} win${single ? "s" : ""} $${pot} with ${bestHi.desc} (no low).`;
+            msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi.desc} (no low).`;
         }
     }
+    msg = sidePotMsg(st, award, id => {
+        const p = st.players.find(x => x.id === id);
+        if (!p)
+            return "best hand";
+        if (st.gid === "razz" || st.gid === "razzdugi")
+            return razzDesc(bestRazz(p.hand));
+        const h = studHigh(p.hand);
+        return h ? h.desc : "best hand";
+    }) || msg;
     const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
     const youWon = (award[0] || 0) > 0;
     return settle(st, players, award[0] || 0, youWon ? "player" : "cpu", msg, Object.keys(award).map(Number));
@@ -3122,7 +3380,7 @@ function showdownDramaha(st) {
     let msg;
     if (hiWinners.length === 1 && drWinners.length === 1 && hiWinners[0].p.id === drWinners[0].p.id) {
         const who = nm(hiWinners[0]);
-        msg = `${who} scoop${who === "You" ? "" : "s"} $${pot} — ${bestHi.desc} (Omaha) + ${bestDr.desc} (${side}).`;
+        msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} (Omaha) + ${bestDr.desc} (${side}).`;
     }
     else {
         msg = `${hiWinners.map(nm).join(" & ")} ${verb(hiWinners)} the Omaha high (${bestHi?.desc}); ${drWinners.map(nm).join(" & ")} ${verb(drWinners)} the ${side} (${bestDr?.desc}).`;
@@ -3319,20 +3577,20 @@ function showdownSplitDraw(st) {
         give(bWin, loShare);
         const scoop = aWin.length === 1 && bWin.length === 1 && aWin[0].p.id === bWin[0].p.id;
         msg = scoop
-            ? `${nm(aWin[0])} scoop${aWin[0].p.id === 0 ? "" : "s"} $${pot} — ${aWin[0].a.desc} (${A.name}) + ${bWin[0].b.desc} (${B.name}).`
-            : `${aWin.map(nm).join(" & ")} take the ${A.name} for $${hiShare} (${aWin[0].a.desc}); ${bWin.map(nm).join(" & ")} take the ${B.name} for $${loShare} (${bWin[0].b.desc}).`;
+            ? `${nm(aWin[0])} scoop${aWin[0].p.id === 0 ? "" : "s"} $${MNY(pot)} — ${aWin[0].a.desc} (${A.name}) + ${bWin[0].b.desc} (${B.name}).`
+            : `${aWin.map(nm).join(" & ")} take the ${A.name} for $${MNY(hiShare)} (${aWin[0].a.desc}); ${bWin.map(nm).join(" & ")} take the ${B.name} for $${MNY(loShare)} (${bWin[0].b.desc}).`;
     }
     else if (aWin.length) {
         give(aWin, pot);
-        msg = `${aWin.map(nm).join(" & ")} scoop $${pot} — only the ${A.name} qualified (${aWin[0].a.desc}).`;
+        msg = `${aWin.map(nm).join(" & ")} scoop $${MNY(pot)} — only the ${A.name} qualified (${aWin[0].a.desc}).`;
     }
     else if (bWin.length) {
         give(bWin, pot);
-        msg = `${bWin.map(nm).join(" & ")} scoop $${pot} — only the ${B.name} qualified (${bWin[0].b.desc}).`;
+        msg = `${bWin.map(nm).join(" & ")} scoop $${MNY(pot)} — only the ${B.name} qualified (${bWin[0].b.desc}).`;
     }
     else {
         give(ev, pot);
-        msg = `No qualifier — pot chopped among ${ev.length} remaining player${ev.length > 1 ? "s" : ""} ($${pot}).`;
+        msg = `No qualifier — pot chopped among ${ev.length} remaining player${ev.length > 1 ? "s" : ""} ($${MNY(pot)}).`;
     }
     const players = st.players.map(p => award[p.id] ? { ...p, chips: p.chips + award[p.id] } : p);
     const youWon = (award[0] || 0) > 0;
@@ -3510,7 +3768,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.03aw";
+const APP_VERSION = "2026.07.04a";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -3968,7 +4226,7 @@ function ScenarioPanel({ cfg, setCfg, onStart, curGid }) {
                 React.createElement("button", { style: SCN.go, onClick: () => { setBrief(false); onStart({ ...cfg }); } }, "DEAL \u25B8"),
                 React.createElement("button", { style: SCN.ghost, onClick: () => setBrief(false) }, "back to the dials"))))));
 }
-function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid, scen, setScen, onScenario }) {
+function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid, scen, setScen, onScenario, focus, onProgress }) {
     const L = LOBBY_S;
     const [tab, setTab] = useState("tour");
     const parked = tsLoad();
@@ -3991,6 +4249,8 @@ function TournamentLobby({ cfg, setCfg, onStart, onCash, onResume, curGid, scen,
             React.createElement("button", { style: L.tab, onClick: onCash }, "CASH"),
             React.createElement("button", { style: { ...L.tab, ...L.tabOn } }, "TOURNAMENT"),
             React.createElement("button", { style: L.tab, onClick: () => setTab("scen") }, "SCENARIO")),
+        onProgress && (React.createElement("div", { style: { marginBottom: 14 } },
+            React.createElement(FocusLine, { focus: focus, onOpen: onProgress }))),
         parked && onResume && (React.createElement("button", { onClick: onResume, style: { width: "100%", margin: "0 0 14px", padding: "13px 15px", borderRadius: 12, cursor: "pointer",
                 border: "1px solid rgba(134,239,172,0.55)", background: "linear-gradient(180deg,rgba(63,145,82,0.28),rgba(28,66,40,0.22))",
                 textAlign: "left", display: "flex", flexDirection: "column", gap: 3 } },
@@ -4183,7 +4443,7 @@ function dealCards(s) {
                     { ...deck[cursor++], up: true },
                 ];
             return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0, cmt: 0,
-                chips: p.chips - stk.studAnte, cmt: stk.studAnte, lastAct: { text: `Ante $${stk.studAnte}`, color: "#475569" } };
+                chips: p.chips - stk.studAnte, cmt: stk.studAnte, lastAct: { text: `Ante $${MNY(stk.studAnte)}`, color: "#475569" } };
         });
         let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
         const biId = bringInSeat(players, s.gid);
@@ -4192,14 +4452,14 @@ function dealCards(s) {
                 return p;
             const amt = Math.min(stk.bringin, p.chips);
             pot += amt;
-            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `Bring-in $${amt}`, color: "#fbbf24" } };
+            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `Bring-in $${MNY(amt)}`, color: "#fbbf24" } };
         });
         const queue = queueFromSeat(players, (biId + 1) % players.length);
         const nx = queue[0];
         return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
             currentBet: stk.bringin, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
             dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-            msg: nx === 0 ? `Your action on 3rd street — Pot $${pot}` : `${players[nx].name} acts on 3rd street…` };
+            msg: nx === 0 ? `Your action on 3rd street — Pot $${MNY(pot)}` : `${players[nx].name} acts on 3rd street…` };
     }
     if (IS_BOMB(s.gid)) {
         const hs = HOLE_SIZE(s.gid);
@@ -4211,7 +4471,7 @@ function dealCards(s) {
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
             return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0,
-                chips: p.chips - ante, cmt: ante, lastAct: { text: `Ante $${ante}`, color: "#475569" } };
+                chips: p.chips - ante, cmt: ante, lastAct: { text: `Ante $${MNY(ante)}`, color: "#475569" } };
         });
         const pot = players.filter(p => !p.sittingOut).length * ante;
         cursor++;
@@ -4225,7 +4485,7 @@ function dealCards(s) {
         return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board, board2, pot,
             currentBet: 0, queue, phase: "acting", dealerIdx: dealer, streetN: 1, discardDone: true,
             dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-            msg: nx === 0 ? `Bomb pot! Your action on the flop — Pot $${pot}` : `Bomb pot! ${players[nx].name} acts on the flop…` };
+            msg: nx === 0 ? `Bomb pot! Your action on the flop — Pot $${MNY(pot)}` : `Bomb pot! ${players[nx].name} acts on the flop…` };
     }
     if (IS_FLOP(s.gid) || IS_DRAMAHA(s.gid)) {
         const hs = HOLE_SIZE(s.gid);
@@ -4245,13 +4505,13 @@ function dealCards(s) {
             if (p.id === sbId) {
                 const amt = Math.min(stk.sblind, p.chips);
                 pot += amt;
-                return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+                return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${MNY(amt)}`, color: "#475569" } };
             }
             if (p.id === bbId) {
                 const ante = Math.min(bbaAmt, p.chips);
                 const blind = Math.min(stk.bblind, p.chips - ante);
                 pot += ante + blind;
-                return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
+                return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${MNY(blind)} +ante $${MNY(ante)}` : `BB $${MNY(blind)}`, color: "#475569" } };
             }
             return p;
         });
@@ -4260,7 +4520,7 @@ function dealCards(s) {
         return { ...mkState(s.gid, s), deck: deck.slice(cursor), players, board: [], pot,
             currentBet: stk.bblind, queue, phase: "acting", dealerIdx: dealer, streetN: 0,
             dealKey: (s.dealKey || 0) + 1, boardKey: (s.boardKey || 0) + 1, seq: (s.seq || 0) + 1,
-            msg: nx === 0 ? `Your action preflop — Pot $${pot}` : `${players[nx].name} acts preflop…` };
+            msg: nx === 0 ? `Your action preflop — Pot $${MNY(pot)}` : `${players[nx].name} acts preflop…` };
     }
     const hs = HAND_SIZE(s.gid);
     let cursor = 0;
@@ -4279,13 +4539,13 @@ function dealCards(s) {
         if (p.id === sbId) {
             const amt = Math.min(stk.sblind, p.chips);
             pot += amt;
-            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${amt}`, color: "#475569" } };
+            return { ...p, chips: p.chips - amt, betSt: amt, cmt: (p.cmt || 0) + amt, lastAct: { text: `SB $${MNY(amt)}`, color: "#475569" } };
         }
         if (p.id === bbId) {
             const ante = Math.min(bbaAmt, p.chips);
             const blind = Math.min(stk.bblind, p.chips - ante);
             pot += ante + blind;
-            return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${blind} +ante $${ante}` : `BB $${blind}`, color: "#475569" } };
+            return { ...p, chips: p.chips - ante - blind, betSt: blind, cmt: (p.cmt || 0) + ante + blind, lastAct: { text: ante > 0 ? `BB $${MNY(blind)} +ante $${MNY(ante)}` : `BB $${MNY(blind)}`, color: "#475569" } };
         }
         return p;
     });
@@ -4299,7 +4559,7 @@ function dealCards(s) {
         phase: "acting", maxDraws: (s.gid === "triple" || s.gid === "badugi" || s.gid === "pl27td" || s.gid === "plbad" || IS_SPLITDRAW(s.gid)) ? 3 : s.gid === "pl5d" ? 2 : 1, dealerIdx: dealer,
         nlBet: Math.max(40, Math.floor(pot * 0.65)),
         dealKey: (s.dealKey || 0) + 1, seq: (s.seq || 0) + 1,
-        msg: nx === 0 ? `Your action — Pot $${pot}` : `${players[nx].name} is thinking…` };
+        msg: nx === 0 ? `Your action — Pot $${MNY(pot)}` : `${players[nx].name} is thinking…` };
 }
 const DEFAULT_HUMANS = new Set([0]);
 function stepTable(st, opts) {
@@ -4344,6 +4604,8 @@ function App() {
     const [view, setView] = useState("play");
     const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard", startBB: 200, bba: true });
     const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
+    const [showProgress, setShowProgress] = useState(false);
+    const [focus, setFocus] = useState(() => focusLoad());
     const [pendingCash, setPendingCash] = useState(false);
     const [gamePick, setGamePick] = useState(null);
     const [showPayouts, setShowPayouts] = useState(false);
@@ -4448,6 +4710,7 @@ function App() {
                 decisions: h.decisions || [],
                 msg: st.msg || "",
             });
+            psPush(h.decisions || []);
         }
         catch { }
     }, [st.phase, st.dealKey]);
@@ -4827,8 +5090,9 @@ function App() {
         view === "lobby" && (React.createElement(TournamentLobby, { cfg: tourCfg, setCfg: setTourCfg, onStart: startTournament, scen: scenCfg, setScen: setScenCfg, onScenario: startScenario, onCash: () => { setSt(s => s.format !== "cash" ? mkState(s.gid, { ...s, format: "cash", tour: null, players: [] }) : s); setView("play"); }, onResume: () => { const q = tsLoad(); if (q) {
                 setSt(q);
                 setView("play");
-            } }, curGid: st.gid })),
+            } }, curGid: st.gid, focus: focus, onProgress: () => setShowProgress(true) })),
         st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
+        showProgress && React.createElement(ProgressReport, { focus: focus, onClose: () => setShowProgress(false), onSetFocus: gid => { const f = { gid, since: Date.now() }; setFocus(f); focusSave(f); }, onClearFocus: () => { setFocus(null); focusSave(null); setShowProgress(false); } }),
         gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
                 const gp = gamePick;
                 setGamePick(null);
@@ -5122,6 +5386,8 @@ function App() {
                     React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
                 st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
                 React.createElement("button", { onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setShowSettings(false); setView("play"); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET TABLE \u2014 fresh stacks"),
+                React.createElement("div", { style: { marginTop: 12 } },
+                    React.createElement(FocusLine, { focus: focus, onOpen: () => { setShowSettings(false); setShowProgress(true); } })),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#c9a84c", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
@@ -5202,7 +5468,7 @@ function App() {
                                 React.createElement("span", { style: S.potLbl }, "POT"),
                                 React.createElement("span", { style: S.ovalDblPotAmt },
                                     "$",
-                                    st.pot),
+                                    MNY(st.pot)),
                                 streetLbl && React.createElement("span", { style: S.ovalDblStreet }, streetLbl)))) : (React.createElement("div", { style: S.ovalCentre },
                             React.createElement(CentreInfo, { st: st, streetLbl: streetLbl }))))) : (React.createElement("div", { style: S.mStrip }, [1, 2, 3].map(id => (React.createElement(MobileSeat, { key: id, p: st.players[id], reveal: st.reveal, gid: st.gid, board: st.board, isDealer: st.dealerIdx === id, thinking: cpuTurn && st.queue[0] === id, wid: wid, won: (st.winnerIds || []).includes(id), tilt: st.cpuTilt?.[id] || 0, profile: PROF[id] })))))) : (React.createElement(React.Fragment, null,
                         React.createElement("div", { style: S.rowTop },
@@ -5220,7 +5486,7 @@ function App() {
                             React.createElement("span", { style: S.youName }, "You"),
                             React.createElement("span", { style: S.chips },
                                 "$",
-                                me.chips),
+                                MNY(me.chips)),
                             me.lastAct && React.createElement(Bdg, { ...me.lastAct }),
                             myEval && (React.createElement("span", { style: { ...S.evalBdg, color: hColor(myEval), background: hColor(myEval) + "18", border: `1px solid ${hColor(myEval)}44` } },
                                 IS_DOUBLE(st.gid) ? "Top: " : "",
@@ -5261,8 +5527,8 @@ function App() {
                     React.createElement("span", { style: S.stTxt }, "You're out of this hand \u2014 watching it play out\u2026"))),
                 myTurn && !drawing && (React.createElement(React.Fragment, null,
                     React.createElement("span", { style: { ...S.stTxt, color: "#c9a84c88", letterSpacing: 2, fontSize: 9 } }, "YOUR ACTION"),
-                    React.createElement("span", { style: S.stTxt }, isFL ? `Fixed Limit · ${fb === stk.sbet ? "Small Bet" : "Big Bet"} $${fb}`
-                        : mode === "pl" ? `Pot-Limit · max $${nlMax}` : "No-Limit"),
+                    React.createElement("span", { style: S.stTxt }, isFL ? `Fixed Limit · ${fb === stk.sbet ? "Small Bet" : "Big Bet"} $${MNY(fb)}`
+                        : mode === "pl" ? `Pot-Limit · max $${MNY(nlMax)}` : "No-Limit"),
                     odds && React.createElement("span", { style: S.oddsPill },
                         callAmt >= me.chips ? "ALL IN " : " ",
                         odds,
@@ -5304,11 +5570,11 @@ function App() {
                     React.createElement("button", { style: S.stepBtn, onClick: () => setSt(s => ({ ...s, nlBet: Math.max(nlMin, nlVal - 10) })) }, "\u2212$10"),
                     React.createElement("span", { style: S.slEdge },
                         "$",
-                        nlMin),
+                        MNY(nlMin)),
                     React.createElement("input", { type: "range", min: nlMin, max: Math.max(nlMin, nlMax), step: 5, value: nlVal, onChange: e => setSt(s => ({ ...s, nlBet: +e.target.value })), style: S.slider }),
                     React.createElement("span", { style: S.slEdge },
                         "$",
-                        nlMax),
+                        MNY(nlMax)),
                     React.createElement("button", { style: S.stepBtn, onClick: () => setSt(s => ({ ...s, nlBet: Math.min(nlMax, nlVal + 10) })) }, "+$10"),
                     React.createElement("span", { style: S.slVal },
                         st.currentBet > 0 ? "Raise" : "Bet",
@@ -5318,8 +5584,8 @@ function App() {
                     !canCheck && React.createElement(Btn, { s: S.bFold, onClick: () => act("fold") }, "FOLD"),
                     canCheck
                         ? React.createElement(Btn, { s: S.bCheck, onClick: () => act("check") }, "CHECK")
-                        : React.createElement(Btn, { s: S.bCall, onClick: () => act("call") }, callAmt >= me.chips ? "ALL IN" : `CALL $${callAmt}`),
-                    React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + nlVal) }, st.currentBet > 0 ? `RAISE $${nlVal}` : `BET $${nlVal}`)))),
+                        : React.createElement(Btn, { s: S.bCall, onClick: () => act("call") }, callAmt >= me.chips ? "ALL IN" : `CALL $${MNY(callAmt)}`),
+                    React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + nlVal) }, st.currentBet > 0 ? `RAISE $${MNY(nlVal)}` : `BET $${MNY(nlVal)}`)))),
             myTurn && !drawing && isFL && (React.createElement("div", { style: S.btnRow },
                 !canCheck && React.createElement(Btn, { s: S.bFold, onClick: () => act("fold") }, "FOLD"),
                 canCheck
@@ -5327,7 +5593,7 @@ function App() {
                     : React.createElement(Btn, { s: S.bCall, onClick: () => act("call") },
                         "CALL $",
                         callAmt),
-                legalActions(st)?.canRaise !== false && !(st.currentBet > 0 && (st.betCount || 0) >= 4) && (React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + callAmt + fb) }, st.currentBet > 0 ? `RAISE $${st.currentBet + fb}` : `BET $${fb}`)))),
+                (() => { const la = legalActions(st); return (!la || la.canBet || la.canRaise); })() && !(st.currentBet > 0 && (st.betCount || 0) >= 4) && (React.createElement(Btn, { s: S.bBet, onClick: () => act(st.currentBet > 0 ? "raise" : "bet", me.betSt + callAmt + fb) }, st.currentBet > 0 ? `RAISE $${MNY(st.currentBet + fb)}` : `BET $${MNY(fb)}`)))),
             isOver && !gameOver && (React.createElement("div", { style: S.btnRow },
                 React.createElement(Btn, { s: S.bDeal, onClick: deal }, st.phase === "idle" ? "DEAL" : "DEAL AGAIN"))),
             gameOver && isOver && (React.createElement("div", { style: { ...S.btnRow, gap: 14 } },
@@ -5341,71 +5607,71 @@ function App() {
         React.createElement("div", { style: S.foot }, st.gid === "lhe" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "LIMIT HOLD'EM"),
             " · 2 hole + 5 board · best five wins · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "omaha8" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "omaha8" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "OMAHA HI-LO 8"),
             " · use exactly 2 of 4 hole cards · high & qualifying low (8-or-better) split the pot · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "razzdugi" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "razzdugi" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "RAZZDUGI"),
             " · 7-card stud split · best Razz low (5-4-3-2-A) splits with best Badugi (4-3-2-A) from your 7 cards · no qualifier · highest card brings in · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "razz" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "razz" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "RAZZ"),
             " · 7-card stud for low · Aces low · straights & flushes don't count · Nuts: 5-4-3-2-A · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "stud" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "stud" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "7-CARD STUD"),
             " · 2 down, 4 up, 1 down · best five of seven · low card brings in · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "stud8" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "stud8" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "STUD HI-LO 8"),
             " · 7-card stud · high & qualifying low (8-or-better) split · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "superstud" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "superstud" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "SUPER STUD HI-LO 8"),
             " · dealt 4 down + 1 up · high card brings in · discard 2 after 3rd street · then plays as Stud Hi-Lo 8 · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "badugi" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "badugi" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "BADUGI"),
             " · Aces low · 4 distinct ranks & suits = a Badugi · Nuts: A-2-3-4 rainbow · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "nlhe" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "nlhe" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "NO-LIMIT HOLD'EM"),
             " · 2 hole + 5 board · best five wins · bet anything up to your stack · ",
-            `Blinds $${stk.sblind}/$${stk.bblind}`)) : st.gid === "plo" ? (React.createElement(React.Fragment, null,
+            `Blinds $${MNY(stk.sblind)}/$${MNY(stk.bblind)}`)) : st.gid === "plo" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "POT-LIMIT OMAHA"),
             " · use exactly 2 of 4 hole cards · max bet = size of the pot · ",
-            `Blinds $${stk.sblind}/$${stk.bblind}`)) : st.gid === "bigo" ? (React.createElement(React.Fragment, null,
+            `Blinds $${MNY(stk.sblind)}/$${MNY(stk.bblind)}`)) : st.gid === "bigo" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "BIG O"),
             " · 5 hole cards, use exactly 2 · high & qualifying low (8-or-better) split · pot-limit · ",
-            `Blinds $${stk.sblind}/$${stk.bblind}`)) : st.gid === "crazyp" ? (React.createElement(React.Fragment, null,
+            `Blinds $${MNY(stk.sblind)}/$${MNY(stk.bblind)}`)) : st.gid === "crazyp" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "CRAZY PINEAPPLE"),
             " · 3 hole cards · discard one after the flop · Hold'em hand (use any of your 2 cards) · pot-limit · ",
-            `Blinds $${stk.sblind}/$${stk.bblind}`)) : st.gid === "dbcrazyp" ? (React.createElement(React.Fragment, null,
+            `Blinds $${MNY(stk.sblind)}/$${MNY(stk.bblind)}`)) : st.gid === "dbcrazyp" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "DOUBLE BOARD CRAZY PINEAPPLE"),
             " · 3 cards, discard one after the flop · two boards run out · pot splits between best hand on each board (scoop both to win it all) · pot-limit · ",
-            `Blinds $${stk.sblind}/$${stk.bblind}`)) : st.gid === "dbbomb" ? (React.createElement(React.Fragment, null,
+            `Blinds $${MNY(stk.sblind)}/$${MNY(stk.bblind)}`)) : st.gid === "dbbomb" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "DOUBLE BOARD BOMB POT"),
             ` · everyone antes ${BOMB_ANTE_BB} BB, no preflop — straight to two flops · Omaha high (use exactly 2 of 4) · pot splits between best hand on each board, scoop both to win it all · pot-limit`)) : st.gid === "dramahaH" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "DRAMAHA HIGH"),
             " · 5-card Omaha high (exactly 2 hole + 3 board) splits with best 5-card-draw high · one draw after the flop · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "dramaha27" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "dramaha27" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "2-7 DRAMAHA"),
             " · Omaha high splits with best 2-7 lowball (from your 5 hole cards) · one draw after the flop · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "dramadugi" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "dramadugi" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "DRAMADUGI"),
             " · Omaha high splits with best 4-card Badugi (from your 5 hole cards) · draw 0–3 after the flop · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "badeucey" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "badeucey" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "BADEUCEY"),
             " · triple draw · best Badugi (ace HIGH) splits with best 2-7 lowball · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "badacey" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "badacey" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "BADACEY"),
             " · triple draw · best Badugi (ace low) splits with best A-5 lowball · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "veronica" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "veronica" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "VERONICA"),
             " · Archie + one community card (HIGH only) · triple draw · best high (pair of 9s+) splits with best A-5 low (8-or-better) · no qualifier ⇒ pot chopped · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "archie" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "archie" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "ARCHIE"),
             " · triple draw · best high (pair of 9s+ to qualify) splits with best A-5 low (8-or-better) · no qualifier ⇒ pot chopped among remaining players · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`)) : st.gid === "single" ? (React.createElement(React.Fragment, null,
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`)) : st.gid === "single" ? (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "2-7 LOWBALL"),
             " · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · No-Limit")) : (React.createElement(React.Fragment, null,
             React.createElement("b", { style: { color: "#c9a84c44" } }, "2-7 TRIPLE DRAW"),
             " · Aces high · Straights & flushes count · Nuts: 7-5-4-3-2 · ",
-            `Fixed Limit $${stk.sbet}/$${stk.bbet}`))),
+            `Fixed Limit $${MNY(stk.sbet)}/$${MNY(stk.bbet)}`))),
         React.createElement("div", { style: S.footMeta },
             React.createElement("div", { style: S.footActions },
                 React.createElement("button", { onClick: () => setShowBug(true), style: S.footLink }, "Report a bug"),
@@ -5454,7 +5720,7 @@ function CentreInfo({ st, streetLbl }) {
             React.createElement("span", { style: S.potLbl }, "POT"),
             React.createElement("span", { style: S.potAmt },
                 "$",
-                st.pot)),
+                MNY(st.pot))),
         st.phase !== "idle" && React.createElement("div", { style: S.streetPill }, streetLbl),
         st.maxDraws > 1 && !flop && st.phase !== "idle" && st.phase !== "showdown" && (React.createElement("div", { style: S.pips }, [1, 2, 3].map(n => (React.createElement("div", { key: n, style: { ...S.pip, background: n <= st.drawN ? "#c9a84c" : "rgba(255,255,255,0.1)" } }, n <= st.drawN && React.createElement("span", { style: { fontSize: 8, color: "#0a1a0a", fontWeight: "bold" } }, "\u2713")))))),
         st.phase === "showdown" && (() => {
@@ -5518,7 +5784,7 @@ function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid
                     tilt > 0 ? ` 🔥${"!".repeat(Math.min(tilt, 3))}` : "")),
             React.createElement("span", { style: S.chips },
                 "$",
-                p.chips),
+                MNY(p.chips)),
             p.lastAct && React.createElement(Bdg, { ...p.lastAct }),
             thinking && React.createElement(Dots, null)),
         React.createElement("div", { style: { ...S.seatCards, gap: stud ? 1.5 : compact ? 2 : 4 } }, showCards
@@ -5563,7 +5829,7 @@ function MobileSeat({ p, reveal, gid, board, isDealer, thinking, wid, won, tilt,
             React.createElement("span", { style: { fontSize: 9, letterSpacing: 1.2, color: "#c9a84c" } }, p.name),
             React.createElement("span", { style: { fontSize: 10.5, color: "#e8dfc8", fontFamily: "monospace" } },
                 "$",
-                p.chips)),
+                MNY(p.chips))),
         React.createElement("span", { style: { fontSize: 6.5, letterSpacing: 0.8, color: "#3a2a16" } },
             profile?.tag,
             tilt > 0 ? ` 🔥${"!".repeat(Math.min(tilt, 3))}` : ""),
@@ -5939,6 +6205,13 @@ const S = {
         border: "1px solid rgba(201,168,76,0.35)", boxShadow: "0 24px 70px rgba(0,0,0,0.6)",
         display: "flex", flexDirection: "column", gap: 10 },
     modalHead: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+    secTitle: { fontSize: 9, letterSpacing: 1.6, color: "#9d8659", marginBottom: 5 },
+    focusStrip: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        padding: "9px 12px", borderRadius: 9, fontFamily: "Georgia,serif", fontSize: 11.5, cursor: "pointer",
+        background: "linear-gradient(165deg,rgba(30,41,59,0.9),rgba(17,24,39,0.9))",
+        border: "1px solid rgba(201,168,76,0.28)", textAlign: "left" },
+    focusTag: { fontSize: 7, letterSpacing: 1.2, color: "#0a1a0e", background: "#c9a84c", borderRadius: 3,
+        padding: "1px 4px", fontWeight: "bold", flexShrink: 0 },
     modalTitle: { fontSize: 15, color: "#c9a84c", letterSpacing: 1 },
     modalClose: { background: "none", border: "none", color: "#9a8862", fontSize: 18, cursor: "pointer", padding: 4 },
     modalSection: { fontSize: 9.5, letterSpacing: 2, color: "#b6a075", marginTop: 4 },
