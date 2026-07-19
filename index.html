@@ -1990,6 +1990,29 @@ function studLiveTax(st, me) {
     return { tax, note, dead, heat };
 }
 function coachBet(st, me, callAmt) {
+    const r = coachBetCore(st, me, callAmt);
+    if (!r || !(callAmt > 0))
+        return r;
+    const e = coachEquity(st, me, callAmt);
+    if (!e || e.ev == null)
+        return r;
+    const pct = Math.round(e.adj * 100), needPct = Math.round(e.need * 100);
+    const money = e.ev >= 0 ? `+$${MNY(e.ev)}` : `−$${MNY(Math.abs(e.ev))}`;
+    let line = ` · ~${pct}% equity vs their range, ${needPct}% needed — calling runs ${money}.`;
+    const saysFold = /fold/i.test(r.text);
+    const cardsToCome = IS_STUD(st.gid) ? (me.hand.length < 7) : ((st.board || []).length < 5);
+    const clearEdge = e.adj - e.need >= 0.08;
+    if (saysFold && clearEdge && cardsToCome && e.ev > 0) {
+        return { ...r, tone: "ok", eq: pct, need: needPct, ev: e.ev, overridden: true,
+            text: `Call — the price is good enough. You're ~${pct}% with cards to come and only need ${needPct}%, so calling runs ${money}. (Hand strength alone looks thin; the draw is what makes it profitable.)` };
+    }
+    if (saysFold && e.ev > 0)
+        line += " The price tempts, but with no equity left the read is to pass.";
+    else if (!saysFold && e.ev < 0)
+        line += " Thin on price — proceed only if you have a read.";
+    return { ...r, eq: pct, need: needPct, ev: e.ev, text: r.text + line };
+}
+function coachBetCore(st, me, callAmt) {
     if (PURE_DRAW(st.gid))
         return coachDrawBet(st, me, callAmt);
     const facing = callAmt > 0;
@@ -2820,6 +2843,149 @@ function execDiscard(st, playerDiscards) {
         boardKey: (st.boardKey || 0) + 1, seq: (st.seq || 0) + 1,
         msg: nx === 0 ? `Your action on 4th street — Pot $${MNY(st.pot)}` : `${players[nx].name} acts on 4th street…` };
 }
+function handEquity(st, me, sims) {
+    const gid = st.gid;
+    if (PURE_DRAW(gid) || IS_DRAMAHA(gid))
+        return null;
+    if (!me || !me.hand || !me.hand.length)
+        return null;
+    const opps = st.players.filter(p => p.id !== me.id && live(p));
+    if (!opps.length)
+        return 1;
+    const N = sims || 320;
+    const key = c => c.r + c.s;
+    const hilo = IS_HILO(gid);
+    const seen = new Set(me.hand.map(key));
+    (st.board || []).forEach(c => seen.add(key(c)));
+    if (IS_STUD(gid))
+        opps.forEach(o => (o.hand || []).forEach(c => { if (c.up)
+            seen.add(key(c)); }));
+    const baseStub = mkDeck().filter(c => !seen.has(key(c)));
+    const holeN = IS_OMAHA(gid) ? 4 : IS_PINEAPPLE(gid) ? 3 : 2;
+    const boardN = IS_FLOP(gid) ? 5 : 0;
+    const studN = 7;
+    let share = 0;
+    for (let s = 0; s < N; s++) {
+        const stub = baseStub.slice();
+        for (let i = stub.length - 1; i > 0; i--) {
+            const j = (rnd() * (i + 1)) | 0;
+            const t = stub[i];
+            stub[i] = stub[j];
+            stub[j] = t;
+        }
+        let k = 0;
+        const take = n => stub.slice(k, k += n);
+        let heroHi, heroLo, oppHands = [];
+        if (IS_STUD(gid)) {
+            const heroFull = me.hand.concat(take(Math.max(0, studN - me.hand.length)));
+            oppHands = opps.map(o => {
+                const known = (o.hand || []).filter(c => c.up);
+                return known.concat(take(Math.max(0, studN - known.length)));
+            });
+            if (gid === "razz" || gid === "razzdugi") {
+                heroHi = null;
+                heroLo = bestRazz(heroFull);
+            }
+            else {
+                heroHi = studHigh(heroFull);
+                heroLo = hilo ? bestLow7(heroFull) : null;
+            }
+            oppHands = oppHands.map(h => (gid === "razz" || gid === "razzdugi")
+                ? { hi: null, lo: bestRazz(h) }
+                : { hi: studHigh(h), lo: hilo ? bestLow7(h) : null });
+        }
+        else {
+            const board = (st.board || []).concat(take(Math.max(0, boardN - (st.board || []).length)));
+            heroHi = flopHigh(gid, me.hand, board);
+            heroLo = hilo ? bestOmahaLow(me.hand, board) : null;
+            oppHands = opps.map(() => {
+                const h = take(holeN);
+                return { hi: flopHigh(gid, h, board), lo: hilo ? bestOmahaLow(h, board) : null };
+            });
+        }
+        const cmpH = (gid === "razz" || gid === "razzdugi") ? cmpRazz : (IS_STUD(gid) ? cmpHigh : cmpHigh);
+        const mine = (gid === "razz" || gid === "razzdugi") ? heroLo : heroHi;
+        let hiTies = 1, hiBeat = false;
+        for (const o of oppHands) {
+            const theirs = (gid === "razz" || gid === "razzdugi") ? o.lo : o.hi;
+            if (!theirs)
+                continue;
+            const c = cmpH(mine, theirs);
+            if (c > 0) {
+                hiBeat = true;
+                break;
+            }
+            if (c === 0)
+                hiTies++;
+        }
+        const hiShare = hiBeat ? 0 : 1 / hiTies;
+        if (!hilo || gid === "razz" || gid === "razzdugi") {
+            share += hiShare;
+            continue;
+        }
+        let loTies = 1, loBeat = false, anyLow = !!heroLo;
+        for (const o of oppHands) {
+            if (!o.lo)
+                continue;
+            anyLow = true;
+            if (!heroLo) {
+                loBeat = true;
+                continue;
+            }
+            const c = cmpLow(heroLo, o.lo);
+            if (c > 0) {
+                loBeat = true;
+            }
+            else if (c === 0)
+                loTies++;
+        }
+        const loShare = (!heroLo || loBeat) ? 0 : 1 / loTies;
+        share += anyLow ? (hiShare * 0.5 + loShare * 0.5) : hiShare;
+    }
+    return share / N;
+}
+function callEV(pot, callAmt, share) {
+    if (callAmt <= 0)
+        return null;
+    const final = pot + callAmt;
+    return +(share * final - callAmt).toFixed(0);
+}
+function potOddsNeeded(pot, callAmt) { return callAmt <= 0 ? 0 : callAmt / (pot + callAmt); }
+function rangeAdjustedEquity(st, me, raw, nOpp) {
+    if (raw == null)
+        return null;
+    const bets = st.betCount || 0;
+    const heat = bets >= 3 ? 0.30 : bets === 2 ? 0.20 : bets === 1 ? 0.11 : 0;
+    const crowd = Math.max(0, (nOpp || 1) - 1) * 0.04;
+    const street = Math.min(0.06, (st.streetN || 0) * 0.02);
+    return Math.max(0, raw * (1 - Math.min(0.45, heat + crowd + street)));
+}
+let _eqCache = { k: null, v: null };
+function coachEquity(st, me, callAmt) {
+    if (!me || PURE_DRAW(st.gid) || IS_DRAMAHA(st.gid))
+        return null;
+    const k = [st.gid, st.seq || 0, st.streetN || 0, st.betCount || 0, callAmt, (me.hand || []).map(c => c.r + c.s).join(""),
+        (st.board || []).map(c => c.r + c.s).join(""), st.players.filter(live).length].join("|");
+    if (_eqCache.k === k)
+        return _eqCache.v;
+    let raw = null;
+    try {
+        raw = handEquity(st, me, 260);
+    }
+    catch {
+        raw = null;
+    }
+    if (raw == null) {
+        _eqCache = { k, v: null };
+        return null;
+    }
+    const nOpp = st.players.filter(p => p.id !== me.id && live(p)).length;
+    const adj = rangeAdjustedEquity(st, me, raw, nOpp);
+    const need = potOddsNeeded(st.pot, callAmt);
+    const v = { raw, adj, need, ev: callEV(st.pot, callAmt, adj), nOpp };
+    _eqCache = { k, v };
+    return v;
+}
 function Spark({ vals, w = 300, h = 74 }) {
     if (!vals || vals.length < 2)
         return null;
@@ -2918,6 +3084,33 @@ function ProgressReport({ focus, onClose, onSetFocus, onClearFocus }) {
                     table.map(t => React.createElement("div", { key: t.gid, onClick: () => onSetFocus(t.gid), style: { cursor: "pointer" } },
                         React.createElement(BarRow, { label: gname(t.gid), value: t.sharp, max: 100, suffix: "%", color: t.gid === gid ? "#c9a84c" : sharpColor(t.sharp) }))),
                     React.createElement("div", { style: { fontSize: 9, color: "#7d6f57", marginTop: 4 } }, "Tap a game to make it your focus."))),
+                !focus && (() => {
+                    const sug = weakestGame(log);
+                    if (!sug)
+                        return null;
+                    const sg = gameStats(log, sug.gid);
+                    return (React.createElement("div", { style: { marginTop: 14, padding: "11px 12px", borderRadius: 9, background: "rgba(224,112,95,0.10)", border: "1px solid rgba(224,112,95,0.30)" } },
+                        React.createElement("div", { style: { fontSize: 9, letterSpacing: 1.5, color: "#e0705f" } }, "SUGGESTED FOCUS"),
+                        React.createElement("div", { style: { fontSize: 12, color: "#e8d9b0", marginTop: 4, lineHeight: 1.5 } },
+                            React.createElement("b", null, gname(sug.gid)),
+                            " is your weakest game at ",
+                            React.createElement("b", { style: { color: sharpColor(sug.sharp) } },
+                                sug.sharp,
+                                "% sharp"),
+                            " over ",
+                            sug.n,
+                            " decisions",
+                            sg && sg.topLeak ? React.createElement(React.Fragment, null,
+                                " \u2014 mostly ",
+                                React.createElement("b", null, sg.topLeak[0].toLowerCase()),
+                                ".") : ".",
+                            " ",
+                            "In mixed games your edge is set by your worst game, not your best."),
+                        React.createElement("button", { style: { ...S.modalDone, marginTop: 9 }, onClick: () => onSetFocus(sug.gid) },
+                            "Make ",
+                            gname(sug.gid),
+                            " my focus")));
+                })(),
                 st.topLeak && (React.createElement("div", { style: { marginTop: 14, padding: "9px 11px", borderRadius: 8, background: "rgba(201,168,76,0.09)", border: "1px solid rgba(201,168,76,0.22)" } },
                     React.createElement("div", { style: { fontSize: 9, letterSpacing: 1.5, color: "#9d8659" } }, "WHAT TO WORK ON"),
                     React.createElement("div", { style: { fontSize: 11.5, color: "#e8d9b0", marginTop: 3 } },
@@ -2943,6 +3136,24 @@ function FocusLine({ focus, onOpen }) {
             React.createElement("span", { style: { color: "#c9a84c" } }, "\u203A")));
     }
     const d = st.earlySharp != null && st.lateSharp != null ? st.lateSharp - st.earlySharp : null;
+    const sug = !focus ? weakestGame(log) : null;
+    if (sug) {
+        const sg = gameStats(log, sug.gid);
+        return (React.createElement("button", { onClick: onOpen, style: S.focusStrip },
+            React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 7, minWidth: 0 } },
+                React.createElement("span", { style: { ...S.focusTag, background: "#e0705f", color: "#fff" } }, "SUGGESTED"),
+                React.createElement("span", { style: { color: "#e8d9b0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                    "Work on ",
+                    React.createElement("b", null, gname(sug.gid)),
+                    " \u00B7 ",
+                    React.createElement("b", { style: { color: sharpColor(sug.sharp) } },
+                        sug.sharp,
+                        "% sharp"),
+                    sg && sg.topLeak && React.createElement("span", { style: { color: "#7d6f57" } },
+                        " \u00B7 ",
+                        sg.topLeak[0].toLowerCase()))),
+            React.createElement("span", { style: { color: "#c9a84c" } }, "\u203A")));
+    }
     return (React.createElement("button", { onClick: onOpen, style: S.focusStrip },
         React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 7, minWidth: 0 } },
             focus && React.createElement("span", { style: S.focusTag }, "FOCUS"),
@@ -3768,7 +3979,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04a";
+const APP_VERSION = "2026.07.04c";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
