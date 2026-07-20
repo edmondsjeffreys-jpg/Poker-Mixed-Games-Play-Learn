@@ -1221,8 +1221,11 @@ function studStrength(st, pl) {
     if (gid === "razz" || gid === "razzdugi") {
         const lows = [...new Set(pl.hand.map(c => lowVal(c.v)).filter(v => v <= 8))].sort((a, b) => a - b);
         let s = lows.length / 5 * 0.7;
-        if (lows.length)
-            s += Math.max(0, (8 - lows[lows.length - 1]) / 8) * 0.3;
+        if (lows.length) {
+            const topLow = lows[lows.length - 1];
+            const avgLow = lows.reduce((a, v) => a + v, 0) / lows.length;
+            s += Math.max(0, (8 - topLow) / 8) * 0.18 + Math.max(0, (7 - avgLow) / 6) * 0.12;
+        }
         const ev = bestRazz(pl.hand);
         if (n >= 5 && ev) {
             if (ev.cat === 0) {
@@ -3979,7 +3982,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04c";
+const APP_VERSION = "2026.07.04d";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
