@@ -2559,6 +2559,7 @@ function applyAction(st, action, amount = 0) {
             a.chips -= put;
             a.betSt += put;
             a.cmt = (a.cmt || 0) + put;
+            a.aggr = (a.aggr || 0) + 1;
             pot += put;
             if (a.betSt > st.currentBet && put > 0) {
                 const verb = st.currentBet > 0 ? "Raise" : "Bet";
@@ -2879,11 +2880,17 @@ function handEquity(st, me, sims) {
         let k = 0;
         const take = n => stub.slice(k, k += n);
         let heroHi, heroLo, oppHands = [];
+        let pool = null;
         if (IS_STUD(gid)) {
             const heroFull = me.hand.concat(take(Math.max(0, studN - me.hand.length)));
+            pool = stub.slice(k);
             oppHands = opps.map(o => {
                 const known = (o.hand || []).filter(c => c.up);
-                return known.concat(take(Math.max(0, studN - known.length)));
+                const want = Math.max(0, studN - known.length);
+                const picks = rangePicks(st, o);
+                const hidden = (picks <= 1 || rnd() < RANGE_BLUFF) ? drawBestOf(pool, want, 1, null)
+                    : drawBestOf(pool, want, picks, h => candidateStrength(st, o, known.concat(h)));
+                return known.concat(hidden);
             });
             if (gid === "razz" || gid === "razzdugi") {
                 heroHi = null;
@@ -2899,10 +2906,11 @@ function handEquity(st, me, sims) {
         }
         else {
             const board = (st.board || []).concat(take(Math.max(0, boardN - (st.board || []).length)));
+            pool = stub.slice(k);
             heroHi = flopHigh(gid, me.hand, board);
             heroLo = hilo ? bestOmahaLow(me.hand, board) : null;
-            oppHands = opps.map(() => {
-                const h = take(holeN);
+            oppHands = opps.map(o => {
+                const h = dealRangedHand({ ...st, board }, o, pool, holeN);
                 return { hi: flopHigh(gid, h, board), lo: hilo ? bestOmahaLow(h, board) : null };
             });
         }
@@ -2958,10 +2966,9 @@ function rangeAdjustedEquity(st, me, raw, nOpp) {
     if (raw == null)
         return null;
     const bets = st.betCount || 0;
-    const heat = bets >= 3 ? 0.30 : bets === 2 ? 0.20 : bets === 1 ? 0.11 : 0;
-    const crowd = Math.max(0, (nOpp || 1) - 1) * 0.04;
-    const street = Math.min(0.06, (st.streetN || 0) * 0.02);
-    return Math.max(0, raw * (1 - Math.min(0.45, heat + crowd + street)));
+    const heat = bets >= 3 ? 0.09 : bets === 2 ? 0.06 : bets === 1 ? 0.03 : 0;
+    const crowd = Math.max(0, (nOpp || 1) - 1) * 0.025;
+    return Math.max(0, raw * (1 - Math.min(0.18, heat + crowd)));
 }
 let _eqCache = { k: null, v: null };
 function coachEquity(st, me, callAmt) {
@@ -2988,6 +2995,166 @@ function coachEquity(st, me, callAmt) {
     const v = { raw, adj, need, ev: callEV(st.pot, callAmt, adj), nOpp };
     _eqCache = { k, v };
     return v;
+}
+const RANGE_BLUFF = 0.16;
+function rangePicks(st, p) {
+    const a = p.aggr || 0;
+    if (a >= 3)
+        return 12;
+    if (a === 2)
+        return 7;
+    if (a === 1)
+        return 4;
+    if ((p.cmt || 0) > 0 && (st.streetN || 0) >= 1)
+        return 2;
+    return 1;
+}
+function impliedFloor(st, p) {
+    const n = rangePicks(st, p);
+    return n <= 1 ? 0 : n >= 12 ? 0.68 : n >= 7 ? 0.58 : n >= 4 ? 0.44 : 0.26;
+}
+function candidateStrength(st, seatPlayer, hand) {
+    const probe = { ...seatPlayer, hand };
+    try {
+        if (IS_STUD(st.gid))
+            return studStrength(st, probe);
+        if (IS_FLOP(st.gid))
+            return flopStrength(st, probe);
+    }
+    catch {
+        return null;
+    }
+    return null;
+}
+function drawBestOf(pool, n, picks, score) {
+    if (pool.length < n) {
+        const out = [];
+        while (pool.length && out.length < n)
+            out.push(pool.pop());
+        return out;
+    }
+    let bestIdx = null, bestScore = -Infinity;
+    const P = Math.max(1, picks);
+    for (let t = 0; t < P; t++) {
+        const idx = [];
+        while (idx.length < n) {
+            const j = (rnd() * pool.length) | 0;
+            if (idx.indexOf(j) < 0)
+                idx.push(j);
+        }
+        if (P === 1 || !score) {
+            bestIdx = idx;
+            break;
+        }
+        const sc = score(idx.map(i => pool[i]));
+        if (sc == null) {
+            bestIdx = idx;
+            break;
+        }
+        if (sc > bestScore) {
+            bestScore = sc;
+            bestIdx = idx;
+        }
+    }
+    const hand = bestIdx.map(i => pool[i]);
+    bestIdx.slice().sort((a, b) => b - a).forEach(i => pool.splice(i, 1));
+    return hand;
+}
+function dealRangedHand(st, p, pool, n) {
+    const picks = rangePicks(st, p);
+    if (picks <= 1 || rnd() < RANGE_BLUFF)
+        return drawBestOf(pool, n, 1, null);
+    return drawBestOf(pool, n, picks, hand => candidateStrength(st, p, hand));
+}
+const RO_PROFILE = { name: "Hero", tag: "Solid Reg", aggr: 0.42, bluff: 0.14, slow: 0.18, leak: 0.16, standPat: 0.20, over: 0.07, sz: 0.72, cry: 0.12 };
+function rolloutEV(st0, seat, action, amount, sims) {
+    const N = sims || 70;
+    const me0 = st0.players[seat];
+    if (!me0)
+        return null;
+    const key = c => c.r + c.s;
+    const seen = new Set((me0.hand || []).map(key));
+    (st0.board || []).forEach(c => seen.add(key(c)));
+    if (IS_STUD(st0.gid))
+        st0.players.forEach(p => (p.hand || []).forEach(c => { if (c.up)
+            seen.add(key(c)); }));
+    const baseStub = mkDeck().filter(c => !seen.has(key(c)));
+    const hadProf = Object.prototype.hasOwnProperty.call(PROF, seat);
+    const savedProf = PROF[seat];
+    PROF[seat] = RO_PROFILE;
+    let total = 0, counted = 0;
+    try {
+        for (let i = 0; i < N; i++) {
+            const stub = baseStub.slice();
+            for (let j = stub.length - 1; j > 0; j--) {
+                const k = (rnd() * (j + 1)) | 0;
+                const t = stub[j];
+                stub[j] = stub[k];
+                stub[k] = t;
+            }
+            const pool = stub.slice();
+            const players = st0.players.map(p => {
+                if (p.id === seat || !live(p))
+                    return { ...p };
+                if (IS_STUD(st0.gid)) {
+                    const shown = (p.hand || []).filter(c => c.up);
+                    const want = (p.hand || []).length - shown.length;
+                    const picks = rangePicks(st0, p);
+                    const hidden = (picks <= 1 || rnd() < RANGE_BLUFF) ? drawBestOf(pool, want, 1, null)
+                        : drawBestOf(pool, want, picks, h => candidateStrength(st0, p, shown.concat(h)));
+                    return { ...p, hand: shown.concat(hidden) };
+                }
+                return { ...p, hand: dealRangedHand(st0, p, pool, (p.hand || []).length) };
+            });
+            let sim = { ...st0, players, deck: pool };
+            const before = sim.players[seat].chips;
+            try {
+                sim = applyAction(sim, action, amount);
+            }
+            catch {
+                continue;
+            }
+            let r = stepTable(sim, { humans: new Set() }), guard = 0;
+            while ((r.status === "needs-bet" || r.status === "needs-draw") && guard++ < 60) {
+                r = stepTable(r.status === "needs-draw" ? execDraw(r.st, [], false) : applyAction(r.st, "call", 0), { humans: new Set() });
+            }
+            total += (r.st.players[seat]?.chips ?? before) - before;
+            counted++;
+        }
+    }
+    finally {
+        if (hadProf)
+            PROF[seat] = savedProf;
+        else
+            delete PROF[seat];
+    }
+    return counted ? total / counted : null;
+}
+function bestResponse(st, seat, sims) {
+    const la = legalActions(st);
+    if (!la || la.seat !== seat)
+        return null;
+    const out = [];
+    if (la.canFold && la.toCall > 0)
+        out.push({ action: "fold", amount: 0, label: "Fold" });
+    if (la.canCheck)
+        out.push({ action: "check", amount: 0, label: "Check" });
+    if (la.canCall)
+        out.push({ action: "call", amount: 0, label: `Call $${MNY(la.toCall)}` });
+    if (la.canBet || la.canRaise) {
+        const pot = st.pot || 0, me = st.players[seat];
+        const half = Math.min(la.maxTotal, Math.max(la.minTotal, me.betSt + Math.round(pot * 0.5)));
+        out.push({ action: la.canBet ? "bet" : "raise", amount: half, label: `${la.betLabel} $${MNY(half - me.betSt)}` });
+        if (la.maxTotal > half)
+            out.push({ action: la.canBet ? "bet" : "raise", amount: la.maxTotal,
+                label: la.maxTotal >= me.betSt + me.chips ? "All-in" : `${la.betLabel} pot` });
+    }
+    const scored = out.map(o => ({ ...o, ev: rolloutEV(st, seat, o.action, o.amount, sims) }))
+        .filter(o => o.ev != null)
+        .sort((a, b) => b.ev - a.ev);
+    if (!scored.length)
+        return null;
+    return { best: scored[0], all: scored, sims: sims || 70 };
 }
 function Spark({ vals, w = 300, h = 74 }) {
     if (!vals || vals.length < 2)
@@ -3266,7 +3433,7 @@ function allGameStats(log, min) {
 function weakestGame(log, min) { const t = allGameStats(log, min || 25); return t.length ? t[0] : null; }
 const STREET_NAMES = { flop: ["Preflop", "Flop", "Turn", "River"], stud: ["3rd", "4th", "5th", "6th", "7th"], draw: ["Pre-draw", "Draw 1", "Draw 2", "Draw 3"] };
 function streetLabels(gid) { return IS_STUD(gid) ? STREET_NAMES.stud : PURE_DRAW(gid) ? STREET_NAMES.draw : STREET_NAMES.flop; }
-function potLayers(players) {
+function potLayers(players, pot) {
     const levels = [...new Set(players.map(p => p.cmt || 0).filter(c => c > 0))].sort((a, b) => a - b);
     const layers = [];
     let prev = 0;
@@ -3280,6 +3447,11 @@ function potLayers(players) {
             layers.push({ amount, eligible: new Set(eligible) });
         }
         prev = lvl;
+    }
+    if (!layers.length && pot > 0) {
+        const liveIds = players.filter(live).map(p => p.id);
+        if (liveIds.length)
+            layers.push({ amount: pot, eligible: new Set(liveIds) });
     }
     return layers;
 }
@@ -3296,7 +3468,7 @@ function awardLayers(layers, pickWinners) {
     return award;
 }
 function layerAwardLanes(st, evals, lanes) {
-    const layers = potLayers(st.players);
+    const layers = potLayers(st.players, st.pot);
     const award = {};
     for (const L of layers) {
         const conts = evals.filter(e => L.eligible.has(e.p.id));
@@ -3326,7 +3498,7 @@ function sidePotMsg(st, award, descOf) {
     const ids = Object.keys(award).map(Number).filter(id => award[id] > 0);
     if (ids.length < 2)
         return null;
-    if (potLayers(st.players).length < 2)
+    if (potLayers(st.players, st.pot).length < 2)
         return null;
     const nm = id => id === 0 ? "You" : (st.players.find(p => p.id === id)?.name || "Player");
     const parts = ids.sort((a, b) => award[b] - award[a])
@@ -3340,7 +3512,7 @@ function showdown(st) {
     const evaled = still.map(p => ({ ...p, ev: evalHand(st.gid, p.hand) })).sort((a, b) => cmpHand(st.gid, a.ev, b.ev));
     const best = evaled[0];
     const winners = evaled.filter(p => cmpHand(st.gid, p.ev, best.ev) === 0);
-    const layers = potLayers(st.players);
+    const layers = potLayers(st.players, st.pot);
     const award = awardLayers(layers, ids => {
         const conts = evaled.filter(e => ids.includes(e.id));
         if (!conts.length)
@@ -3375,7 +3547,7 @@ function showdownFlop(st) {
     const loWinners = bestLo ? evals.filter(e => e.lo && cmpLow(e.lo, bestLo) === 0) : [];
     const pot = st.pot;
     let msg;
-    const layers = potLayers(st.players);
+    const layers = potLayers(st.players, st.pot);
     const award = {};
     for (const L of layers) {
         const conts = evals.filter(e => L.eligible.has(e.p.id));
@@ -3982,7 +4154,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04d";
+const APP_VERSION = "2026.07.04f";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -4656,7 +4828,7 @@ function dealCards(s) {
                     { ...deck[cursor++], up: false },
                     { ...deck[cursor++], up: true },
                 ];
-            return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0, cmt: 0,
+            return { ...p, sittingOut: false, folded: false, hand: hole, betSt: 0, cmt: 0, aggr: 0,
                 chips: p.chips - stk.studAnte, cmt: stk.studAnte, lastAct: { text: `Ante $${MNY(stk.studAnte)}`, color: "#475569" } };
         });
         let pot = players.filter(p => !p.sittingOut).length * stk.studAnte;
@@ -4684,7 +4856,7 @@ function dealCards(s) {
                 return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
-            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0,
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, aggr: 0,
                 chips: p.chips - ante, cmt: ante, lastAct: { text: `Ante $${MNY(ante)}`, color: "#475569" } };
         });
         const pot = players.filter(p => !p.sittingOut).length * ante;
@@ -4709,7 +4881,7 @@ function dealCards(s) {
                 return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
             const hand = deck.slice(cursor, cursor + hs);
             cursor += hs;
-            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, lastAct: null };
+            return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, aggr: 0, lastAct: null };
         });
         const order = liveFromDealer(players, dealer);
         const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
@@ -4743,7 +4915,7 @@ function dealCards(s) {
             return { ...p, sittingOut: true, folded: true, hand: [], lastAct: { text: "Sitting Out", color: "#374151" } };
         const hand = deck.slice(cursor, cursor + hs);
         cursor += hs;
-        return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, lastAct: null };
+        return { ...p, sittingOut: false, folded: false, hand, betSt: 0, cmt: 0, aggr: 0, lastAct: null };
     });
     const order = liveFromDealer(players, dealer);
     const sbId = order[0] ?? 0, bbId = order[1] ?? order[0] ?? 0;
