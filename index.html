@@ -1170,9 +1170,24 @@ function legalActions(st) {
     const hasChips = pl.chips > 0;
     const aggressive = hasChips && !raiseLocked;
     const opening = st.currentBet === 0;
+    const stackTot = pl.betSt + pl.chips;
+    if (mode === "fl") {
+        const fb = st.streetN <= 1 ? stk.sbet : stk.bbet;
+        const fixedTot = Math.min(stackTot, (opening ? 0 : st.currentBet) + fb);
+        const canIncreaseFL = fixedTot > st.currentBet;
+        const aggressiveFL = aggressive && canIncreaseFL;
+        return {
+            seat, toCall,
+            canFold, canCheck, canCall,
+            canBet: aggressiveFL && opening,
+            canRaise: aggressiveFL && !opening,
+            betLabel: opening ? "Bet" : "Raise",
+            minTotal: fixedTot, maxTotal: fixedTot,
+            isAllInToCall: canCall && toCall >= pl.chips,
+        };
+    }
     const capTot = mode === "pl" ? potLimitMaxTotal(st, pl) : (pl.betSt + pl.chips);
     const minInc = opening ? stk.bblind : st.currentBet + stk.bblind;
-    const stackTot = pl.betSt + pl.chips;
     const capTot2 = Math.min(capTot, stackTot);
     const canIncrease = capTot2 > st.currentBet;
     const minTotal = Math.min(capTot2, Math.max(minInc, st.currentBet + 1));
@@ -3186,11 +3201,19 @@ function bestResponse(st, seat, sims) {
         out.push({ action: "call", amount: 0, label: `Call $${MNY(la.toCall)}` });
     if (la.canBet || la.canRaise) {
         const pot = st.pot || 0, me = st.players[seat];
-        const half = Math.min(la.maxTotal, Math.max(la.minTotal, me.betSt + Math.round(pot * 0.5)));
-        out.push({ action: la.canBet ? "bet" : "raise", amount: half, label: `${la.betLabel} $${MNY(half - me.betSt)}` });
-        if (la.maxTotal > half)
-            out.push({ action: la.canBet ? "bet" : "raise", amount: la.maxTotal,
-                label: la.maxTotal >= me.betSt + me.chips ? "All-in" : `${la.betLabel} pot` });
+        const stackTot = me.betSt + me.chips;
+        if (la.minTotal === la.maxTotal) {
+            const amt = la.maxTotal;
+            out.push({ action: la.canBet ? "bet" : "raise", amount: amt,
+                label: amt >= stackTot ? "All-in" : `${la.betLabel} $${MNY(amt - me.betSt)}` });
+        }
+        else {
+            const half = Math.min(la.maxTotal, Math.max(la.minTotal, me.betSt + Math.round(pot * 0.5)));
+            out.push({ action: la.canBet ? "bet" : "raise", amount: half, label: `${la.betLabel} $${MNY(half - me.betSt)}` });
+            if (la.maxTotal > half)
+                out.push({ action: la.canBet ? "bet" : "raise", amount: la.maxTotal,
+                    label: la.maxTotal >= stackTot ? "All-in" : `${la.betLabel} pot` });
+        }
     }
     const scored = out.map(o => ({ ...o, ev: rolloutEV(st, seat, o.action, o.amount, sims) }))
         .filter(o => o.ev != null)
@@ -4288,7 +4311,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04k";
+const APP_VERSION = "2026.07.04l";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
