@@ -4311,7 +4311,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04l";
+const APP_VERSION = "2026.07.04m";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5135,6 +5135,204 @@ function stepTable(st, opts) {
     }
     return { st: s, status: 'guard', seat: null };
 }
+const MP_SERVER_URL = "";
+const MP_TOKEN_KEY = "pmg_mp_token";
+function mpLoadToken() { try {
+    return localStorage.getItem(MP_TOKEN_KEY) || null;
+}
+catch {
+    return null;
+} }
+function mpSaveToken(t) { try {
+    if (t)
+        localStorage.setItem(MP_TOKEN_KEY, t);
+}
+catch { } }
+function useOnlineTable() {
+    const [status, setStatus] = useState("idle");
+    const [conn, setConn] = useState(null);
+    const [server, setServer] = useState(null);
+    const [code, setCode] = useState(null);
+    const [err, setErr] = useState(null);
+    const tokenRef = useRef(mpLoadToken());
+    const wsRef = useRef(null);
+    const connect = () => {
+        if (!MP_SERVER_URL) {
+            setErr("not-configured");
+            setStatus("error");
+            return;
+        }
+        setStatus("connecting");
+        setErr(null);
+        let ws;
+        try {
+            ws = new WebSocket(MP_SERVER_URL);
+        }
+        catch {
+            setErr("bad-url");
+            setStatus("error");
+            return;
+        }
+        wsRef.current = ws;
+        setConn(ws);
+        ws.onopen = () => {
+            setStatus("connected");
+            if (tokenRef.current)
+                ws.send(JSON.stringify({ type: "resume", token: tokenRef.current }));
+        };
+        ws.onmessage = (ev) => {
+            let m;
+            try {
+                m = JSON.parse(ev.data);
+            }
+            catch {
+                return;
+            }
+            if (m.type === "welcome") {
+                tokenRef.current = m.token;
+                mpSaveToken(m.token);
+            }
+            else if (m.type === "created") {
+                setCode(m.code);
+            }
+            else if (m.type === "joined") {
+                setCode(m.code);
+            }
+            else if (m.type === "state") {
+                setServer({ seat: m.seat, view: m.view, yourTurn: m.yourTurn, code: m.table });
+            }
+            else if (m.type === "error") {
+                setErr(m.err);
+            }
+        };
+        ws.onerror = () => { setErr("connection-failed"); setStatus("error"); };
+        ws.onclose = () => { setStatus(s => s === "error" ? s : "idle"); };
+    };
+    const disconnect = () => { try {
+        wsRef.current?.close();
+    }
+    catch { } wsRef.current = null; setConn(null); setServer(null); setCode(null); setStatus("idle"); };
+    const sendMsg = (obj) => { const ws = wsRef.current; if (ws && ws.readyState === 1)
+        ws.send(JSON.stringify(obj)); };
+    const createTable = (gid, botFill) => sendMsg({ type: "create", gid, botFill });
+    const joinTable = (c, name) => sendMsg({ type: "join", code: c, name });
+    const startTable = () => sendMsg({ type: "start" });
+    const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
+    return { status, server, code, err, connect, disconnect, createTable, joinTable, startTable, sendIntent };
+}
+function OnlineTable({ mp, onClose }) {
+    const [joinCode, setJoinCode] = useState("");
+    const [name, setName] = useState("");
+    const [gid, setGid] = useState("nlhe");
+    const [botFill, setBotFill] = useState(true);
+    const { status, server, code, err } = mp;
+    const errText = {
+        "not-configured": "Online play isn't switched on yet — the server URL still needs to be set in this build.",
+        "bad-url": "The server address looks wrong.",
+        "connection-failed": "Couldn't reach the server. It may be asleep or the address may be off.",
+        "no-such-table": "No table with that code — check the letters and try again.",
+        "table-full": "That table is full.",
+        "not-your-turn": "Hold on — it's not your turn.",
+        "illegal-move": "That move isn't legal here.",
+        "not-seated": "You're not seated at a table.",
+    }[err] || (err ? `Something went wrong (${err}).` : null);
+    if (status !== "connected") {
+        return (React.createElement("div", { style: S.overlay, onClick: onClose },
+            React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+                React.createElement("div", { style: S.modalHead },
+                    React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
+                    React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+                React.createElement("div", { style: { fontSize: 12.5, lineHeight: 1.6, color: "#cdd8cf", marginBottom: 16, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "Play real people at a private table \u2014 share a code with friends and deal in. Empty seats can be filled with bots or left for humans."),
+                errText && React.createElement("div", { style: S.mpErr }, errText),
+                React.createElement("button", { style: { ...S.bigBtn, opacity: status === "connecting" ? 0.6 : 1 }, disabled: status === "connecting", onClick: () => mp.connect() }, status === "connecting" ? "CONNECTING…" : "CONNECT"))));
+    }
+    if (!server) {
+        return (React.createElement("div", { style: S.overlay, onClick: onClose },
+            React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+                React.createElement("div", { style: S.modalHead },
+                    React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
+                    React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+                errText && React.createElement("div", { style: S.mpErr }, errText),
+                code && React.createElement("div", { style: S.mpCode },
+                    "Table code: ",
+                    React.createElement("b", null, code),
+                    " \u2014 share it, then Start when everyone's in."),
+                React.createElement("div", { style: S.mpSecTitle }, "YOUR NAME"),
+                React.createElement("input", { style: S.mpInput, value: name, onChange: e => setName(e.target.value), placeholder: "Name at the table", maxLength: 12 }),
+                React.createElement("div", { style: S.mpSecTitle }, "CREATE A TABLE"),
+                React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 6 } },
+                    React.createElement("select", { style: S.mpSelect, value: gid, onChange: e => setGid(e.target.value) }, GAMES.filter(g => g.available).map(g => React.createElement("option", { key: g.id, value: g.id }, g.label)))),
+                React.createElement("label", { style: S.mpCheck },
+                    React.createElement("input", { type: "checkbox", checked: botFill, onChange: e => setBotFill(e.target.checked) }),
+                    "Fill empty seats with bots"),
+                React.createElement("button", { style: S.bigBtn, onClick: () => mp.createTable(gid, botFill) }, "CREATE TABLE"),
+                React.createElement("div", { style: { ...S.mpSecTitle, marginTop: 18 } }, "OR JOIN BY CODE"),
+                React.createElement("div", { style: { display: "flex", gap: 8 } },
+                    React.createElement("input", { style: { ...S.mpInput, textTransform: "uppercase", flex: 1, marginBottom: 0 }, value: joinCode, onChange: e => setJoinCode(e.target.value.toUpperCase()), placeholder: "ABCD", maxLength: 4 }),
+                    React.createElement("button", { style: { ...S.smBtn, flexShrink: 0 }, onClick: () => mp.joinTable(joinCode, name) }, "JOIN")))));
+    }
+    const v = server.view;
+    const mySeat = server.seat;
+    const isOwner = mySeat === 0;
+    const notStarted = v.phase === "idle";
+    const la = server.yourTurn ? legalActions(v) : null;
+    return (React.createElement("div", { style: S.overlay, onClick: onClose },
+        React.createElement("div", { style: { ...S.modal, maxWidth: 440, maxHeight: "92vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+            React.createElement("div", { style: S.modalHead },
+                React.createElement("span", { style: S.modalTitle },
+                    "ONLINE \u00B7 ",
+                    server.code),
+                React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+            errText && React.createElement("div", { style: S.mpErr }, errText),
+            notStarted ? (React.createElement("div", null,
+                React.createElement("div", { style: S.mpCode },
+                    "Table ",
+                    React.createElement("b", null, server.code),
+                    " \u2014 share this code. You're in seat ",
+                    mySeat,
+                    "."),
+                React.createElement("div", { style: S.mpSecTitle }, "SEATED"),
+                React.createElement("div", { style: { marginBottom: 16 } }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: S.mpSeatRow },
+                    React.createElement("span", null,
+                        "Seat ",
+                        i),
+                    React.createElement("span", { style: { color: "#EBD08A" } }, p.name || (i === mySeat ? "You" : "—")))) : null)),
+                isOwner
+                    ? React.createElement("button", { style: S.bigBtn, onClick: () => mp.startTable() }, "START GAME")
+                    : React.createElement("div", { style: S.mpWait }, "Waiting for the table owner to start\u2026"))) : (React.createElement("div", null,
+                React.createElement("div", { style: S.mpPot },
+                    "Pot $",
+                    MNY(v.pot || 0),
+                    " \u00B7 ",
+                    v.phase),
+                React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: { ...S.mpSeatCard, ...(i === mySeat ? S.mpSeatMe : {}), ...(v.queue && v.queue[0] === i ? S.mpSeatActive : {}) } },
+                    React.createElement("div", { style: S.mpSeatName },
+                        p.name || (i === mySeat ? "You" : `Seat ${i}`),
+                        " ",
+                        i === v.dealerIdx ? "(D)" : ""),
+                    React.createElement("div", { style: S.mpSeatChips },
+                        "$",
+                        MNY(p.chips || 0)),
+                    React.createElement("div", { style: S.mpSeatCards }, (p.hand || []).map((c, ci) => c.down
+                        ? React.createElement("span", { key: ci, style: S.mpCardBack })
+                        : React.createElement("span", { key: ci, style: { ...S.mpCardFace, color: RED.has(c.s) ? "#c0392b" : "#111" } },
+                            c.r,
+                            c.s))),
+                    p.folded && React.createElement("div", { style: S.mpFolded }, "folded"))) : null)),
+                v.board && v.board.length > 0 && (React.createElement("div", { style: S.mpBoard }, v.board.map((c, ci) => React.createElement("span", { key: ci, style: { ...S.mpCardFace, color: RED.has(c.s) ? "#c0392b" : "#111" } },
+                    c.r,
+                    c.s)))),
+                server.yourTurn && la ? (React.createElement("div", { style: S.mpActions },
+                    la.canFold && React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d" }, onClick: () => mp.sendIntent("fold") }, "FOLD"),
+                    la.canCheck && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => mp.sendIntent("check") }, "CHECK"),
+                    la.canCall && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => mp.sendIntent("call") },
+                        "CALL $",
+                        MNY(la.toCall)),
+                    (la.canBet || la.canRaise) && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => mp.sendIntent(la.canBet ? "bet" : "raise", la.maxTotal) },
+                        la.betLabel,
+                        " $",
+                        MNY(la.maxTotal - (v.players[mySeat].betSt || 0))))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")))))));
+}
 function App() {
     const [st, setSt] = useState(() => tsLoad() || mkState("triple"));
     const [showSettings, setShowSettings] = useState(false);
@@ -5150,6 +5348,8 @@ function App() {
     const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
     const [showProgress, setShowProgress] = useState(false);
     const [showNash, setShowNash] = useState(false);
+    const [showOnline, setShowOnline] = useState(false);
+    const mp = useOnlineTable();
     const [focus, setFocus] = useState(() => focusLoad());
     const [pendingCash, setPendingCash] = useState(false);
     const [gamePick, setGamePick] = useState(null);
@@ -5678,6 +5878,7 @@ function App() {
         st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
         showProgress && React.createElement(ProgressReport, { focus: focus, onClose: () => setShowProgress(false), onSetFocus: gid => { const f = { gid, since: Date.now() }; setFocus(f); focusSave(f); }, onClearFocus: () => { setFocus(null); focusSave(null); setShowProgress(false); } }),
         showNash && React.createElement(NashTables, { onClose: () => setShowNash(false) }),
+        showOnline && React.createElement(OnlineTable, { mp: mp, onClose: () => { mp.disconnect(); setShowOnline(false); } }),
         gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
                 const gp = gamePick;
                 setGamePick(null);
@@ -5977,6 +6178,8 @@ function App() {
                     React.createElement("span", { style: { color: "#C9A24B", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\u2660  Nash push/fold charts")),
+                React.createElement("button", { onClick: () => { setShowSettings(false); setShowOnline(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
+                    React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\uD83C\uDF10  Play online (beta)")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
                 React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalDone }, "DONE")))),
         showReview && React.createElement(ReviewScreen, { onClose: () => setShowReview(false), mobile: mobile }),
@@ -6900,6 +7103,49 @@ const S = {
         fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
     nashNote: { fontSize: 9.5, lineHeight: 1.45, color: "#6f8578",
         fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    mpErr: { fontSize: 11.5, lineHeight: 1.5, color: "#E2857A", background: "rgba(226,133,122,0.1)",
+        border: "1px solid rgba(226,133,122,0.35)", borderRadius: 9, padding: "8px 11px", marginBottom: 14,
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpCode: { fontSize: 12, lineHeight: 1.5, color: "#EBD08A", background: "rgba(201,162,75,0.1)",
+        border: "1px solid rgba(201,162,75,0.3)", borderRadius: 9, padding: "9px 11px", marginBottom: 14,
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpSecTitle: { fontSize: 8.5, letterSpacing: 2, color: "#8FA396", margin: "14px 0 7px", fontFamily: "'GM-Stamp',Georgia,serif" },
+    mpInput: { width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(201,162,75,0.3)", borderRadius: 8, padding: "9px 11px", color: "#F0E9D6",
+        fontSize: 13, marginBottom: 10, fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpSelect: { flex: 1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(201,162,75,0.3)",
+        borderRadius: 8, padding: "9px 11px", color: "#F0E9D6", fontSize: 13, fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpCheck: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#cdd8cf", marginBottom: 12,
+        fontFamily: "'GM-Body',system-ui,sans-serif", cursor: "pointer" },
+    mpSeatRow: { display: "flex", justifyContent: "space-between", fontSize: 12, color: "#cdd8cf",
+        padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpWait: { fontSize: 12, color: "#8FA396", fontStyle: "italic", textAlign: "center", padding: "12px 0",
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpPot: { fontSize: 12, letterSpacing: 1, color: "#EBD08A", textAlign: "center", marginBottom: 12,
+        fontFamily: "ui-monospace,Menlo,monospace", fontVariantNumeric: "tabular-nums" },
+    mpSeats: { display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, marginBottom: 12 },
+    mpSeatCard: { background: "rgba(14,44,34,0.6)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 10px" },
+    mpSeatMe: { border: "1px solid rgba(87,230,176,0.5)" },
+    mpSeatActive: { background: "rgba(201,162,75,0.14)", border: "1px solid rgba(201,162,75,0.55)" },
+    mpSeatName: { fontSize: 11, color: "#F0E9D6", fontWeight: "bold", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpSeatChips: { fontSize: 11, color: "#EBD08A", fontFamily: "ui-monospace,Menlo,monospace", fontVariantNumeric: "tabular-nums" },
+    mpSeatCards: { display: "flex", gap: 3, marginTop: 5 },
+    mpCardBack: { width: 20, height: 28, borderRadius: 3, background: "linear-gradient(135deg,#1e3a8a,#1e40af)",
+        border: "1px solid rgba(255,255,255,0.15)", display: "inline-block" },
+    mpCardFace: { minWidth: 20, height: 28, borderRadius: 3, background: "#F0E9D6", display: "inline-flex",
+        alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: "bold", padding: "0 3px",
+        fontFamily: "ui-monospace,Menlo,monospace" },
+    mpFolded: { fontSize: 9, color: "#8a7a5a", fontStyle: "italic", marginTop: 3 },
+    mpBoard: { display: "flex", gap: 4, justifyContent: "center", padding: "10px 0", marginBottom: 8 },
+    mpActions: { display: "flex", gap: 8, marginTop: 14 },
+    mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
+        fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    smBtn: { padding: "9px 16px", borderRadius: 8, border: "1px solid rgba(201,162,75,0.5)",
+        background: "rgba(201,162,75,0.2)", color: "#EBD08A", fontSize: 12, fontWeight: "bold", cursor: "pointer",
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    bigBtn: { display: "block", width: "100%", boxSizing: "border-box", marginTop: 8, padding: "14px", borderRadius: 11,
+        border: "none", background: "linear-gradient(165deg,#d8b551,#bb8f33)", color: "#1a1206", fontSize: 14,
+        fontWeight: "bold", letterSpacing: 1.5, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
     toggleRow: { display: "flex", alignItems: "center", justifyContent: "space-between",
         background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,162,75,0.25)",
         borderRadius: 10, padding: "9px 12px", cursor: "pointer", width: "100%", transition: "all 0.15s" },
