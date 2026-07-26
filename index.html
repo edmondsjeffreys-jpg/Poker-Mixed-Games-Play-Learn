@@ -4288,13 +4288,14 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04j";
+const APP_VERSION = "2026.07.04k";
 const IS_BETA = true;
 const TOUR = [
-    { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
-    { id: "tour-gear", title: "Settings", text: "Stakes, cash or tournament, the bot personalities, and the coach dial all live here." },
-    { id: "tour-coach", title: "Live coaching", text: "Real-time strategy advice as you play. Tap any time to toggle it on or off." },
-    { id: "tour-review", title: "Track your play", text: "Review logs every decision and grades it, so you can spot leaks over time." },
+    { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
+    { id: "tour-gear", title: "Settings", text: "Stakes, cash or tournament, the bot personalities, and the coach all live here. Endgame and final-table drills too." },
+    { id: "tour-coach", title: "Live coaching", text: "Real-time strategy on every street as you play. Tap any time to toggle it on or off." },
+    { id: "tour-deep", title: "Deep Check", text: "On a real decision, run the solver: it plays the spot out hundreds of times against how THIS table is playing and ranks every line by EV." },
+    { id: "tour-review", title: "Track your play", text: "Every decision is logged and graded, so you can spot your leaks over time and drill the games that cost you most." },
 ];
 function FeedbackScreen({ onClose, mode = "feedback", context = "" }) {
     const isBug = mode === "bug";
@@ -5977,10 +5978,10 @@ function App() {
                 React.createElement("div", { style: { fontSize: 13.5, lineHeight: 1.6, color: "#d8cba6" } },
                     "Practice ",
                     React.createElement("span", { style: { color: "#efe4be" } }, "20+ mixed-game variants"),
-                    " against bots \u2014 draw, stud, flop, and split-pot \u2014 with a ",
-                    React.createElement("span", { style: { color: "#efe4be" } }, "coach"),
-                    " that breaks down every decision."),
-                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 9, margin: "20px 2px 22px", textAlign: "left" } }, ["20+ games, one tap to switch", "Built-in coach on every street", "Free · play money · no signup"].map(t => (React.createElement("div", { key: t, style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, color: "#cdbf9e" } },
+                    " nobody else teaches \u2014 draw, stud, flop, and split-pot \u2014 then sharpen up with a ",
+                    React.createElement("span", { style: { color: "#efe4be" } }, "coach and solver"),
+                    " on every decision."),
+                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 9, margin: "20px 2px 22px", textAlign: "left" } }, ["20+ games, one tap to switch", "Live coach + on-demand solver", "Cash, tournaments & endgame drills", "Free · play money · no signup"].map(t => (React.createElement("div", { key: t, style: { display: "flex", alignItems: "center", gap: 10, fontSize: 12.5, color: "#cdbf9e" } },
                     React.createElement("span", { style: { width: 5, height: 5, borderRadius: "50%", background: "#C9A24B", flex: "none", boxShadow: "0 0 6px rgba(201,162,75,0.6)" } }),
                     t)))),
                 React.createElement("button", { onClick: dismissWelcome, style: { display: "block", width: "100%", background: "linear-gradient(165deg,#d8b551,#bb8f33)",
@@ -6117,7 +6118,7 @@ function App() {
                         color: advice.tone === "good" ? "#57E6B0" : advice.tone === "warn" ? "#E2857A" : "#EBD08A", fontFamily: "'GM-Stamp',Georgia,serif" } }, "COACH"),
                 React.createElement("span", { style: S.coachTxt }, advice.text))),
             st.coach && meActive && (myTurn || drawing) && (React.createElement("div", { style: S.deepWrap },
-                !deepCheck && (React.createElement("button", { style: S.deepBtn, onClick: runDeepCheck },
+                !deepCheck && (React.createElement("button", { id: "tour-deep", style: S.deepBtn, onClick: runDeepCheck },
                     React.createElement("span", { style: S.deepBtnTag }, "DEEP CHECK"),
                     React.createElement("span", { style: S.deepBtnTxt }, "Run the solver against this table \u2192"))),
                 deepCheck === "running" && (React.createElement("div", { style: S.deepPanel },
