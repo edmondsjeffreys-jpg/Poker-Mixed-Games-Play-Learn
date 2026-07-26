@@ -833,9 +833,49 @@ function badugiKeepIndices(hand) {
     }
     return best.idx;
 }
+let SOLVER_ACTIVE = false;
+function maybeSolverBet(st, idx) {
+    if (SOLVER_ACTIVE)
+        return null;
+    const skill = st.botSkill?.[idx] ?? 50;
+    if (skill < 80)
+        return null;
+    if (st.phase === "drawing" || st.phase === "discarding")
+        return null;
+    const p = Math.min(1, (skill - 80) / 20 * 0.6 + 0.4);
+    if (rnd() > p)
+        return null;
+    let res;
+    try {
+        res = bestResponse(st, idx, 45);
+    }
+    catch (e) {
+        if (typeof console !== "undefined")
+            console.warn("solver bot fell back to heuristic:", e);
+        return null;
+    }
+    if (!res || !res.best)
+        return null;
+    const b = res.best;
+    if (b.action === "fold")
+        return { action: "fold", amount: 0 };
+    if (b.action === "check")
+        return { action: "check", amount: 0 };
+    if (b.action === "call")
+        return { action: "call", amount: 0 };
+    if (b.action === "bet" || b.action === "raise") {
+        const pl = st.players[idx];
+        const amt = Math.max(0, Math.min(b.amount, pl.betSt + pl.chips));
+        return { action: b.action, amount: amt };
+    }
+    return null;
+}
 function cpuDecide(st, idx) {
     if (!PROF[idx])
         return { action: Math.max(0, st.currentBet - (st.players[idx]?.betSt || 0)) > 0 ? "fold" : "check", amount: 0 };
+    const solverLine = maybeSolverBet(st, idx);
+    if (solverLine)
+        return solverLine;
     if (IS_FLOP(st.gid))
         return cpuDecideFlop(st, idx);
     if (IS_STUD(st.gid))
@@ -3072,6 +3112,8 @@ function rolloutEV(st0, seat, action, amount, sims) {
     const me0 = st0.players[seat];
     if (!me0)
         return null;
+    const solverWasActive = SOLVER_ACTIVE;
+    SOLVER_ACTIVE = true;
     const key = c => c.r + c.s;
     const seen = new Set((me0.hand || []).map(key));
     (st0.board || []).forEach(c => seen.add(key(c)));
@@ -3127,6 +3169,7 @@ function rolloutEV(st0, seat, action, amount, sims) {
             PROF[seat] = savedProf;
         else
             delete PROF[seat];
+        SOLVER_ACTIVE = solverWasActive;
     }
     return counted ? total / counted : null;
 }
@@ -3187,6 +3230,97 @@ function BarRow({ label, value, max, suffix, color }) {
             suffix || "")));
 }
 const sharpColor = s => s >= 80 ? "#57E6B0" : s >= 65 ? "#D9B96A" : s >= 50 ? "#E2857A" : "#E2857A";
+const NASH_RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+function nashScore(hi, lo, suited, pair) {
+    if (pair)
+        return 40 + hi * 4;
+    let s = hi * 2.6 + lo * 1.1;
+    if (suited)
+        s += 5;
+    const gap = hi - lo;
+    if (gap === 1)
+        s += 4;
+    else if (gap === 2)
+        s += 2;
+    else if (gap >= 4)
+        s -= (gap - 3) * 1.4;
+    if (hi === 12)
+        s += 4;
+    return s;
+}
+const NASH_STACKS = [
+    { bb: 3, jamT: 0, callT: 15.5, jamPct: 100, callPct: 82 },
+    { bb: 5, jamT: 13, callT: 21.5, jamPct: 89, callPct: 62 },
+    { bb: 8, jamT: 19, callT: 26, jamPct: 70, callPct: 48 },
+    { bb: 10, jamT: 21.5, callT: 28, jamPct: 62, callPct: 41 },
+    { bb: 12, jamT: 23.5, callT: 30, jamPct: 56, callPct: 36 },
+    { bb: 15, jamT: 26.5, callT: 33, jamPct: 45, callPct: 28 },
+    { bb: 20, jamT: 30, callT: 35.5, jamPct: 36, callPct: 23 },
+    { bb: 25, jamT: 33, callT: 38, jamPct: 28, callPct: 18 },
+];
+function nashGrid(threshold) {
+    const inc = new Set();
+    for (let r = 0; r < 13; r++) {
+        for (let c = 0; c < 13; c++) {
+            const pair = r === c;
+            const suited = r < c;
+            const hi = 12 - Math.min(r, c);
+            const lo = 12 - Math.max(r, c);
+            if (nashScore(hi, lo, suited, pair) >= threshold)
+                inc.add(r + "," + c);
+        }
+    }
+    return inc;
+}
+function NashTables({ onClose }) {
+    const [si, setSi] = useState(3);
+    const [mode, setMode] = useState("jam");
+    const stack = NASH_STACKS[si];
+    const grid = useMemo(() => nashGrid(mode === "jam" ? stack.jamT : stack.callT), [si, mode]);
+    const pct = mode === "jam" ? stack.jamPct : stack.callPct;
+    const cell = (r, c) => {
+        const on = grid.has(r + "," + c);
+        const hi = NASH_RANKS[12 - Math.min(r, c)], lo = NASH_RANKS[12 - Math.max(r, c)];
+        const lbl = r === c ? hi + hi : (r < c ? hi + lo + "s" : hi + lo + "o");
+        return (React.createElement("div", { key: r + "," + c, style: { ...S.nashCell,
+                background: on ? (mode === "jam" ? "rgba(87,230,176,0.9)" : "rgba(201,162,75,0.9)") : "rgba(255,255,255,0.04)",
+                color: on ? "#08120E" : "#5c6f64" } }, lbl));
+    };
+    return (React.createElement("div", { style: S.overlay, onClick: onClose },
+        React.createElement("div", { style: { ...S.modal, maxWidth: 460, maxHeight: "90vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+            React.createElement("div", { style: S.modalHead },
+                React.createElement("span", { style: S.modalTitle }, "NASH PUSH / FOLD"),
+                React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+            React.createElement("div", { style: S.nashIntro }, "Heads-up shove-or-fold equilibrium. The unexploitable range for going all-in (small blind) or calling one (big blind) at a given stack depth. Play these and no opponent can exploit you."),
+            React.createElement("div", { style: S.nashSecTitle }, "EFFECTIVE STACK"),
+            React.createElement("div", { style: S.nashStackRow }, NASH_STACKS.map((s, i) => (React.createElement("button", { key: s.bb, onClick: () => setSi(i), style: { ...S.nashStackBtn, ...(i === si ? S.nashStackOn : {}) } },
+                s.bb,
+                "bb")))),
+            React.createElement("div", { style: S.nashModeRow },
+                React.createElement("button", { onClick: () => setMode("jam"), style: { ...S.nashModeBtn, ...(mode === "jam" ? { ...S.nashModeOn, borderColor: "#57E6B0", color: "#57E6B0" } : {}) } },
+                    "SB JAM \u00B7 ",
+                    stack.jamPct,
+                    "%"),
+                React.createElement("button", { onClick: () => setMode("call"), style: { ...S.nashModeBtn, ...(mode === "call" ? { ...S.nashModeOn, borderColor: "#C9A24B", color: "#C9A24B" } : {}) } },
+                    "BB CALL \u00B7 ",
+                    stack.callPct,
+                    "%")),
+            React.createElement("div", { style: S.nashGrid }, Array.from({ length: 13 }, (_, r) => Array.from({ length: 13 }, (_, c) => cell(r, c))).flat()),
+            React.createElement("div", { style: S.nashFoot },
+                React.createElement("span", { style: { color: mode === "jam" ? "#57E6B0" : "#C9A24B" } }, "\u25A0"),
+                " ",
+                mode === "jam" ? "Jam" : "Call",
+                " \u00A0\u00B7\u00A0 Suited hands sit above the diagonal, offsuit below, pairs on it. At ",
+                stack.bb,
+                "bb the ",
+                mode === "jam" ? "jamming" : "calling",
+                " range is ",
+                React.createElement("span", { style: { color: "#F0E9D6" } },
+                    pct,
+                    "%"),
+                " of hands."),
+            React.createElement("div", { style: S.nashNote }, "These are the standard heads-up equilibrium ranges. In a full-ring pot, apply them once the action folds to you in the small blind \u2014 with more players still to act, tighten up."))));
+}
 function ProgressReport({ focus, onClose, onSetFocus, onClearFocus }) {
     const log = psLoad();
     const gid = focus?.gid || null;
@@ -4154,7 +4288,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04h";
+const APP_VERSION = "2026.07.04j";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot." },
@@ -4991,6 +5125,7 @@ function App() {
     const [tourCfg, setTourCfg] = useState({ mix: "horse", runners: 45, stakes: "high", speed: "standard", startBB: 200, bba: true });
     const [scenCfg, setScenCfg] = useState({ mix: null, stage: 4, stack: 5, field: 45, stakes: "high" });
     const [showProgress, setShowProgress] = useState(false);
+    const [showNash, setShowNash] = useState(false);
     const [focus, setFocus] = useState(() => focusLoad());
     const [pendingCash, setPendingCash] = useState(false);
     const [gamePick, setGamePick] = useState(null);
@@ -5355,6 +5490,31 @@ function App() {
         : (dramaha && st.phase === "drawing") ? "The Draw"
             : st.phase === "discarding" ? "The Discard"
                 : (SLBL[st.streetN] || "");
+    const [deepCheck, setDeepCheck] = useState(null);
+    const runDeepCheck = () => {
+        if (!myTurn && !drawing)
+            return;
+        setDeepCheck("running");
+        setTimeout(() => {
+            try {
+                const seat = me.id;
+                const res = bestResponse(st, seat, 220);
+                setDeepCheck(res || { empty: true });
+            }
+            catch (e) {
+                if (typeof console !== "undefined")
+                    console.warn("deep check failed:", e);
+                setDeepCheck({ empty: true });
+            }
+        }, 30);
+    };
+    const deepKey = `${st.gid}|${st.phase}|${st.drawN}|${myTurn ? 1 : 0}|${drawing ? 1 : 0}|${st.currentBet}|${st.pot}|${(me.hand || []).map(c => c.r + c.s).join("")}`;
+    const deepKeyRef = useRef(deepKey);
+    if (deepKeyRef.current !== deepKey) {
+        deepKeyRef.current = deepKey;
+        if (deepCheck)
+            setDeepCheck(null);
+    }
     const adviceKey = (!st.coach || !meActive) ? "off"
         : `${st.gid}|${st.phase}|${st.drawN}|${drawing ? 1 : 0}|${myTurn ? 1 : 0}|${callAmt}|${st.currentBet}|${st.pot}|${st.exploitDial}|${(me.hand || []).map(c => c.r + c.s).join("")}|${st.players.map(p => p.folded ? "F" : (p.drewLast ?? "-")).join(",")}|${(st.sel || []).join("")}`;
     const advice = useMemo(() => {
@@ -5493,6 +5653,7 @@ function App() {
             } }, curGid: st.gid, focus: focus, onProgress: () => setShowProgress(true) })),
         st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
         showProgress && React.createElement(ProgressReport, { focus: focus, onClose: () => setShowProgress(false), onSetFocus: gid => { const f = { gid, since: Date.now() }; setFocus(f); focusSave(f); }, onClearFocus: () => { setFocus(null); focusSave(null); setShowProgress(false); } }),
+        showNash && React.createElement(NashTables, { onClose: () => setShowNash(false) }),
         gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
                 const gp = gamePick;
                 setGamePick(null);
@@ -5790,6 +5951,8 @@ function App() {
                     React.createElement(FocusLine, { focus: focus, onOpen: () => { setShowSettings(false); setShowProgress(true); } })),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#C9A24B", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
+                React.createElement("button", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
+                    React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\u2660  Nash push/fold charts")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
                 React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalDone }, "DONE")))),
         showReview && React.createElement(ReviewScreen, { onClose: () => setShowReview(false), mobile: mobile }),
@@ -5953,6 +6116,30 @@ function App() {
                         background: advice.tone === "good" ? "rgba(87,230,176,0.22)" : advice.tone === "warn" ? "rgba(248,113,113,0.22)" : "rgba(201,162,75,0.22)",
                         color: advice.tone === "good" ? "#57E6B0" : advice.tone === "warn" ? "#E2857A" : "#EBD08A", fontFamily: "'GM-Stamp',Georgia,serif" } }, "COACH"),
                 React.createElement("span", { style: S.coachTxt }, advice.text))),
+            st.coach && meActive && (myTurn || drawing) && (React.createElement("div", { style: S.deepWrap },
+                !deepCheck && (React.createElement("button", { style: S.deepBtn, onClick: runDeepCheck },
+                    React.createElement("span", { style: S.deepBtnTag }, "DEEP CHECK"),
+                    React.createElement("span", { style: S.deepBtnTxt }, "Run the solver against this table \u2192"))),
+                deepCheck === "running" && (React.createElement("div", { style: S.deepPanel },
+                    React.createElement("span", { style: S.deepHead }, "DEEP CHECK"),
+                    React.createElement("span", { style: S.deepRunning }, "Dealing out hundreds of hands\u2026"))),
+                deepCheck && deepCheck !== "running" && deepCheck.empty && (React.createElement("div", { style: S.deepPanel },
+                    React.createElement("span", { style: S.deepHead }, "DEEP CHECK"),
+                    React.createElement("span", { style: S.deepRunning }, "No clear read here \u2014 the spot's too thin to separate the lines."))),
+                deepCheck && deepCheck !== "running" && !deepCheck.empty && deepCheck.all && (React.createElement("div", { style: S.deepPanel },
+                    React.createElement("span", { style: S.deepHead },
+                        "DEEP CHECK \u00B7 ",
+                        deepCheck.sims,
+                        " SIMS"),
+                    deepCheck.all.map((o, i) => {
+                        const top = i === 0;
+                        const rel = o.ev - deepCheck.all[0].ev;
+                        return (React.createElement("div", { key: o.label, style: { ...S.deepRow, ...(top ? S.deepRowTop : {}) } },
+                            React.createElement("span", { style: { ...S.deepRank, color: top ? "#57E6B0" : "#8FA396" } }, top ? "BEST" : `#${i + 1}`),
+                            React.createElement("span", { style: S.deepLabel }, o.label),
+                            React.createElement("span", { style: { ...S.deepEv, color: top ? "#57E6B0" : o.ev < 0 ? "#E2857A" : "#EBD08A" } }, top ? `${o.ev >= 0 ? "+" : ""}${MNY(Math.round(o.ev))}` : `${rel >= 0 ? "+" : ""}${MNY(Math.round(rel))}`)));
+                    }),
+                    React.createElement("span", { style: S.deepFoot }, "EV against how these opponents have actually played \u2014 not a GTO solve."))))),
             drawing && meActive && (React.createElement("div", { style: S.btnRow },
                 React.createElement(Btn, { s: S.bFold, onClick: fold }, "FOLD"),
                 React.createElement(Btn, { s: S.bDraw, onClick: draw }, st.sel.length === 0 ? "STAND PAT →" : `DRAW ${st.sel.length} →`))),
@@ -6640,6 +6827,55 @@ const S = {
         ok: { background: "rgba(201,162,75,0.12)", borderColor: "rgba(201,162,75,0.5)" },
         warn: { background: "rgba(248,113,113,0.12)", borderColor: "rgba(248,113,113,0.5)" },
     },
+    deepWrap: { marginTop: 6 },
+    deepBtn: { display: "flex", alignItems: "center", gap: 8, width: "100%", cursor: "pointer",
+        background: "rgba(87,230,176,0.06)", border: "1px dashed rgba(87,230,176,0.4)", borderRadius: 10,
+        padding: "7px 10px", transition: "all 0.15s" },
+    deepBtnTag: { fontSize: 8, letterSpacing: 2, fontWeight: "bold", padding: "2px 6px", borderRadius: 6,
+        background: "rgba(87,230,176,0.18)", color: "#57E6B0", flexShrink: 0,
+        fontFamily: "'GM-Stamp',Georgia,serif" },
+    deepBtnTxt: { fontSize: 11, color: "#8FA396", letterSpacing: 0.2,
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    deepPanel: { display: "flex", flexDirection: "column", gap: 5,
+        background: "rgba(10,44,34,0.55)", border: "1px solid rgba(87,230,176,0.35)", borderRadius: 10,
+        padding: "9px 11px", animation: "dealIn 0.25s ease-out" },
+    deepHead: { fontSize: 8, letterSpacing: 2, color: "#57E6B0", fontFamily: "'GM-Stamp',Georgia,serif" },
+    deepRunning: { fontSize: 11, color: "#8FA396", fontStyle: "italic",
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    deepRow: { display: "flex", alignItems: "center", gap: 8, padding: "3px 0" },
+    deepRowTop: { borderBottom: "1px solid rgba(87,230,176,0.15)", paddingBottom: 6, marginBottom: 1 },
+    deepRank: { fontSize: 8.5, letterSpacing: 1, fontWeight: "bold", width: 34, flexShrink: 0,
+        fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace", fontVariantNumeric: "tabular-nums" },
+    deepLabel: { fontSize: 11.5, color: "#F0E9D6", flex: 1,
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    deepEv: { fontSize: 11.5, fontWeight: "bold", flexShrink: 0,
+        fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace", fontVariantNumeric: "tabular-nums" },
+    deepFoot: { fontSize: 9, color: "#6f8578", lineHeight: 1.35, marginTop: 2,
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    nashIntro: { fontSize: 12, lineHeight: 1.5, color: "#cdd8cf", marginBottom: 14,
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    nashSecTitle: { fontSize: 8.5, letterSpacing: 2, color: "#8FA396", marginBottom: 7,
+        fontFamily: "'GM-Stamp',Georgia,serif" },
+    nashStackRow: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 14 },
+    nashStackBtn: { flex: "1 1 auto", minWidth: 44, padding: "7px 4px", borderRadius: 8, cursor: "pointer",
+        background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,162,75,0.28)", color: "#cdd8cf",
+        fontSize: 12, fontWeight: "bold", fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace",
+        fontVariantNumeric: "tabular-nums", transition: "all 0.14s" },
+    nashStackOn: { background: "rgba(201,162,75,0.2)", borderColor: "#C9A24B", color: "#EBD08A" },
+    nashModeRow: { display: "flex", gap: 8, marginBottom: 12 },
+    nashModeBtn: { flex: 1, padding: "9px 6px", borderRadius: 9, cursor: "pointer",
+        background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.14)", color: "#8FA396",
+        fontSize: 11.5, letterSpacing: 0.5, fontWeight: "bold",
+        fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace", fontVariantNumeric: "tabular-nums", transition: "all 0.14s" },
+    nashModeOn: { background: "rgba(255,255,255,0.07)" },
+    nashGrid: { display: "grid", gridTemplateColumns: "repeat(13, 1fr)", gap: 2, marginBottom: 12 },
+    nashCell: { aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center",
+        borderRadius: 3, fontSize: 7.5, fontWeight: "bold", letterSpacing: -0.3,
+        fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace" },
+    nashFoot: { fontSize: 10.5, lineHeight: 1.5, color: "#a9b6ab", marginBottom: 8,
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
+    nashNote: { fontSize: 9.5, lineHeight: 1.45, color: "#6f8578",
+        fontFamily: "'GM-Body',system-ui,-apple-system,'Segoe UI',sans-serif" },
     toggleRow: { display: "flex", alignItems: "center", justifyContent: "space-between",
         background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,162,75,0.25)",
         borderRadius: 10, padding: "9px 12px", cursor: "pointer", width: "100%", transition: "all 0.15s" },
