@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04r";
+const APP_VERSION = "2026.07.04s";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5338,22 +5338,39 @@ function OnlineTable({ mp, onClose }) {
                                 c.r,
                                 React.createElement("span", { style: S.mpPip }, c.s)))
                             : React.createElement("span", { style: S.mpPhaseTag }, v.phase === "acting" ? "pre-flop" : v.phase)))),
-                React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: { ...S.mpSeatCard,
-                        ...(i === mySeat ? S.mpSeatMe : {}),
-                        ...(v.queue && v.queue[0] === i ? S.mpSeatActive : {}),
-                        ...(p.folded ? S.mpSeatFolded : {}) } },
-                    React.createElement("div", { style: S.mpSeatTop },
-                        React.createElement("span", { style: S.mpSeatName }, p.name || (i === mySeat ? "You" : `Seat ${i}`)),
-                        i === v.dealerIdx && React.createElement("span", { style: S.mpDealer }, "D")),
-                    React.createElement("div", { style: S.mpSeatChips },
-                        "$",
-                        MNY(p.chips || 0)),
-                    React.createElement("div", { style: S.mpSeatCards }, (p.hand || []).map((c, ci) => c.down
-                        ? React.createElement("span", { key: ci, style: S.mpCardBack })
-                        : React.createElement("span", { key: ci, style: { ...S.mpMiniCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
-                            c.r,
-                            React.createElement("span", { style: S.mpPipSm }, c.s)))),
-                    p.folded && React.createElement("div", { style: S.mpFolded }, "folded"))) : null)),
+                React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => {
+                    if (!p)
+                        return null;
+                    const isActing = (v.queue && v.queue[0] === i) && !p.folded && v.phase !== "showdown";
+                    const bet = p.betSt || 0;
+                    return (React.createElement("div", { key: i, style: { ...S.mpSeatCard,
+                            ...(i === mySeat ? S.mpSeatMe : {}),
+                            ...(isActing ? S.mpSeatActive : {}),
+                            ...(p.folded ? S.mpSeatFolded : {}) } },
+                        React.createElement("div", { style: S.mpSeatTop },
+                            React.createElement("span", { style: S.mpSeatName }, p.name || (i === mySeat ? "You" : `Seat ${i}`)),
+                            React.createElement("span", { style: { display: "flex", gap: 4, alignItems: "center" } },
+                                i === v.dealerIdx && React.createElement("span", { style: S.mpDealer }, "D"),
+                                isActing && React.createElement("span", { style: S.mpToAct }, "\u25CF TO ACT"))),
+                        React.createElement("div", { style: S.mpSeatChips },
+                            "$",
+                            MNY(p.chips || 0),
+                            bet > 0 && React.createElement("span", { style: S.mpBet },
+                                "  bet $",
+                                MNY(bet))),
+                        React.createElement("div", { style: S.mpSeatCards }, (p.hand || []).map((c, ci) => c.down
+                            ? React.createElement("span", { key: ci, style: S.mpCardBack })
+                            : React.createElement("span", { key: ci, style: { ...S.mpMiniCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
+                                c.r,
+                                React.createElement("span", { style: S.mpPipSm }, c.s)))),
+                        p.folded
+                            ? React.createElement("div", { style: S.mpFolded }, "folded")
+                            : (p.lastAct && p.lastAct.text) ? React.createElement("div", { style: { ...S.mpLastAct, color: p.lastAct.color || "#8FA396" } }, p.lastAct.text) : null));
+                })),
+                React.createElement("div", { style: S.mpTurnLine }, v.phase === "showdown" ? "Showdown"
+                    : server.yourTurn ? "Your turn"
+                        : (v.queue && v.queue[0] != null && v.players[v.queue[0]]) ? `${v.players[v.queue[0]].name || "Seat " + v.queue[0]} to act…`
+                            : "…"),
                 server.yourTurn && la ? (React.createElement("div", null,
                     React.createElement("div", { style: S.mpActions },
                         la.canFold && React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d" }, onClick: () => { setTapDbg("sent: fold"); mp.sendIntent("fold"); } }, "FOLD"),
@@ -7232,6 +7249,11 @@ const S = {
     mpDealer: { fontSize: 8, fontWeight: "bold", color: "#1a1206", background: "#EBD08A", borderRadius: "50%",
         width: 15, height: 15, display: "inline-flex", alignItems: "center", justifyContent: "center" },
     mpSeatFolded: { opacity: 0.45 },
+    mpToAct: { fontSize: 8, fontWeight: "bold", letterSpacing: 0.5, color: "#57E6B0" },
+    mpBet: { fontSize: 10, color: "#EBD08A", fontWeight: "normal" },
+    mpLastAct: { fontSize: 9.5, fontStyle: "italic", marginTop: 4, fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpTurnLine: { textAlign: "center", fontSize: 12, letterSpacing: 1, color: "#EBD08A", margin: "4px 0 12px",
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpActions: { display: "flex", gap: 8, marginTop: 14 },
     mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
