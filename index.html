@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04s";
+const APP_VERSION = "2026.07.04t";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5243,6 +5243,8 @@ function useOnlineTable() {
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
     const [tapDbg, setTapDbg] = useState("");
+    const [raiseOpen, setRaiseOpen] = useState(false);
+    const [raiseAmt, setRaiseAmt] = useState(null);
     const [name, setName] = useState("");
     const [gid, setGid] = useState("nlhe");
     const [botFill, setBotFill] = useState(true);
@@ -5372,18 +5374,51 @@ function OnlineTable({ mp, onClose }) {
                         : (v.queue && v.queue[0] != null && v.players[v.queue[0]]) ? `${v.players[v.queue[0]].name || "Seat " + v.queue[0]} to act…`
                             : "…"),
                 server.yourTurn && la ? (React.createElement("div", null,
-                    React.createElement("div", { style: S.mpActions },
+                    raiseOpen && (la.canBet || la.canRaise) ? ((() => {
+                        const myBet = v.players[mySeat]?.betSt || 0;
+                        const minT = la.minTotal || la.maxTotal, maxT = la.maxTotal;
+                        const potNow = v.pot || 0;
+                        const clamp = t => Math.max(minT, Math.min(maxT, Math.round(t)));
+                        const presets = [
+                            { lbl: "Min", to: minT },
+                            { lbl: "½ Pot", to: clamp(myBet + la.toCall + Math.round(potNow * 0.5)) },
+                            { lbl: "Pot", to: clamp(myBet + la.toCall + potNow) },
+                            { lbl: "All-in", to: maxT },
+                        ];
+                        const chosen = raiseAmt == null ? minT : clamp(raiseAmt);
+                        return (React.createElement("div", null,
+                            React.createElement("div", { style: S.mpRaiseHead },
+                                la.canBet ? "BET" : "RAISE TO",
+                                " ",
+                                React.createElement("b", { style: { color: "#EBD08A" } },
+                                    "$",
+                                    MNY(chosen)),
+                                " ",
+                                React.createElement("span", { style: { color: "#8FA396", fontSize: 10 } },
+                                    "($",
+                                    MNY(chosen - myBet),
+                                    " more)")),
+                            React.createElement("input", { type: "range", min: minT, max: maxT, value: chosen, step: Math.max(1, Math.round((maxT - minT) / 100)), onChange: e => setRaiseAmt(Number(e.target.value)), style: S.mpSlider }),
+                            React.createElement("div", { style: S.mpPresets }, presets.map(pr => pr.to >= minT && pr.to <= maxT ? (React.createElement("button", { key: pr.lbl, style: { ...S.mpPresetBtn, ...(chosen === pr.to ? S.mpPresetOn : {}) }, onClick: () => setRaiseAmt(pr.to) }, pr.lbl)) : null)),
+                            React.createElement("div", { style: S.mpActions },
+                                React.createElement("button", { style: { ...S.mpActBtn, background: "#3a3a3a" }, onClick: () => { setRaiseOpen(false); setRaiseAmt(null); } }, "CANCEL"),
+                                React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => { setTapDbg("sent: " + (la.canBet ? "bet" : "raise") + " " + chosen); mp.sendIntent(la.canBet ? "bet" : "raise", chosen); setRaiseOpen(false); setRaiseAmt(null); } },
+                                    "CONFIRM $",
+                                    MNY(chosen)))));
+                    })()) : (React.createElement("div", { style: S.mpActions },
                         la.canFold && React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d" }, onClick: () => { setTapDbg("sent: fold"); mp.sendIntent("fold"); } }, "FOLD"),
                         la.canCheck && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => { setTapDbg("sent: check"); mp.sendIntent("check"); } }, "CHECK"),
                         la.canCall && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => { setTapDbg("sent: call"); mp.sendIntent("call"); } },
                             "CALL $",
                             MNY(la.toCall)),
-                        (la.canBet || la.canRaise) && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => { setTapDbg("sent: " + (la.canBet ? "bet" : "raise")); mp.sendIntent(la.canBet ? "bet" : "raise", la.maxTotal); } },
-                            la.betLabel,
-                            " $",
-                            MNY((la.maxTotal || 0) - (v.players[mySeat]?.betSt || 0)))),
+                        (la.canBet || la.canRaise) && la.minTotal < la.maxTotal && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => { setRaiseOpen(true); setRaiseAmt(la.minTotal); } },
+                            la.canBet ? "BET" : "RAISE",
+                            " \u25B8"),
+                        (la.canBet || la.canRaise) && la.minTotal >= la.maxTotal && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => { setTapDbg("sent: allin"); mp.sendIntent(la.canBet ? "bet" : "raise", la.maxTotal); } },
+                            "ALL-IN $",
+                            MNY(la.maxTotal - (v.players[mySeat]?.betSt || 0))))),
                     React.createElement("div", { style: { fontSize: 10, color: "#8FA396", textAlign: "center", marginTop: 6, fontFamily: "ui-monospace,monospace" } },
-                        tapDbg || "your turn — tap a button",
+                        tapDbg || "your turn",
                         " \u00B7 sock:",
                         mp.sockState))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")))))));
 }
@@ -7254,6 +7289,14 @@ const S = {
     mpLastAct: { fontSize: 9.5, fontStyle: "italic", marginTop: 4, fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpTurnLine: { textAlign: "center", fontSize: 12, letterSpacing: 1, color: "#EBD08A", margin: "4px 0 12px",
         fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpRaiseHead: { textAlign: "center", fontSize: 13, color: "#F0E9D6", marginBottom: 8, letterSpacing: 0.5,
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpSlider: { width: "100%", accentColor: "#C9A24B", marginBottom: 10 },
+    mpPresets: { display: "flex", gap: 6, marginBottom: 10 },
+    mpPresetBtn: { flex: 1, padding: "7px 4px", borderRadius: 8, border: "1px solid rgba(201,162,75,0.4)",
+        background: "rgba(201,162,75,0.12)", color: "#EBD08A", fontSize: 11, fontWeight: "bold", cursor: "pointer",
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpPresetOn: { background: "rgba(201,162,75,0.32)", border: "1px solid #C9A24B" },
     mpActions: { display: "flex", gap: 8, marginTop: 14 },
     mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
