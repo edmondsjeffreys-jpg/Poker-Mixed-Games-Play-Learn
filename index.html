@@ -3704,6 +3704,18 @@ function showdownFlop(st) {
     const loWinners = bestLo ? evals.filter(e => e.lo && cmpLow(e.lo, bestLo) === 0) : [];
     const pot = st.pot;
     let msg;
+    if (!bestHi) {
+        const survivors = still.length ? still : st.players.filter(p => !p.folded);
+        const winner = survivors[0];
+        if (winner) {
+            const award0 = {};
+            award0[winner.id] = st.pot;
+            const nm0 = winner.id === 0 ? "You" : (winner.name || "Winner");
+            return { ...st, phase: "showdown", reveal: true, result: award0,
+                msg: `${nm0} win${winner.id === 0 ? "" : "s"} $${MNY(st.pot)}.`,
+                players: st.players.map(p => p.id === winner.id ? { ...p, chips: p.chips + st.pot } : p) };
+        }
+    }
     const layers = potLayers(st.players, st.pot);
     const award = {};
     for (const L of layers) {
@@ -3736,19 +3748,19 @@ function showdownFlop(st) {
         const verb = arr => (arr.length === 1 && arr[0].p.id !== 0) ? "takes" : "take";
         if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
             const who = nm(hiWinners[0]);
-            msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+            msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi?.desc || "best hand"} for high, ${lowDesc(bestLo)} for low.`;
         }
         else {
             const hiNames = hiWinners.map(nm).join(" & ");
             const loNames = loWinners.map(nm).join(" & ");
-            msg = `${hiNames} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi.desc}); ${loNames} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
+            msg = `${hiNames} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi?.desc || "best hand"}); ${loNames} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
         }
     }
     else {
         const names = hiWinners.map(e => e.p.id === 0 ? "You" : e.p.name).join(" & ");
         const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
         const scoop = IS_HILO(st.gid) ? " (no low)" : "";
-        msg = `${names} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi.desc}${scoop}.`;
+        msg = `${names} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi?.desc || "best hand"}${scoop}.`;
     }
     msg = sidePotMsg(st, award, id => {
         const e = evals.find(x => x.p.id === id);
@@ -3854,16 +3866,16 @@ function showdownStud(st) {
             Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }, { get: e => e.lo, cmp: cmpLow }]));
             if (hiWinners.length === 1 && loWinners.length === 1 && hiWinners[0].p.id === loWinners[0].p.id) {
                 const who = nm(hiWinners[0].p);
-                msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} for high, ${lowDesc(bestLo)} for low.`;
+                msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi?.desc || "best hand"} for high, ${lowDesc(bestLo)} for low.`;
             }
             else {
-                msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi.desc}); ${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
+                msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} ${verb(hiWinners)} the high for $${MNY(hiShare)} (${bestHi?.desc || "best hand"}); ${loWinners.map(e => nm(e.p)).join(" & ")} ${verb(loWinners)} the low for $${MNY(loShare)} (${lowDesc(bestLo)}).`;
             }
         }
         else {
             Object.assign(award, layerAwardLanes(st, evals, [{ get: e => e.hi, cmp: cmpHigh }]));
             const single = hiWinners.length === 1 && hiWinners[0].p.id !== 0;
-            msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi.desc} (no low).`;
+            msg = `${hiWinners.map(e => nm(e.p)).join(" & ")} win${single ? "s" : ""} $${MNY(pot)} with ${bestHi?.desc || "best hand"} (no low).`;
         }
     }
     msg = sidePotMsg(st, award, id => {
@@ -3923,7 +3935,7 @@ function showdownDramaha(st) {
     let msg;
     if (hiWinners.length === 1 && drWinners.length === 1 && hiWinners[0].p.id === drWinners[0].p.id) {
         const who = nm(hiWinners[0]);
-        msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi.desc} (Omaha) + ${bestDr.desc} (${side}).`;
+        msg = `${who} scoop${who === "You" ? "" : "s"} $${MNY(pot)} — ${bestHi?.desc || "best hand"} (Omaha) + ${bestDr.desc} (${side}).`;
     }
     else {
         msg = `${hiWinners.map(nm).join(" & ")} ${verb(hiWinners)} the Omaha high (${bestHi?.desc}); ${drWinners.map(nm).join(" & ")} ${verb(drWinners)} the ${side} (${bestDr?.desc}).`;
@@ -4311,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04p";
+const APP_VERSION = "2026.07.04q";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
