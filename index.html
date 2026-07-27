@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04q";
+const APP_VERSION = "2026.07.04r";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5224,16 +5224,25 @@ function useOnlineTable() {
         wsRef.current?.close();
     }
     catch { } wsRef.current = null; setConn(null); setServer(null); setCode(null); setStatus("idle"); };
-    const sendMsg = (obj) => { const ws = wsRef.current; if (ws && ws.readyState === 1)
-        ws.send(JSON.stringify(obj)); };
+    const sendMsg = (obj) => {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === 1) {
+            ws.send(JSON.stringify(obj));
+            return true;
+        }
+        setErr("disconnected");
+        return false;
+    };
+    const sockState = () => { const ws = wsRef.current; return ws ? ["connecting", "open", "closing", "closed"][ws.readyState] : "none"; };
     const createTable = (gid, botFill) => sendMsg({ type: "create", gid, botFill });
     const joinTable = (c, name) => sendMsg({ type: "join", code: c, name });
     const startTable = () => sendMsg({ type: "start" });
     const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
-    return { status, server, code, err, connect, disconnect, createTable, joinTable, startTable, sendIntent };
+    return { status, server, code, err, connect, disconnect, createTable, joinTable, startTable, sendIntent, sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
 }
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
+    const [tapDbg, setTapDbg] = useState("");
     const [name, setName] = useState("");
     const [gid, setGid] = useState("nlhe");
     const [botFill, setBotFill] = useState(true);
@@ -5245,6 +5254,7 @@ function OnlineTable({ mp, onClose }) {
         "no-such-table": "No table with that code — check the letters and try again.",
         "table-full": "That table is full.",
         "conserving": "New tables are paused right now to keep the server within its monthly budget. You can still join a game already in progress — try again later for new tables.",
+        "disconnected": "Lost the connection to the table. Tap Connect to rejoin — your seat is held.",
         "not-your-turn": "Hold on — it's not your turn.",
         "illegal-move": "That move isn't legal here.",
         "not-seated": "You're not seated at a table.",
@@ -5282,7 +5292,11 @@ function OnlineTable({ mp, onClose }) {
                 React.createElement("div", { style: { ...S.mpSecTitle, marginTop: 18 } }, "OR JOIN BY CODE"),
                 React.createElement("div", { style: { display: "flex", gap: 8 } },
                     React.createElement("input", { style: { ...S.mpInput, textTransform: "uppercase", flex: 1, marginBottom: 0 }, value: joinCode, onChange: e => setJoinCode(e.target.value.toUpperCase()), placeholder: "ABCD", maxLength: 4 }),
-                    React.createElement("button", { style: { ...S.smBtn, flexShrink: 0 }, onClick: () => mp.joinTable(joinCode, name) }, "JOIN")))));
+                    React.createElement("button", { style: { ...S.smBtn, flexShrink: 0 }, onClick: () => { setTapDbg("joining " + joinCode); mp.joinTable(joinCode.trim().toUpperCase(), name || "visitor"); } }, "JOIN")),
+                tapDbg && React.createElement("div", { style: { fontSize: 10, color: "#8FA396", marginTop: 8, fontFamily: "ui-monospace,monospace" } },
+                    tapDbg,
+                    " \u00B7 sock:",
+                    mp.sockState))));
     }
     const v = server.view;
     const mySeat = server.seat;
@@ -5313,38 +5327,48 @@ function OnlineTable({ mp, onClose }) {
                 isOwner
                     ? React.createElement("button", { style: S.bigBtn, onClick: () => mp.startTable() }, "START GAME")
                     : React.createElement("div", { style: S.mpWait }, "Waiting for the table owner to start\u2026"))) : (React.createElement("div", null,
-                React.createElement("div", { style: S.mpPot },
-                    "Pot $",
-                    MNY(v.pot || 0),
-                    " \u00B7 ",
-                    v.phase),
-                React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: { ...S.mpSeatCard, ...(i === mySeat ? S.mpSeatMe : {}), ...(v.queue && v.queue[0] === i ? S.mpSeatActive : {}) } },
-                    React.createElement("div", { style: S.mpSeatName },
-                        p.name || (i === mySeat ? "You" : `Seat ${i}`),
-                        " ",
-                        i === v.dealerIdx ? "(D)" : ""),
+                React.createElement("div", { style: S.mpFelt },
+                    React.createElement("div", { style: S.mpFeltGlow }),
+                    React.createElement("div", { style: S.mpCenter },
+                        React.createElement("div", { style: S.mpPotChip },
+                            "POT\u00A0\u00A0$",
+                            MNY(v.pot || 0)),
+                        React.createElement("div", { style: S.mpBoardRow }, (v.board && v.board.length > 0)
+                            ? v.board.map((c, ci) => React.createElement("span", { key: ci, style: { ...S.mpCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
+                                c.r,
+                                React.createElement("span", { style: S.mpPip }, c.s)))
+                            : React.createElement("span", { style: S.mpPhaseTag }, v.phase === "acting" ? "pre-flop" : v.phase)))),
+                React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: { ...S.mpSeatCard,
+                        ...(i === mySeat ? S.mpSeatMe : {}),
+                        ...(v.queue && v.queue[0] === i ? S.mpSeatActive : {}),
+                        ...(p.folded ? S.mpSeatFolded : {}) } },
+                    React.createElement("div", { style: S.mpSeatTop },
+                        React.createElement("span", { style: S.mpSeatName }, p.name || (i === mySeat ? "You" : `Seat ${i}`)),
+                        i === v.dealerIdx && React.createElement("span", { style: S.mpDealer }, "D")),
                     React.createElement("div", { style: S.mpSeatChips },
                         "$",
                         MNY(p.chips || 0)),
                     React.createElement("div", { style: S.mpSeatCards }, (p.hand || []).map((c, ci) => c.down
                         ? React.createElement("span", { key: ci, style: S.mpCardBack })
-                        : React.createElement("span", { key: ci, style: { ...S.mpCardFace, color: RED.has(c.s) ? "#c0392b" : "#111" } },
+                        : React.createElement("span", { key: ci, style: { ...S.mpMiniCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
                             c.r,
-                            c.s))),
+                            React.createElement("span", { style: S.mpPipSm }, c.s)))),
                     p.folded && React.createElement("div", { style: S.mpFolded }, "folded"))) : null)),
-                v.board && v.board.length > 0 && (React.createElement("div", { style: S.mpBoard }, v.board.map((c, ci) => React.createElement("span", { key: ci, style: { ...S.mpCardFace, color: RED.has(c.s) ? "#c0392b" : "#111" } },
-                    c.r,
-                    c.s)))),
-                server.yourTurn && la ? (React.createElement("div", { style: S.mpActions },
-                    la.canFold && React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d" }, onClick: () => mp.sendIntent("fold") }, "FOLD"),
-                    la.canCheck && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => mp.sendIntent("check") }, "CHECK"),
-                    la.canCall && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => mp.sendIntent("call") },
-                        "CALL $",
-                        MNY(la.toCall)),
-                    (la.canBet || la.canRaise) && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => mp.sendIntent(la.canBet ? "bet" : "raise", la.maxTotal) },
-                        la.betLabel,
-                        " $",
-                        MNY(la.maxTotal - (v.players[mySeat].betSt || 0))))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")))))));
+                server.yourTurn && la ? (React.createElement("div", null,
+                    React.createElement("div", { style: S.mpActions },
+                        la.canFold && React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d" }, onClick: () => { setTapDbg("sent: fold"); mp.sendIntent("fold"); } }, "FOLD"),
+                        la.canCheck && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => { setTapDbg("sent: check"); mp.sendIntent("check"); } }, "CHECK"),
+                        la.canCall && React.createElement("button", { style: { ...S.mpActBtn, background: "#2d4a7a" }, onClick: () => { setTapDbg("sent: call"); mp.sendIntent("call"); } },
+                            "CALL $",
+                            MNY(la.toCall)),
+                        (la.canBet || la.canRaise) && React.createElement("button", { style: { ...S.mpActBtn, background: "#b8860b" }, onClick: () => { setTapDbg("sent: " + (la.canBet ? "bet" : "raise")); mp.sendIntent(la.canBet ? "bet" : "raise", la.maxTotal); } },
+                            la.betLabel,
+                            " $",
+                            MNY((la.maxTotal || 0) - (v.players[mySeat]?.betSt || 0)))),
+                    React.createElement("div", { style: { fontSize: 10, color: "#8FA396", textAlign: "center", marginTop: 6, fontFamily: "ui-monospace,monospace" } },
+                        tapDbg || "your turn — tap a button",
+                        " \u00B7 sock:",
+                        mp.sockState))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")))))));
 }
 function App() {
     const [st, setSt] = useState(() => tsLoad() || mkState("triple"));
@@ -7185,6 +7209,29 @@ const S = {
         fontFamily: "ui-monospace,Menlo,monospace" },
     mpFolded: { fontSize: 9, color: "#8a7a5a", fontStyle: "italic", marginTop: 3 },
     mpBoard: { display: "flex", gap: 4, justifyContent: "center", padding: "10px 0", marginBottom: 8 },
+    mpFelt: { position: "relative", borderRadius: 16, padding: "22px 16px", marginBottom: 14, overflow: "hidden",
+        background: "radial-gradient(120% 100% at 50% 30%, #145a3f 0%, #0d3325 55%, #0a2419 100%)",
+        border: "1px solid rgba(201,162,75,0.3)", boxShadow: "inset 0 2px 20px rgba(0,0,0,0.5)" },
+    mpFeltGlow: { position: "absolute", inset: 0, background: "radial-gradient(60% 45% at 50% 32%, rgba(87,230,176,0.10), transparent 70%)", pointerEvents: "none" },
+    mpCenter: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 },
+    mpPotChip: { fontSize: 12, letterSpacing: 2, color: "#EBD08A", fontFamily: "ui-monospace,Menlo,monospace",
+        fontVariantNumeric: "tabular-nums", background: "rgba(0,0,0,0.35)", border: "1px solid rgba(201,162,75,0.35)",
+        borderRadius: 20, padding: "5px 16px" },
+    mpBoardRow: { display: "flex", gap: 6, justifyContent: "center", minHeight: 52, alignItems: "center" },
+    mpPhaseTag: { fontSize: 11, letterSpacing: 2, color: "#6f8578", fontStyle: "italic" },
+    mpCard: { minWidth: 34, height: 48, borderRadius: 6, background: "linear-gradient(180deg,#fff,#efe7d2)", color: "#1a1a1a",
+        display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: "bold",
+        fontFamily: "Georgia,serif", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", padding: "0 4px" },
+    mpCardRed: { color: "#c0392b" },
+    mpPip: { fontSize: 14, lineHeight: 1 },
+    mpMiniCard: { minWidth: 22, height: 30, borderRadius: 4, background: "linear-gradient(180deg,#fff,#efe7d2)", color: "#1a1a1a",
+        display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: "bold",
+        fontFamily: "Georgia,serif", padding: "0 2px" },
+    mpPipSm: { fontSize: 10, lineHeight: 1 },
+    mpSeatTop: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 },
+    mpDealer: { fontSize: 8, fontWeight: "bold", color: "#1a1206", background: "#EBD08A", borderRadius: "50%",
+        width: 15, height: 15, display: "inline-flex", alignItems: "center", justifyContent: "center" },
+    mpSeatFolded: { opacity: 0.45 },
     mpActions: { display: "flex", gap: 8, marginTop: 14 },
     mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
