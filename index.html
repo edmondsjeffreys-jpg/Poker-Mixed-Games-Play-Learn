@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04x";
+const APP_VERSION = "2026.07.04y";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5203,8 +5203,16 @@ function useOnlineTable() {
                 return;
             }
             if (m.type === "welcome") {
-                tokenRef.current = m.token;
-                mpSaveToken(m.token);
+                if (!tokenRef.current) {
+                    tokenRef.current = m.token;
+                    mpSaveToken(m.token);
+                }
+                else {
+                    try {
+                        ws.send(JSON.stringify({ type: "resume", token: tokenRef.current }));
+                    }
+                    catch { }
+                }
             }
             else if (m.type === "created") {
                 setCode(m.code);
