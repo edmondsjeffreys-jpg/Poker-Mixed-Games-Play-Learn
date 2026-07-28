@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04v";
+const APP_VERSION = "2026.07.04x";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5249,7 +5249,7 @@ function useOnlineTable() {
         return false;
     };
     const sockState = () => { const ws = wsRef.current; return ws ? ["connecting", "open", "closing", "closed"][ws.readyState] : "none"; };
-    const createTable = (gid, botFill) => sendMsg({ type: "create", gid, botFill });
+    const createTable = (gid, botFill, name) => sendMsg({ type: "create", gid, botFill, name });
     const joinTable = (c, name) => sendMsg({ type: "join", code: c, name });
     const startTable = () => sendMsg({ type: "start" });
     const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
@@ -5279,8 +5279,8 @@ function OnlineTable({ mp, onClose }) {
         "not-seated": "You're not seated at a table.",
     }[err] || (err ? `Something went wrong (${err}).` : null);
     if (status !== "connected") {
-        return (React.createElement("div", { style: S.overlay, onClick: onClose },
-            React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+        return (React.createElement("div", { style: S.mpOverlay, onClick: onClose },
+            React.createElement("div", { style: { ...S.mpModal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
                 React.createElement("div", { style: S.modalHead },
                     React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
                     React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
@@ -5290,8 +5290,8 @@ function OnlineTable({ mp, onClose }) {
     }
     if (!server) {
         if (mp.joinState === "pending" || mp.joinState === "declined") {
-            return (React.createElement("div", { style: S.overlay, onClick: onClose },
-                React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+            return (React.createElement("div", { style: S.mpOverlay, onClick: onClose },
+                React.createElement("div", { style: { ...S.mpModal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
                     React.createElement("div", { style: S.modalHead },
                         React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
                         React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
@@ -5302,8 +5302,8 @@ function OnlineTable({ mp, onClose }) {
                         React.createElement("div", { style: { fontSize: 12.5, color: "#8FA396", lineHeight: 1.6, marginBottom: 16, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "You weren't let into that table. You can try another code."),
                         React.createElement("button", { style: S.bigBtn, onClick: () => mp.clearJoinState() }, "BACK"))))));
         }
-        return (React.createElement("div", { style: S.overlay, onClick: onClose },
-            React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+        return (React.createElement("div", { style: S.mpOverlay, onClick: onClose },
+            React.createElement("div", { style: { ...S.mpModal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
                 React.createElement("div", { style: S.modalHead },
                     React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
                     React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
@@ -5320,7 +5320,7 @@ function OnlineTable({ mp, onClose }) {
                 React.createElement("label", { style: S.mpCheck },
                     React.createElement("input", { type: "checkbox", checked: botFill, onChange: e => setBotFill(e.target.checked) }),
                     "Fill empty seats with bots"),
-                React.createElement("button", { style: S.bigBtn, onClick: () => mp.createTable(gid, botFill) }, "CREATE TABLE"),
+                React.createElement("button", { style: S.bigBtn, onClick: () => mp.createTable(gid, botFill, name || "Host") }, "CREATE TABLE"),
                 React.createElement("div", { style: { ...S.mpSecTitle, marginTop: 18 } }, "OR JOIN BY CODE"),
                 React.createElement("div", { style: { display: "flex", gap: 8 } },
                     React.createElement("input", { style: { ...S.mpInput, textTransform: "uppercase", flex: 1, marginBottom: 0 }, value: joinCode, onChange: e => setJoinCode(e.target.value.toUpperCase()), placeholder: "ABCD", maxLength: 4 }),
@@ -5335,8 +5335,8 @@ function OnlineTable({ mp, onClose }) {
     const isOwner = mySeat === 0;
     const notStarted = v.phase === "idle";
     const la = server.yourTurn ? legalActions(v) : null;
-    return (React.createElement("div", { style: S.overlay, onClick: onClose },
-        React.createElement("div", { style: { ...S.modal, maxWidth: 440, maxHeight: "92vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
+    return (React.createElement("div", { style: S.mpOverlay, onClick: onClose },
+        React.createElement("div", { style: { ...S.mpModal, maxWidth: 440, maxHeight: "92vh", overflowY: "auto" }, onClick: e => e.stopPropagation() },
             React.createElement("div", { style: S.modalHead },
                 React.createElement("span", { style: S.modalTitle },
                     "ONLINE \u00B7 ",
@@ -5359,12 +5359,15 @@ function OnlineTable({ mp, onClose }) {
                     "."),
                 React.createElement("div", { style: S.mpSecTitle }, "SEATED"),
                 React.createElement("div", { style: { marginBottom: 16 } }, v.players.map((p, i) => p ? (React.createElement("div", { key: i, style: S.mpSeatRow },
-                    React.createElement("span", null,
-                        "Seat ",
-                        i),
-                    React.createElement("span", { style: { color: "#EBD08A" } }, p.name || (i === mySeat ? "You" : "—")))) : null)),
+                    React.createElement("span", { style: { color: "#EBD08A" } }, p.name || `Seat ${i}`),
+                    React.createElement("span", { style: { color: "#8FA396", fontSize: 11 } }, i === mySeat ? "you" : `seat ${i}`))) : null)),
                 isOwner
-                    ? React.createElement("button", { style: S.bigBtn, onClick: () => mp.startTable() }, "START GAME")
+                    ? React.createElement("div", null,
+                        React.createElement("button", { style: S.bigBtn, onClick: () => { setTapDbg("sent: start"); mp.startTable(); } }, "START GAME"),
+                        React.createElement("div", { style: { fontSize: 10, color: "#8FA396", textAlign: "center", marginTop: 6, fontFamily: "ui-monospace,monospace" } },
+                            tapDbg || "tap start when everyone's in",
+                            " \u00B7 sock:",
+                            mp.sockState))
                     : React.createElement("div", { style: S.mpWait }, "Waiting for the table owner to start\u2026"))) : (React.createElement("div", null,
                 React.createElement("div", { style: S.mpFelt },
                     React.createElement("div", { style: S.mpFeltGlow }),
@@ -7337,6 +7340,12 @@ const S = {
     mpPresetOn: { background: "rgba(201,162,75,0.32)", border: "1px solid #C9A24B" },
     mpJoinReq: { background: "rgba(87,230,176,0.10)", border: "1px solid rgba(87,230,176,0.4)", borderRadius: 12,
         padding: "14px 16px", marginBottom: 14 },
+    mpOverlay: { position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(3px)",
+        display: "flex", flexDirection: "column", justifyContent: "flex-end" },
+    mpModal: { width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto",
+        WebkitOverflowScrolling: "touch", background: "#1a2334", borderTopLeftRadius: 18, borderTopRightRadius: 18,
+        borderRadius: 18, padding: "18px 18px calc(24px + env(safe-area-inset-bottom))",
+        border: "1px solid rgba(201,162,75,0.35)", boxShadow: "0 -8px 50px rgba(0,0,0,0.6)" },
     mpActions: { display: "flex", gap: 8, marginTop: 14 },
     mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
