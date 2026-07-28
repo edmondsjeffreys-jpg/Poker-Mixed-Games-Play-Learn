@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04t";
+const APP_VERSION = "2026.07.04v";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5166,6 +5166,8 @@ function useOnlineTable() {
     const [server, setServer] = useState(null);
     const [code, setCode] = useState(null);
     const [err, setErr] = useState(null);
+    const [joinState, setJoinState] = useState(null);
+    const [joinReq, setJoinReq] = useState(null);
     const tokenRef = useRef(mpLoadToken());
     const wsRef = useRef(null);
     const connect = () => {
@@ -5209,9 +5211,22 @@ function useOnlineTable() {
             }
             else if (m.type === "joined") {
                 setCode(m.code);
+                setJoinState(null);
+            }
+            else if (m.type === "join-pending") {
+                setJoinState("pending");
+            }
+            else if (m.type === "join-declined") {
+                setJoinState("declined");
+            }
+            else if (m.type === "join-next-hand") {
+                setJoinState("next-hand");
+            }
+            else if (m.type === "join-request") {
+                setJoinReq({ token: m.token, name: m.name });
             }
             else if (m.type === "state") {
-                setServer({ seat: m.seat, view: m.view, yourTurn: m.yourTurn, code: m.table });
+                setServer({ seat: m.seat, view: m.view, yourTurn: m.yourTurn, code: m.table, spectating: m.spectating });
             }
             else if (m.type === "error") {
                 setErr(m.err);
@@ -5238,7 +5253,9 @@ function useOnlineTable() {
     const joinTable = (c, name) => sendMsg({ type: "join", code: c, name });
     const startTable = () => sendMsg({ type: "start" });
     const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
-    return { status, server, code, err, connect, disconnect, createTable, joinTable, startTable, sendIntent, sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
+    const approveJoin = (token) => { sendMsg({ type: "join-approve", token }); setJoinReq(null); };
+    const declineJoin = (token) => { sendMsg({ type: "join-decline", token }); setJoinReq(null); };
+    return { status, server, code, err, joinState, joinReq, connect, disconnect, createTable, joinTable, startTable, sendIntent, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
 }
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
@@ -5272,6 +5289,19 @@ function OnlineTable({ mp, onClose }) {
                 React.createElement("button", { style: { ...S.bigBtn, opacity: status === "connecting" ? 0.6 : 1 }, disabled: status === "connecting", onClick: () => mp.connect() }, status === "connecting" ? "CONNECTING…" : "CONNECT"))));
     }
     if (!server) {
+        if (mp.joinState === "pending" || mp.joinState === "declined") {
+            return (React.createElement("div", { style: S.overlay, onClick: onClose },
+                React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
+                    React.createElement("div", { style: S.modalHead },
+                        React.createElement("span", { style: S.modalTitle }, "PLAY ONLINE"),
+                        React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+                    mp.joinState === "pending" ? (React.createElement("div", { style: { textAlign: "center", padding: "24px 8px" } },
+                        React.createElement("div", { style: { fontSize: 15, color: "#EBD08A", marginBottom: 8, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "Waiting for the host\u2026"),
+                        React.createElement("div", { style: { fontSize: 12.5, color: "#8FA396", lineHeight: 1.6, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "The table host has been asked to let you in. Hang tight \u2014 this window will update when they respond."))) : (React.createElement("div", { style: { textAlign: "center", padding: "24px 8px" } },
+                        React.createElement("div", { style: { fontSize: 15, color: "#E2857A", marginBottom: 8, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "The host declined"),
+                        React.createElement("div", { style: { fontSize: 12.5, color: "#8FA396", lineHeight: 1.6, marginBottom: 16, fontFamily: "'GM-Body',system-ui,sans-serif" } }, "You weren't let into that table. You can try another code."),
+                        React.createElement("button", { style: S.bigBtn, onClick: () => mp.clearJoinState() }, "BACK"))))));
+        }
         return (React.createElement("div", { style: S.overlay, onClick: onClose },
             React.createElement("div", { style: { ...S.modal, maxWidth: 400 }, onClick: e => e.stopPropagation() },
                 React.createElement("div", { style: S.modalHead },
@@ -5312,6 +5342,13 @@ function OnlineTable({ mp, onClose }) {
                     "ONLINE \u00B7 ",
                     server.code),
                 React.createElement("button", { style: S.modalClose, onClick: onClose }, "\u2715")),
+            mp.joinReq && (React.createElement("div", { style: S.mpJoinReq },
+                React.createElement("div", { style: { fontSize: 13, color: "#F0E9D6", marginBottom: 10, fontFamily: "'GM-Body',system-ui,sans-serif" } },
+                    React.createElement("b", { style: { color: "#EBD08A" } }, mp.joinReq.name),
+                    " wants to join your table."),
+                React.createElement("div", { style: { display: "flex", gap: 8 } },
+                    React.createElement("button", { style: { ...S.mpActBtn, background: "#7a2d2d", flex: 1 }, onClick: () => mp.declineJoin(mp.joinReq.token) }, "DECLINE"),
+                    React.createElement("button", { style: { ...S.mpActBtn, background: "#2f6b4f", flex: 1 }, onClick: () => mp.approveJoin(mp.joinReq.token) }, "LET THEM IN")))),
             errText && React.createElement("div", { style: S.mpErr }, errText),
             notStarted ? (React.createElement("div", null,
                 React.createElement("div", { style: S.mpCode },
@@ -5369,10 +5406,11 @@ function OnlineTable({ mp, onClose }) {
                             ? React.createElement("div", { style: S.mpFolded }, "folded")
                             : (p.lastAct && p.lastAct.text) ? React.createElement("div", { style: { ...S.mpLastAct, color: p.lastAct.color || "#8FA396" } }, p.lastAct.text) : null));
                 })),
-                React.createElement("div", { style: S.mpTurnLine }, v.phase === "showdown" ? "Showdown"
-                    : server.yourTurn ? "Your turn"
-                        : (v.queue && v.queue[0] != null && v.players[v.queue[0]]) ? `${v.players[v.queue[0]].name || "Seat " + v.queue[0]} to act…`
-                            : "…"),
+                React.createElement("div", { style: S.mpTurnLine }, server.spectating ? "Watching — you're dealt in next hand"
+                    : v.phase === "showdown" ? "Showdown"
+                        : server.yourTurn ? "Your turn"
+                            : (v.queue && v.queue[0] != null && v.players[v.queue[0]]) ? `${v.players[v.queue[0]].name || "Seat " + v.queue[0]} to act…`
+                                : "…"),
                 server.yourTurn && la ? (React.createElement("div", null,
                     raiseOpen && (la.canBet || la.canRaise) ? ((() => {
                         const myBet = v.players[mySeat]?.betSt || 0;
@@ -7297,6 +7335,8 @@ const S = {
         background: "rgba(201,162,75,0.12)", color: "#EBD08A", fontSize: 11, fontWeight: "bold", cursor: "pointer",
         fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpPresetOn: { background: "rgba(201,162,75,0.32)", border: "1px solid #C9A24B" },
+    mpJoinReq: { background: "rgba(87,230,176,0.10)", border: "1px solid rgba(87,230,176,0.4)", borderRadius: 12,
+        padding: "14px 16px", marginBottom: 14 },
     mpActions: { display: "flex", gap: 8, marginTop: 14 },
     mpActBtn: { flex: 1, padding: "13px 8px", borderRadius: 10, border: "none", color: "#fff", fontSize: 12.5,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
