@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.04y";
+const APP_VERSION = "2026.07.05b";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5160,6 +5160,10 @@ function mpSaveToken(t) { try {
         localStorage.setItem(MP_TOKEN_KEY, t);
 }
 catch { } }
+function mpClearToken() { try {
+    localStorage.removeItem(MP_TOKEN_KEY);
+}
+catch { } }
 function useOnlineTable() {
     const [status, setStatus] = useState("idle");
     const [conn, setConn] = useState(null);
@@ -5167,6 +5171,7 @@ function useOnlineTable() {
     const [code, setCode] = useState(null);
     const [err, setErr] = useState(null);
     const [joinState, setJoinState] = useState(null);
+    const [srvVer, setSrvVer] = useState(null);
     const [joinReq, setJoinReq] = useState(null);
     const tokenRef = useRef(mpLoadToken());
     const wsRef = useRef(null);
@@ -5203,6 +5208,8 @@ function useOnlineTable() {
                 return;
             }
             if (m.type === "welcome") {
+                if (m.serverVersion)
+                    setSrvVer(m.serverVersion);
                 if (!tokenRef.current) {
                     tokenRef.current = m.token;
                     mpSaveToken(m.token);
@@ -5236,6 +5243,11 @@ function useOnlineTable() {
             else if (m.type === "state") {
                 setServer({ seat: m.seat, view: m.view, yourTurn: m.yourTurn, code: m.table, spectating: m.spectating });
             }
+            else if (m.type === "left") {
+                setServer(null);
+                setCode(null);
+                setJoinState(null);
+            }
             else if (m.type === "error") {
                 setErr(m.err);
             }
@@ -5247,6 +5259,26 @@ function useOnlineTable() {
         wsRef.current?.close();
     }
     catch { } wsRef.current = null; setConn(null); setServer(null); setCode(null); setStatus("idle"); };
+    const leaveTable = () => {
+        try {
+            wsRef.current?.send(JSON.stringify({ type: "leave" }));
+        }
+        catch { }
+        mpClearToken();
+        tokenRef.current = null;
+        try {
+            wsRef.current?.close();
+        }
+        catch { }
+        wsRef.current = null;
+        setConn(null);
+        setServer(null);
+        setCode(null);
+        setJoinState(null);
+        setJoinReq(null);
+        setErr(null);
+        setStatus("idle");
+    };
     const sendMsg = (obj) => {
         const ws = wsRef.current;
         if (ws && ws.readyState === 1) {
@@ -5263,7 +5295,7 @@ function useOnlineTable() {
     const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
     const approveJoin = (token) => { sendMsg({ type: "join-approve", token }); setJoinReq(null); };
     const declineJoin = (token) => { sendMsg({ type: "join-decline", token }); setJoinReq(null); };
-    return { status, server, code, err, joinState, joinReq, connect, disconnect, createTable, joinTable, startTable, sendIntent, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
+    return { status, server, code, err, joinState, joinReq, srvVer, connect, disconnect, leaveTable, createTable, joinTable, startTable, sendIntent, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
 }
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
@@ -5281,6 +5313,7 @@ function OnlineTable({ mp, onClose }) {
         "no-such-table": "No table with that code — check the letters and try again.",
         "table-full": "That table is full.",
         "conserving": "New tables are paused right now to keep the server within its monthly budget. You can still join a game already in progress — try again later for new tables.",
+        "too-many-tables": "The server is at capacity right now — please try again in a little while.",
         "disconnected": "Lost the connection to the table. Tap Connect to rejoin — your seat is held.",
         "not-your-turn": "Hold on — it's not your turn.",
         "illegal-move": "That move isn't legal here.",
@@ -5336,7 +5369,9 @@ function OnlineTable({ mp, onClose }) {
                 tapDbg && React.createElement("div", { style: { fontSize: 10, color: "#8FA396", marginTop: 8, fontFamily: "ui-monospace,monospace" } },
                     tapDbg,
                     " \u00B7 sock:",
-                    mp.sockState))));
+                    mp.sockState,
+                    " \u00B7 srv:",
+                    mp.srvVer || "?"))));
     }
     const v = server.view;
     const mySeat = server.seat;
@@ -5375,8 +5410,11 @@ function OnlineTable({ mp, onClose }) {
                         React.createElement("div", { style: { fontSize: 10, color: "#8FA396", textAlign: "center", marginTop: 6, fontFamily: "ui-monospace,monospace" } },
                             tapDbg || "tap start when everyone's in",
                             " \u00B7 sock:",
-                            mp.sockState))
-                    : React.createElement("div", { style: S.mpWait }, "Waiting for the table owner to start\u2026"))) : (React.createElement("div", null,
+                            mp.sockState,
+                            " \u00B7 srv:",
+                            mp.srvVer || "?"))
+                    : React.createElement("div", { style: S.mpWait }, "Waiting for the table owner to start\u2026"),
+                React.createElement("button", { style: S.mpLeaveBtn, onClick: onClose }, "LEAVE TABLE"))) : (React.createElement("div", null,
                 React.createElement("div", { style: S.mpFelt },
                     React.createElement("div", { style: S.mpFeltGlow }),
                     React.createElement("div", { style: S.mpCenter },
@@ -5469,7 +5507,10 @@ function OnlineTable({ mp, onClose }) {
                     React.createElement("div", { style: { fontSize: 10, color: "#8FA396", textAlign: "center", marginTop: 6, fontFamily: "ui-monospace,monospace" } },
                         tapDbg || "your turn",
                         " \u00B7 sock:",
-                        mp.sockState))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")))))));
+                        mp.sockState,
+                        " \u00B7 srv:",
+                        mp.srvVer || "?"))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")),
+                React.createElement("button", { style: S.mpLeaveBtn, onClick: onClose }, "LEAVE TABLE"))))));
 }
 function App() {
     const [st, setSt] = useState(() => tsLoad() || mkState("triple"));
@@ -6051,7 +6092,7 @@ function App() {
         st.phase === "choosing" && React.createElement(DealersChooser, { st: st, onPick: pickGame, onConfirm: confirmDeal, onAgain: chooseAgain }),
         showProgress && React.createElement(ProgressReport, { focus: focus, onClose: () => setShowProgress(false), onSetFocus: gid => { const f = { gid, since: Date.now() }; setFocus(f); focusSave(f); }, onClearFocus: () => { setFocus(null); focusSave(null); setShowProgress(false); } }),
         showNash && React.createElement(NashTables, { onClose: () => setShowNash(false) }),
-        showOnline && React.createElement(OnlineTable, { mp: mp, onClose: () => { mp.disconnect(); setShowOnline(false); } }),
+        showOnline && React.createElement(OnlineTable, { mp: mp, onClose: () => { mp.leaveTable(); setShowOnline(false); } }),
         gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
                 const gp = gamePick;
                 setGamePick(null);
@@ -7348,6 +7389,9 @@ const S = {
     mpPresetOn: { background: "rgba(201,162,75,0.32)", border: "1px solid #C9A24B" },
     mpJoinReq: { background: "rgba(87,230,176,0.10)", border: "1px solid rgba(87,230,176,0.4)", borderRadius: 12,
         padding: "14px 16px", marginBottom: 14 },
+    mpLeaveBtn: { display: "block", width: "100%", marginTop: 16, padding: "11px", borderRadius: 10,
+        background: "transparent", border: "1px solid rgba(226,133,122,0.5)", color: "#E2857A", fontSize: 12,
+        fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpOverlay: { position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(3px)",
         display: "flex", flexDirection: "column", justifyContent: "flex-end" },
     mpModal: { width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto",
