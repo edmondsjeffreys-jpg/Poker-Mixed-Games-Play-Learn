@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.05b";
+const APP_VERSION = "2026.07.05c";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5425,7 +5425,8 @@ function OnlineTable({ mp, onClose }) {
                             ? v.board.map((c, ci) => React.createElement("span", { key: ci, style: { ...S.mpCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
                                 c.r,
                                 React.createElement("span", { style: S.mpPip }, c.s)))
-                            : React.createElement("span", { style: S.mpPhaseTag }, v.phase === "acting" ? "pre-flop" : v.phase)))),
+                            : React.createElement("span", { style: S.mpPhaseTag }, v.phase === "acting" ? "pre-flop" : v.phase)),
+                        v.phase === "showdown" && v.msg && React.createElement("div", { style: S.mpResult }, v.msg))),
                 React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => {
                     if (!p)
                         return null;
@@ -7361,6 +7362,8 @@ const S = {
         borderRadius: 20, padding: "5px 16px" },
     mpBoardRow: { display: "flex", gap: 6, justifyContent: "center", minHeight: 52, alignItems: "center" },
     mpPhaseTag: { fontSize: 11, letterSpacing: 2, color: "#6f8578", fontStyle: "italic" },
+    mpResult: { marginTop: 10, fontSize: 12.5, color: "#57E6B0", textAlign: "center", fontWeight: "bold",
+        fontFamily: "'GM-Body',system-ui,sans-serif", lineHeight: 1.4, padding: "0 8px" },
     mpCard: { minWidth: 34, height: 48, borderRadius: 6, background: "linear-gradient(180deg,#fff,#efe7d2)", color: "#1a1a1a",
         display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: "bold",
         fontFamily: "Georgia,serif", boxShadow: "0 2px 6px rgba(0,0,0,0.4)", padding: "0 4px" },
