@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.05c";
+const APP_VERSION = "2026.07.05e";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5293,9 +5293,10 @@ function useOnlineTable() {
     const joinTable = (c, name) => sendMsg({ type: "join", code: c, name });
     const startTable = () => sendMsg({ type: "start" });
     const sendIntent = (action, amount = 0) => sendMsg({ type: "intent", action, amount });
+    const rebuy = () => sendMsg({ type: "rebuy" });
     const approveJoin = (token) => { sendMsg({ type: "join-approve", token }); setJoinReq(null); };
     const declineJoin = (token) => { sendMsg({ type: "join-decline", token }); setJoinReq(null); };
-    return { status, server, code, err, joinState, joinReq, srvVer, connect, disconnect, leaveTable, createTable, joinTable, startTable, sendIntent, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
+    return { status, server, code, err, joinState, joinReq, srvVer, connect, disconnect, leaveTable, createTable, joinTable, startTable, sendIntent, rebuy, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
 }
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
@@ -5461,6 +5462,21 @@ function OnlineTable({ mp, onClose }) {
                         : server.yourTurn ? "Your turn"
                             : (v.queue && v.queue[0] != null && v.players[v.queue[0]]) ? `${v.players[v.queue[0]].name || "Seat " + v.queue[0]} to act…`
                                 : "…"),
+                (() => {
+                    const me = v.players[mySeat];
+                    if (!me || me.folded || !me.hand || me.hand.some(c => c.down) || me.hand.length === 0)
+                        return null;
+                    try {
+                        const cards = [...me.hand, ...((v.board) || [])];
+                        const ev = evalHand(v.gid || "nlhe", cards);
+                        if (ev && ev.desc)
+                            return React.createElement("div", { style: S.mpHandName },
+                                "You have: ",
+                                React.createElement("b", null, ev.desc));
+                    }
+                    catch { }
+                    return null;
+                })(),
                 server.yourTurn && la ? (React.createElement("div", null,
                     raiseOpen && (la.canBet || la.canRaise) ? ((() => {
                         const myBet = v.players[mySeat]?.betSt || 0;
@@ -5511,6 +5527,11 @@ function OnlineTable({ mp, onClose }) {
                         mp.sockState,
                         " \u00B7 srv:",
                         mp.srvVer || "?"))) : (React.createElement("div", { style: S.mpWait }, v.queue && v.queue[0] != null ? `Waiting on seat ${v.queue[0]}…` : "Waiting…")),
+                v.players[mySeat] && (v.players[mySeat].chips || 0) <= 500 && (React.createElement("div", { style: S.mpBustBox },
+                    React.createElement("div", { style: S.mpBustMsg }, (v.players[mySeat].chips || 0) === 0
+                        ? "You're out of chips. Rebuy to keep playing, or leave the table (a bot takes your seat)."
+                        : "Running low. You can rebuy to a full stack, or play on."),
+                    React.createElement("button", { style: S.mpRebuyBtn, onClick: () => mp.rebuy() }, "REBUY TO $2,000"))),
                 React.createElement("button", { style: S.mpLeaveBtn, onClick: onClose }, "LEAVE TABLE"))))));
 }
 function App() {
@@ -7342,7 +7363,8 @@ const S = {
     mpSeatCard: { background: "rgba(14,44,34,0.6)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 10px" },
     mpSeatMe: { border: "1px solid rgba(87,230,176,0.5)" },
     mpSeatActive: { background: "rgba(201,162,75,0.14)", border: "1px solid rgba(201,162,75,0.55)" },
-    mpSeatName: { fontSize: 11, color: "#F0E9D6", fontWeight: "bold", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpSeatName: { fontSize: 11, color: "#F0E9D6", fontWeight: "bold", fontFamily: "'GM-Body',system-ui,sans-serif",
+        maxWidth: "70%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
     mpSeatChips: { fontSize: 11, color: "#EBD08A", fontFamily: "ui-monospace,Menlo,monospace", fontVariantNumeric: "tabular-nums" },
     mpSeatCards: { display: "flex", gap: 3, marginTop: 5 },
     mpCardBack: { width: 20, height: 28, borderRadius: 3, background: "linear-gradient(135deg,#1e3a8a,#1e40af)",
@@ -7382,6 +7404,8 @@ const S = {
     mpLastAct: { fontSize: 9.5, fontStyle: "italic", marginTop: 4, fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpTurnLine: { textAlign: "center", fontSize: 12, letterSpacing: 1, color: "#EBD08A", margin: "4px 0 12px",
         fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpHandName: { textAlign: "center", fontSize: 12, color: "#57E6B0", marginTop: -6, marginBottom: 10,
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpRaiseHead: { textAlign: "center", fontSize: 13, color: "#F0E9D6", marginBottom: 8, letterSpacing: 0.5,
         fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpSlider: { width: "100%", accentColor: "#C9A24B", marginBottom: 10 },
@@ -7395,6 +7419,13 @@ const S = {
     mpLeaveBtn: { display: "block", width: "100%", marginTop: 16, padding: "11px", borderRadius: 10,
         background: "transparent", border: "1px solid rgba(226,133,122,0.5)", color: "#E2857A", fontSize: 12,
         fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpRebuyBtn: { display: "block", width: "100%", marginTop: 14, padding: "13px", borderRadius: 10,
+        background: "#2f6b4f", border: "1px solid #57E6B0", color: "#EAFBF3", fontSize: 13,
+        fontWeight: "bold", letterSpacing: 1, cursor: "pointer", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    mpBustBox: { marginTop: 14, padding: "14px", borderRadius: 12, background: "rgba(201,162,75,0.08)",
+        border: "1px solid rgba(201,162,75,0.3)" },
+    mpBustMsg: { fontSize: 12.5, color: "#EBD08A", textAlign: "center", lineHeight: 1.5, marginBottom: 4,
+        fontFamily: "'GM-Body',system-ui,sans-serif" },
     mpOverlay: { position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(3px)",
         display: "flex", flexDirection: "column", justifyContent: "flex-end" },
     mpModal: { width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "90vh", overflowY: "auto",
