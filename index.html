@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.05e";
+const APP_VERSION = "2026.07.05f";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -6364,6 +6364,16 @@ function App() {
                 React.createElement("div", { style: S.modalHead },
                     React.createElement("span", { style: S.modalTitle }, "\u2699 Table Settings"),
                     React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalClose }, "\u2715")),
+                React.createElement("div", { style: S.onlineHero },
+                    React.createElement("div", { style: S.onlineHeroGlow }),
+                    React.createElement("div", { style: S.onlineHeroTag }, "\u25CF LIVE MULTIPLAYER"),
+                    React.createElement("div", { style: S.onlineHeroTitle }, "Play with real people"),
+                    React.createElement("div", { style: S.onlineHeroText }, "Create a private table and share the code, or join a friend's game. Bots fill any empty seats."),
+                    React.createElement("button", { onClick: () => { setShowSettings(false); setShowOnline(true); }, style: S.onlineHeroCta }, "Create or join a table \u2192")),
+                React.createElement("div", { style: S.settingsDivider },
+                    React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } }),
+                    React.createElement("span", { style: S.settingsDividerLabel }, "SOLO \u2014 PRACTICE VS BOTS"),
+                    React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } })),
                 React.createElement("div", { style: S.modalSection }, "OPPONENT STYLE \u00B7 OPTIMAL \u2194 EXPLOITATIVE"),
                 React.createElement("div", { style: S.modalHint }, "Higher = optimal (solid, balanced, value-focused, hard to read). Lower = exploitative (attacks, bluffs and applies pressure, higher variance \u2014 and more beatable if you adjust)."),
                 st.players.filter(p => p.id !== 0).map(p => p.id).map(id => {
@@ -6414,8 +6424,6 @@ function App() {
                     React.createElement("span", { style: { color: "#C9A24B", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
                 React.createElement("button", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
                     React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\u2660  Nash push/fold charts")),
-                React.createElement("button", { onClick: () => { setShowSettings(false); setShowOnline(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
-                    React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\uD83C\uDF10  Play online (beta)")),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
                 React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalDone }, "DONE")))),
         showReview && React.createElement(ReviewScreen, { onClose: () => setShowReview(false), mobile: mobile }),
@@ -7265,6 +7273,18 @@ const S = {
     modalTitle: { fontSize: 15, color: "#C9A24B", letterSpacing: 1 },
     modalClose: { background: "none", border: "none", color: "#9a8862", fontSize: 18, cursor: "pointer", padding: 4 },
     modalSection: { fontSize: 9.5, letterSpacing: 2, color: "#b6a075", marginTop: 4, fontFamily: "'GM-Stamp',Georgia,serif" },
+    onlineHero: { position: "relative", overflow: "hidden", borderRadius: 16, padding: "18px 18px 16px", marginTop: 4, marginBottom: 4,
+        background: "radial-gradient(130% 100% at 50% 0%, #14543b 0%, #0d3325 55%, #0a2419 100%)",
+        border: "1px solid rgba(87,230,176,0.35)", boxShadow: "0 6px 26px rgba(0,0,0,0.4), inset 0 1px 0 rgba(87,230,176,0.14)" },
+    onlineHeroGlow: { position: "absolute", inset: 0, background: "radial-gradient(60% 50% at 50% 0%, rgba(87,230,176,0.13), transparent 70%)", pointerEvents: "none" },
+    onlineHeroTag: { position: "relative", fontSize: 9, letterSpacing: 2, color: "#57E6B0", fontWeight: "bold", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    onlineHeroTitle: { position: "relative", fontSize: 18, color: "#F0E9D6", margin: "6px 0 4px", fontFamily: "'GM-Body',system-ui,sans-serif", fontWeight: "bold" },
+    onlineHeroText: { position: "relative", fontSize: 12, color: "#a9c4b6", lineHeight: 1.5, marginBottom: 14, fontFamily: "'GM-Body',system-ui,sans-serif" },
+    onlineHeroCta: { position: "relative", width: "100%", padding: "14px", borderRadius: 11, border: "none", cursor: "pointer",
+        background: "linear-gradient(165deg,#5fe0a8,#39b184)", color: "#08160f", fontSize: 14, fontWeight: "bold", letterSpacing: 0.5, fontFamily: "'GM-Body',system-ui,sans-serif" },
+    settingsDivider: { display: "flex", alignItems: "center", justifyContent: "center", margin: "18px 0 6px", position: "relative" },
+    settingsDividerLabel: { fontSize: 9, letterSpacing: 2, color: "#7a6a45", background: "transparent", padding: "0 10px",
+        fontFamily: "'GM-Stamp',Georgia,serif" },
     modalHint: { fontSize: 10.5, color: "#9d8a62", lineHeight: 1.5, marginBottom: 2 },
     tightRow: { display: "flex", alignItems: "center", gap: 10 },
     tightLabel: { display: "flex", flexDirection: "column", minWidth: 62 },
