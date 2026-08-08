@@ -4323,7 +4323,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.05f";
+const APP_VERSION = "2026.07.05g";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -6374,57 +6374,69 @@ function App() {
                     React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } }),
                     React.createElement("span", { style: S.settingsDividerLabel }, "SOLO \u2014 PRACTICE VS BOTS"),
                     React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } })),
-                React.createElement("div", { style: S.modalSection }, "OPPONENT STYLE \u00B7 OPTIMAL \u2194 EXPLOITATIVE"),
-                React.createElement("div", { style: S.modalHint }, "Higher = optimal (solid, balanced, value-focused, hard to read). Lower = exploitative (attacks, bluffs and applies pressure, higher variance \u2014 and more beatable if you adjust)."),
-                st.players.filter(p => p.id !== 0).map(p => p.id).map(id => {
-                    const t = st.botTight?.[id] ?? 50;
-                    const desc = t >= 78 ? "Optimal" : t >= 58 ? "Disciplined" : t >= 42 ? "Balanced" : t >= 24 ? "Exploitative" : "Wildly Exploit.";
-                    return (React.createElement("div", { key: id, style: S.tightRow },
-                        React.createElement("div", { style: S.tightLabel },
-                            React.createElement("span", { style: { color: "#C9A24B", fontSize: 12 } }, st.players.find(p => p.id === id)?.name || PROF[id].name),
-                            React.createElement("span", { style: { color: "#9d8a62", fontSize: 9 } }, PROF[id].tag)),
-                        React.createElement("input", { type: "range", min: 0, max: 100, step: 2, value: t, onChange: e => setTight(id, +e.target.value), style: S.tightSlider }),
-                        React.createElement("span", { style: S.tightVal }, desc)));
-                }),
-                React.createElement("div", { style: S.modalActions },
-                    React.createElement("button", { onClick: () => { setTight(1, 28); setTight(2, 12); setTight(3, 22); }, style: S.presetBtn }, "All Exploit."),
-                    React.createElement("button", { onClick: () => { setTight(1, 62); setTight(2, 18); setTight(3, 38); }, style: S.presetBtn }, "Reset"),
-                    React.createElement("button", { onClick: () => { setTight(1, 84); setTight(2, 70); setTight(3, 80); }, style: S.presetBtn }, "All Optimal")),
-                React.createElement("div", { style: { ...S.modalSection, marginTop: 14 } }, "COACHING"),
-                React.createElement("div", { style: S.modalHint }, "Show live strategy tips on your turn \u2014 hand strength, pot odds, and the recommended play."),
-                React.createElement("button", { onClick: () => setCoach(!st.coach), style: { ...S.toggleRow, ...(st.coach ? S.toggleRowOn : {}) } },
-                    React.createElement("span", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start" } },
-                        React.createElement("span", { style: { color: st.coach ? "#bff0cf" : "#C9A24B", fontSize: 12 } }, "Coach Mode"),
-                        React.createElement("span", { style: { color: "#9c8760", fontSize: 9 } }, st.coach ? "On — tips appear as you play" : "Off")),
-                    React.createElement("span", { style: { ...S.switch, ...(st.coach ? S.switchOn : {}) } },
-                        React.createElement("span", { style: { ...S.knob, ...(st.coach ? S.knobOn : {}) } }))),
-                React.createElement("div", { style: S.modalHint }, "How much the coach adjusts to the opponents you've set up. GTO ignores them and plays theoretically sound; Exploit leans on their tendencies (the bot dials above)."),
-                React.createElement("div", { style: S.tightRow },
-                    React.createElement("span", { style: { ...S.tightLabel, color: "#9d8a62", fontSize: 10 } }, "GTO"),
-                    React.createElement("input", { type: "range", min: 0, max: 100, step: 5, value: st.exploitDial ?? 0, onChange: e => setExploitDial(+e.target.value), style: S.tightSlider }),
-                    React.createElement("span", { style: { ...S.tightLabel, color: "#9d8a62", fontSize: 10, textAlign: "right" } }, "Exploit")),
-                React.createElement("div", { style: { ...S.modalHint, textAlign: "center", marginTop: 2 } }, (() => {
-                    const d = st.exploitDial ?? 0;
-                    return d === 0 ? "Pure GTO — opponent-agnostic, textbook advice."
-                        : d <= 30 ? "Mostly GTO, with a light read on the table."
-                            : d <= 70 ? "Balanced — blends solid play with table reads."
-                                : "Full exploit — advice leans hard on how these players play.";
-                })()),
-                React.createElement("div", { style: { ...S.modalSection, marginTop: 14 } }, "TABLE STAKES"),
-                React.createElement("div", { style: S.modalHint }, "Cash buys in at 100bb. Tournament lets you pick stack depth on the table screen."),
-                React.createElement("div", { style: S.segRow }, [["cash", "Cash Game"], ["tourney", "Tournament"]].map(([id, label]) => (React.createElement("button", { key: id, onClick: () => setFormat(id), style: { ...S.segBtn, ...(st.format === id ? S.segBtnOn : {}) } },
-                    React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, label))))),
-                st.format === "cash" && (React.createElement("div", { style: { ...S.segRow, marginTop: 8 } }, CASH_STAKES.map((s, i) => (React.createElement("button", { key: i, onClick: () => setStake(i), style: { ...S.segBtn, ...(st.stakeIdx === i ? S.segBtnOn : {}) } },
-                    React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
-                st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
-                React.createElement("button", { onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setShowSettings(false); setView("play"); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET TABLE \u2014 fresh stacks"),
-                React.createElement("div", { style: { marginTop: 12 } },
+                React.createElement("div", { style: S.setCard },
+                    React.createElement("div", { style: S.setCardHead }, "\uD83C\uDFAD OPPONENTS"),
+                    React.createElement("div", { style: S.modalHint }, "Higher = optimal (solid, balanced, value-focused, hard to read). Lower = exploitative (attacks, bluffs and applies pressure, higher variance \u2014 and more beatable if you adjust)."),
+                    st.players.filter(p => p.id !== 0).map(p => p.id).map(id => {
+                        const t = st.botTight?.[id] ?? 50;
+                        const desc = t >= 78 ? "Optimal" : t >= 58 ? "Disciplined" : t >= 42 ? "Balanced" : t >= 24 ? "Exploitative" : "Wildly Exploit.";
+                        return (React.createElement("div", { key: id, style: S.tightRow },
+                            React.createElement("div", { style: S.tightLabel },
+                                React.createElement("span", { style: { color: "#C9A24B", fontSize: 12 } }, st.players.find(p => p.id === id)?.name || PROF[id].name),
+                                React.createElement("span", { style: { color: "#9d8a62", fontSize: 9 } }, PROF[id].tag)),
+                            React.createElement("input", { type: "range", min: 0, max: 100, step: 2, value: t, onChange: e => setTight(id, +e.target.value), style: S.tightSlider }),
+                            React.createElement("span", { style: S.tightVal }, desc)));
+                    }),
+                    React.createElement("div", { style: S.modalActions },
+                        React.createElement("button", { onClick: () => { setTight(1, 28); setTight(2, 12); setTight(3, 22); }, style: S.presetBtn }, "All Exploit."),
+                        React.createElement("button", { onClick: () => { setTight(1, 62); setTight(2, 18); setTight(3, 38); }, style: S.presetBtn }, "Reset"),
+                        React.createElement("button", { onClick: () => { setTight(1, 84); setTight(2, 70); setTight(3, 80); }, style: S.presetBtn }, "All Optimal"))),
+                React.createElement("div", { style: S.setCard },
+                    React.createElement("div", { style: S.setCardHead }, "\uD83C\uDF93 COACHING"),
+                    React.createElement("div", { style: S.modalHint }, "Show live strategy tips on your turn \u2014 hand strength, pot odds, and the recommended play."),
+                    React.createElement("button", { onClick: () => setCoach(!st.coach), style: { ...S.toggleRow, ...(st.coach ? S.toggleRowOn : {}) } },
+                        React.createElement("span", { style: { display: "flex", flexDirection: "column", alignItems: "flex-start" } },
+                            React.createElement("span", { style: { color: st.coach ? "#bff0cf" : "#C9A24B", fontSize: 12 } }, "Coach Mode"),
+                            React.createElement("span", { style: { color: "#9c8760", fontSize: 9 } }, st.coach ? "On — tips appear as you play" : "Off")),
+                        React.createElement("span", { style: { ...S.switch, ...(st.coach ? S.switchOn : {}) } },
+                            React.createElement("span", { style: { ...S.knob, ...(st.coach ? S.knobOn : {}) } }))),
+                    React.createElement("div", { style: S.modalHint }, "How much the coach adjusts to the opponents you've set up. GTO ignores them and plays theoretically sound; Exploit leans on their tendencies (the bot dials above)."),
+                    React.createElement("div", { style: S.tightRow },
+                        React.createElement("span", { style: { ...S.tightLabel, color: "#9d8a62", fontSize: 10 } }, "GTO"),
+                        React.createElement("input", { type: "range", min: 0, max: 100, step: 5, value: st.exploitDial ?? 0, onChange: e => setExploitDial(+e.target.value), style: S.tightSlider }),
+                        React.createElement("span", { style: { ...S.tightLabel, color: "#9d8a62", fontSize: 10, textAlign: "right" } }, "Exploit")),
+                    React.createElement("div", { style: { ...S.modalHint, textAlign: "center", marginTop: 2 } }, (() => {
+                        const d = st.exploitDial ?? 0;
+                        return d === 0 ? "Pure GTO — opponent-agnostic, textbook advice."
+                            : d <= 30 ? "Mostly GTO, with a light read on the table."
+                                : d <= 70 ? "Balanced — blends solid play with table reads."
+                                    : "Full exploit — advice leans hard on how these players play.";
+                    })())),
+                React.createElement("div", { style: S.setCard },
+                    React.createElement("div", { style: S.setCardHead }, "\uD83D\uDCB5 FORMAT & STAKES"),
+                    React.createElement("div", { style: S.modalHint }, "Cash buys in at 100bb. Tournament lets you pick stack depth on the table screen."),
+                    React.createElement("div", { style: S.segRow }, [["cash", "Cash Game"], ["tourney", "Tournament"]].map(([id, label]) => (React.createElement("button", { key: id, onClick: () => setFormat(id), style: { ...S.segBtn, ...(st.format === id ? S.segBtnOn : {}) } },
+                        React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, label))))),
+                    st.format === "cash" && (React.createElement("div", { style: { ...S.segRow, marginTop: 8 } }, CASH_STAKES.map((s, i) => (React.createElement("button", { key: i, onClick: () => setStake(i), style: { ...S.segBtn, ...(st.stakeIdx === i ? S.segBtnOn : {}) } },
+                        React.createElement("span", { style: { fontSize: 11, fontWeight: "bold" } }, s.label)))))),
+                    st.format === "tourney" && (React.createElement("button", { onClick: () => { setShowSettings(false); setView("lobby"); }, style: { ...S.modalDone, marginTop: 10, background: "linear-gradient(165deg,#57b56a,#3f9152)", color: "#0a1a0e" } }, "OPEN TOURNAMENT LOBBY")),
+                    React.createElement("button", { onClick: () => { tsClear(); setSt(s => mkState(s.gid, { ...s, format: "cash", tour: null, players: [] })); setShowSettings(false); setView("play"); }, style: { ...S.modalDone, marginTop: 8, background: "linear-gradient(165deg,#c0564e,#96382f)", color: "#fde8e5" } }, "\u27F2 RESET TABLE \u2014 fresh stacks")),
+                React.createElement("div", { style: { marginTop: 2 } },
                     React.createElement(FocusLine, { focus: focus, onOpen: () => { setShowSettings(false); setShowProgress(true); } })),
-                React.createElement("button", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
-                    React.createElement("span", { style: { color: "#C9A24B", fontSize: 12, letterSpacing: 1 } }, "\uD83D\uDCCA  Review hand history")),
-                React.createElement("button", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: { ...S.toggleRow, justifyContent: "center", marginTop: 12 } },
-                    React.createElement("span", { style: { color: "#57E6B0", fontSize: 12, letterSpacing: 1 } }, "\u2660  Nash push/fold charts")),
-                React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "14px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
+                React.createElement("div", { style: S.settingsDivider },
+                    React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } }),
+                    React.createElement("span", { style: S.settingsDividerLabel }, "TOOLS"),
+                    React.createElement("span", { style: { flex: 1, height: 1, background: "rgba(201,162,75,0.18)" } })),
+                React.createElement("div", { style: S.toolTiles },
+                    React.createElement("div", { onClick: () => { setShowSettings(false); setShowReview(true); }, style: S.toolTile },
+                        React.createElement("span", { style: S.toolTileIc }, "\uD83D\uDCCA"),
+                        React.createElement("span", { style: S.toolTileLb }, "Hand history"),
+                        React.createElement("span", { style: S.toolTileDs }, "Review & grade")),
+                    React.createElement("div", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: S.toolTile },
+                        React.createElement("span", { style: S.toolTileIc }, "\u2660"),
+                        React.createElement("span", { style: S.toolTileLb }, "Nash charts"),
+                        React.createElement("span", { style: S.toolTileDs }, "Push / fold"))),
+                React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "16px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
                 React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalDone }, "DONE")))),
         showReview && React.createElement(ReviewScreen, { onClose: () => setShowReview(false), mobile: mobile }),
         showFeedback && React.createElement(FeedbackScreen, { onClose: () => setShowFeedback(false) }),
@@ -7273,6 +7285,16 @@ const S = {
     modalTitle: { fontSize: 15, color: "#C9A24B", letterSpacing: 1 },
     modalClose: { background: "none", border: "none", color: "#9a8862", fontSize: 18, cursor: "pointer", padding: 4 },
     modalSection: { fontSize: 9.5, letterSpacing: 2, color: "#b6a075", marginTop: 4, fontFamily: "'GM-Stamp',Georgia,serif" },
+    setCard: { background: "rgba(255,255,255,0.028)", border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: 14, padding: "14px 14px 15px", marginBottom: 12 },
+    setCardHead: { fontSize: 10, letterSpacing: 2, color: "#C9A24B", fontWeight: "bold", marginBottom: 9,
+        fontFamily: "'GM-Stamp',Georgia,serif", display: "flex", alignItems: "center", gap: 7 },
+    toolTiles: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 2 },
+    toolTile: { background: "rgba(255,255,255,0.028)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 13,
+        padding: "15px 10px", textAlign: "center", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
+    toolTileIc: { fontSize: 19 },
+    toolTileLb: { fontSize: 12, fontWeight: "bold", color: "#F0E9D6", fontFamily: "'GM-Body',system-ui,sans-serif" },
+    toolTileDs: { fontSize: 9.5, color: "#9d8a62", fontFamily: "'GM-Body',system-ui,sans-serif" },
     onlineHero: { position: "relative", overflow: "hidden", borderRadius: 16, padding: "18px 18px 16px", marginTop: 4, marginBottom: 4,
         background: "radial-gradient(130% 100% at 50% 0%, #14543b 0%, #0d3325 55%, #0a2419 100%)",
         border: "1px solid rgba(87,230,176,0.35)", boxShadow: "0 6px 26px rgba(0,0,0,0.4), inset 0 1px 0 rgba(87,230,176,0.14)" },
