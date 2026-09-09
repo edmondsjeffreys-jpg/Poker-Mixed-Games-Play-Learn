@@ -7,12 +7,21 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Get Mixed</title>
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-FCYV1NGPS6"></script>
 <script>
+  // Analytics runs on the live domain only, so a staging copy on github.io
+  // stays out of the GA4 property and test sessions never pollute real numbers.
+  // gtag is always defined either way, so no call site can throw.
   window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-FCYV1NGPS6');
+  function gtag(){ window.dataLayer.push(arguments); }
+  window.gtag = gtag;
+  if (location.hostname === 'getmixed.ca' || location.hostname === 'www.getmixed.ca') {
+    var gaTag = document.createElement('script');
+    gaTag.async = true;
+    gaTag.src = 'https://www.googletagmanager.com/gtag/js?id=G-FCYV1NGPS6';
+    document.head.appendChild(gaTag);
+    gtag('js', new Date());
+    gtag('config', 'G-FCYV1NGPS6');
+  }
 </script>
 <style>
   html, body { margin:0; padding:0; background:#0A1F18; color:#F0E9D6;
@@ -113,6 +122,51 @@ const IS_SPLITDRAW = gid => gid === "badeucey" || gid === "badacey" || gid === "
 const IS_VERONICA = gid => gid === "veronica";
 const DRAMAHA_SIDE = gid => gid === "dramaha27" ? "27" : gid === "dramadugi" ? "badugi" : "high";
 const DRAW_CAP = gid => gid === "dramadugi" ? 3 : 5;
+const SEAT_CAP = {
+    nlhe: 9, lhe: 9, crazyp: 9, plo: 9, plo8: 9, omaha8: 9,
+    bigo: 8,
+    dbcrazyp: 8, dbbomb: 8,
+    stud: 8, stud8: 8, razz: 8, superstud: 8, razzdugi: 8,
+    triple: 6, single: 6, pl27td: 6, pl5d: 6, badugi: 6, plbad: 6,
+    badacey: 6, badeucey: 6, archie: 6, veronica: 6,
+    dramahaH: 6, dramaha27: 6, dramadugi: 6,
+};
+const seatCap = gid => SEAT_CAP[gid] || 6;
+const rotationCap = gids => Math.min(...gids.map(seatCap));
+const TABLE_SHAPE = gid => IS_STUD(gid) ? "stud" :
+    IS_DRAMAHA(gid) ? "drawBoard" :
+        gid === "veronica" ? "drawOne" :
+            IS_DOUBLE(gid) ? "board2" :
+                (IS_DRAW(gid) || IS_SPLITDRAW(gid)) ? "draw" :
+                    "board";
+function tableRows(n, land) {
+    const opp = Math.max(0, n - 1);
+    if (land) {
+        const flank = opp >= 8 ? 4 : opp >= 2 ? 2 : 0;
+        const back = opp - flank;
+        const rows = [];
+        if (back > 0)
+            rows.push(Array.from({ length: back }, (_, i) => i + 1));
+        rows.push("C");
+        const l = [], r = [];
+        for (let i = 0; i < flank; i++)
+            (i < flank / 2 ? l : r).push(back + 1 + i);
+        rows.push([...l, "H", ...r]);
+        return rows;
+    }
+    const rows = [];
+    let k = 1;
+    if (opp % 2 === 1)
+        rows.push([k++]);
+    while (k <= opp)
+        rows.push([k++, k++]);
+    if (rows.length <= 1)
+        rows.push("C");
+    else
+        rows.splice(rows.length - 1, 0, "C");
+    rows.push(["H"]);
+    return rows;
+}
 const BET_MODE = gid => (gid === "single" || gid === "nlhe") ? "nl"
     : (gid === "plo" || gid === "bigo" || IS_PINEAPPLE(gid) || gid === "dbbomb" || gid === "plo8" || gid === "pl27td" || gid === "plbad" || gid === "pl5d") ? "pl" : "fl";
 const HAND_SIZE = gid => (gid === "badugi" || gid === "plbad" ? 4 : 5);
@@ -2544,7 +2598,7 @@ const mkState = (gid, prev = null) => {
     const bbDepth = prev?.bbDepth ?? 100;
     const stk = format === "tourney" ? TOURNEY_STAKES : CASH_STAKES[stakeIdx];
     const startChips = depthUnit(gid, stk) * (format === "tourney" ? bbDepth * depthMult(gid) : CASH_DEPTH);
-    const nSeats = gid === "dbbomb" ? 7 : (format === "tourney" && IS_FLOP(gid)) ? 8 : 4;
+    const nSeats = Math.min(seatCap(gid), gid === "dbbomb" ? 7 : (format === "tourney" && IS_FLOP(gid)) ? 8 : 4);
     return {
         gid, phase: "idle", deck: [], players: mkPs(prev?.players, startChips, nSeats), board: [], board2: [],
         pot: 0, currentBet: 0, betCount: 0, queue: [], streetN: 0, drawN: 0, seq: 0,
@@ -2555,7 +2609,7 @@ const mkState = (gid, prev = null) => {
         stats: prev?.stats || { hands: 0, wins: 0 },
         botTight: prev?.botTight || { 1: 62, 2: 18, 3: 38, 4: 78, 5: 45, 6: 20, 7: 30 },
         botSkill: prev?.botSkill || { 1: 50, 2: 45, 3: 58, 4: 60, 5: 62, 6: 40, 7: 55 },
-        coach: prev?.coach ?? true,
+        coach: prev?.coach ?? false,
         exploitDial: prev?.exploitDial ?? 0,
         format, stakeIdx, bbDepth,
         tour: format === "tourney" ? (prev?.tour ?? null) : null,
@@ -4323,7 +4377,7 @@ function ReviewScreen({ onClose }) {
 }
 const FORMSPREE_ENDPOINT = "https://formspree.io/f/xzdleqva";
 const SUPPORT_URL = "https://ko-fi.com/getmixed";
-const APP_VERSION = "2026.07.05g";
+const APP_VERSION = "2026.07.05k";
 const IS_BETA = true;
 const TOUR = [
     { id: "tour-menu", title: "Pick your game", text: "Tap this bar to switch between 20+ mixed games — draw, stud, flop, and split-pot. The ones nobody else lets you practice." },
@@ -5298,6 +5352,203 @@ function useOnlineTable() {
     const declineJoin = (token) => { sendMsg({ type: "join-decline", token }); setJoinReq(null); };
     return { status, server, code, err, joinState, joinReq, srvVer, connect, disconnect, leaveTable, createTable, joinTable, startTable, sendIntent, rebuy, approveJoin, declineJoin, clearJoinState: () => setJoinState(null), sockState: (wsRef.current ? ["connecting", "open", "closing", "closed"][wsRef.current.readyState] : "none") };
 }
+function TSeat({ p, hero, acting, dealer, shape, reveal, drawsShown }) {
+    if (!p)
+        return null;
+    const hand = p.hand || [];
+    const up = hand.filter(c => !c.down);
+    const down = hand.filter(c => c.down).length;
+    const showUp = shape === "stud" && !p.folded && !hero;
+    const showOwn = hero && hand.length > 0;
+    const cardBox = {
+        height: "calc(var(--u)*3.5)", width: "calc(var(--u)*2.5)", fontSize: "calc(var(--u)*1.6)",
+        marginLeft: "calc(var(--u)*-1.05)", alignItems: "flex-start", paddingLeft: "calc(var(--u)*0.16)",
+    };
+    const ownBox = {
+        height: "calc(var(--u)*4.6)", width: "calc(var(--u)*3.3)", fontSize: "calc(var(--u)*2.1)",
+        marginLeft: "calc(var(--u)*-1.2)", alignItems: "flex-start", paddingLeft: "calc(var(--u)*0.18)",
+    };
+    return (React.createElement("div", { className: "gm-seat", style: {
+            flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            background: acting ? "rgba(12,30,21,0.96)" : "rgba(6,15,11,0.86)",
+            border: `1px solid ${acting ? "#57E6B0" : "rgba(201,162,75,0.18)"}`,
+            boxShadow: acting ? "0 0 0 1px #57E6B0, 0 0 calc(var(--u)*2.2) rgba(87,230,176,0.3)" : "none",
+            borderRadius: "calc(var(--u)*1)", padding: "calc(var(--u)*0.55) calc(var(--u)*0.8)",
+            opacity: p.folded ? 0.34 : 1, transition: "opacity .2s, box-shadow .2s, border-color .2s",
+        } },
+        React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: "calc(var(--u)*0.6)", whiteSpace: "nowrap" } },
+            React.createElement("span", { style: { fontSize: "calc(var(--u)*1.7)", fontWeight: "bold", color: "#F0E9D6",
+                    fontFamily: "'GM-Body',system-ui,sans-serif" } }, hero ? "You" : p.name),
+            React.createElement("span", { style: { fontSize: "calc(var(--u)*1.55)", color: "#EBD08A", fontVariantNumeric: "tabular-nums",
+                    fontFamily: "'GM-Body',system-ui,sans-serif" } },
+                "$",
+                MNY(p.chips || 0)),
+            dealer && shape !== "stud" && (React.createElement("span", { style: { width: "calc(var(--u)*1.8)", height: "calc(var(--u)*1.8)", borderRadius: "50%",
+                    background: "#C9A24B", color: "#08160f", fontSize: "calc(var(--u)*1.15)", fontWeight: "bold",
+                    display: "inline-flex", alignItems: "center", justifyContent: "center", alignSelf: "center" } }, "D"))),
+        showOwn && (React.createElement("div", { style: { display: "flex", marginTop: "calc(var(--u)*0.4)" } }, hand.map((c, ci) => (React.createElement(BoardCard, { key: ci, card: c, idx: ci, styleOverride: {
+                ...ownBox, ...(ci === 0 ? { marginLeft: 0 } : {}),
+                ...(c.down ? { boxShadow: "inset 0 0 0 2px #2f6b8f, 0 2px 6px rgba(0,0,0,0.42)" } : {}),
+            } }))))),
+        showUp && (up.length > 0 || down > 0) && (React.createElement("div", { style: { display: "flex", marginTop: "calc(var(--u)*0.4)", alignItems: "center" } },
+            up.map((c, ci) => (React.createElement(BoardCard, { key: ci, card: c, idx: ci, styleOverride: { ...cardBox, ...(ci === 0 ? { marginLeft: 0 } : {}) } }))),
+            down > 0 && (React.createElement("div", { style: { marginLeft: "calc(var(--u)*0.35)", display: "flex", gap: "calc(var(--u)*0.12)" } }, Array.from({ length: down }).map((_, d) => (React.createElement("i", { key: d, style: { width: "calc(var(--u)*0.32)", height: "calc(var(--u)*3.5)", borderRadius: 1,
+                    display: "block", background: "linear-gradient(160deg,#2f6b8f,#1d4763)",
+                    border: "1px solid rgba(255,255,255,0.12)" } }))))))),
+        !hero && p.folded && (React.createElement("span", { style: { fontSize: "calc(var(--u)*1.35)", fontWeight: "bold", marginTop: "calc(var(--u)*0.3)",
+                padding: "calc(var(--u)*0.12) calc(var(--u)*0.6)", borderRadius: "calc(var(--u)*0.45)",
+                background: "rgba(226,133,122,0.16)", color: "#E2857A", whiteSpace: "nowrap" } }, "folds")),
+        !hero && !p.folded && drawsShown && p.drewLast != null && (React.createElement("span", { style: { fontSize: "calc(var(--u)*1.35)", fontWeight: "bold", marginTop: "calc(var(--u)*0.3)",
+                padding: "calc(var(--u)*0.12) calc(var(--u)*0.6)", borderRadius: "calc(var(--u)*0.45)",
+                background: p.drewLast === 0 ? "rgba(201,162,75,0.2)" : "rgba(140,170,255,0.18)",
+                color: p.drewLast === 0 ? "#EBD08A" : "#9fb7ff", whiteSpace: "nowrap" } }, p.drewLast === 0 ? "pat" : `drew ${p.drewLast}`)),
+        !hero && !p.folded && !drawsShown && p.lastAct && p.lastAct.text && (React.createElement("span", { style: { fontSize: "calc(var(--u)*1.35)", fontWeight: "bold", marginTop: "calc(var(--u)*0.3)",
+                padding: "calc(var(--u)*0.12) calc(var(--u)*0.6)", borderRadius: "calc(var(--u)*0.45)",
+                background: "rgba(87,230,176,0.16)", color: p.lastAct.color || "#57E6B0",
+                whiteSpace: "nowrap", fontFamily: "'GM-Body',system-ui,sans-serif" } }, p.lastAct.text))));
+}
+function LandscapeTable({ st, la, onAction, coachAdvice, turnText, onClose }) {
+    const [coachOpen, setCoachOpen] = useState(false);
+    const [land, setLand] = useState(() => typeof window !== "undefined" && window.innerWidth > window.innerHeight);
+    const rootRef = useRef(null), fieldRef = useRef(null);
+    const n = st.players.length;
+    const shape = TABLE_SHAPE(st.gid);
+    const cap = seatCap(st.gid);
+    const rows = tableRows(n, land);
+    const acting = (st.queue && st.queue[0] != null) ? st.queue[0] : null;
+    const isShow = st.phase === "showdown";
+    const draws = shape === "draw" || shape === "drawBoard" || shape === "drawOne";
+    const boards = shape === "board2" ? [st.board || [], st.board2 || []]
+        : shape === "stud" || shape === "draw" ? []
+            : [st.board || []];
+    useEffect(() => {
+        const onResize = () => setLand(window.innerWidth > window.innerHeight);
+        window.addEventListener("resize", onResize);
+        window.addEventListener("orientationchange", onResize);
+        return () => {
+            window.removeEventListener("resize", onResize);
+            window.removeEventListener("orientationchange", onResize);
+        };
+    }, []);
+    useLayoutEffect(() => {
+        const root = rootRef.current, field = fieldRef.current;
+        if (!root || !field)
+            return;
+        let u = 12;
+        for (let pass = 0; pass < 5; pass++) {
+            root.style.setProperty("--u", u + "px");
+            const fx = field.clientWidth, fy = field.clientHeight;
+            if (!fx || !fy)
+                break;
+            const seats = [...field.querySelectorAll(".gm-seat:not(.gm-hero)")];
+            seats.forEach(s => { s.style.width = ""; s.style.minHeight = ""; });
+            let ow = 0, oh = 0;
+            seats.forEach(s => { ow = Math.max(ow, s.offsetWidth); oh = Math.max(oh, s.offsetHeight); });
+            seats.forEach(s => { s.style.width = ow + "px"; s.style.minHeight = oh + "px"; });
+            let maxW = 0, totH = 0;
+            [...field.children].forEach(c => {
+                totH += c.offsetHeight;
+                if (c.classList.contains("gm-row")) {
+                    let w = 0;
+                    [...c.children].forEach(k => { w += k.offsetWidth; });
+                    w += u * 0.7 * (c.children.length - 1) + u * 1.4;
+                    maxW = Math.max(maxW, w);
+                }
+                else
+                    maxW = Math.max(maxW, c.offsetWidth);
+            });
+            totH += u * 0.5 * (field.children.length - 1);
+            const s = Math.min(fx / (maxW || 1), fy / (totH || 1));
+            if (s > 0.99 && s < 1.05)
+                break;
+            u = Math.max(6, Math.min(30, u * Math.min(s, 1.3)));
+        }
+    });
+    const seatFor = k => {
+        const i = k === "H" ? 0 : k;
+        const p = st.players[i];
+        return React.createElement(TSeat, { key: k, p: p, hero: i === 0, acting: acting === i, dealer: st.dealerIdx === i, shape: shape, reveal: st.reveal, drawsShown: draws && (st.drawN || 0) > 0 });
+    };
+    const centre = (React.createElement("div", { key: "C", style: { display: "flex", flexDirection: "column", alignItems: "center",
+            gap: "calc(var(--u)*0.7)" } },
+        React.createElement("div", { style: { fontSize: "calc(var(--u)*2)", letterSpacing: 1, color: "#EBD08A", whiteSpace: "nowrap",
+                background: "rgba(8,26,19,0.82)", border: "1px solid rgba(201,162,75,0.5)", borderRadius: 99,
+                padding: "calc(var(--u)*0.35) calc(var(--u)*1.8)", fontVariantNumeric: "tabular-nums" } },
+            "POT\u00A0\u00A0$",
+            MNY(st.pot || 0)),
+        boards.map((b, bi) => b.length > 0 && (React.createElement("div", { key: bi, style: { display: "flex", gap: "calc(var(--u)*0.45)" } }, b.map((c, ci) => React.createElement(BoardCard, { key: ci, card: c, idx: ci, styleOverride: {
+                height: "calc(var(--u)*6.2)", width: "calc(var(--u)*4.4)", fontSize: "calc(var(--u)*2.5)"
+            } }))))),
+        draws && (st.maxDraws || 1) > 0 && !isShow && (React.createElement("div", { style: { fontSize: "calc(var(--u)*1.4)", color: "#9d8a62", letterSpacing: 1.6, whiteSpace: "nowrap" } }, `DRAW ${Math.min((st.drawN || 0) + 1, st.maxDraws || 1)} OF ${st.maxDraws || 1}`)),
+        isShow && st.msg && (React.createElement("div", { style: { fontSize: "calc(var(--u)*1.7)", color: "#57E6B0", fontWeight: "bold", textAlign: "center",
+                fontFamily: "'GM-Body',system-ui,sans-serif" } }, st.msg))));
+    const actionBar = la && onAction && (React.createElement("div", { style: { flex: "0 0 auto", display: "flex", gap: 6,
+            ...(land ? { flexDirection: "column", width: "calc(var(--u)*9.5)" }
+                : { flexDirection: "row", height: "calc(var(--u)*4.6)" }) } },
+        !la.canCheck && React.createElement("button", { onClick: () => onAction("fold"), style: { flex: 1, border: "none",
+                borderRadius: "calc(var(--u)*0.85)", background: "#8f3a34", color: "#fff", fontWeight: "bold",
+                fontSize: "calc(var(--u)*1.75)", cursor: "pointer" } }, "FOLD"),
+        React.createElement("button", { onClick: () => onAction(la.canCheck ? "check" : "call"), style: { flex: 1, border: "none",
+                borderRadius: "calc(var(--u)*0.85)", background: "#2f6b8f", color: "#fff", fontWeight: "bold",
+                fontSize: "calc(var(--u)*1.75)", cursor: "pointer" } }, la.canCheck ? "CHECK" : `CALL ${MNY(la.toCall || 0)}`),
+        la.canRaise && React.createElement("button", { onClick: () => onAction("raise", la.maxTotal), style: { flex: 1, border: "none",
+                borderRadius: "calc(var(--u)*0.85)", background: "linear-gradient(165deg,#e0b755,#c9992f)",
+                color: "#241a06", fontWeight: "bold", fontSize: "calc(var(--u)*1.75)", cursor: "pointer" } }, "RAISE \u25B8")));
+    return (React.createElement("div", { ref: rootRef, style: { position: "fixed", inset: 0, zIndex: 200, background: "#05080c", display: "flex",
+            flexDirection: "column", padding: "5px 6px calc(5px + env(safe-area-inset-bottom))",
+            overflow: "hidden", "--u": "12px" } },
+        React.createElement("div", { style: { flex: "0 0 auto", display: "flex", justifyContent: "space-between", alignItems: "center",
+                fontSize: 12, color: "#9d8a62", padding: "0 4px 4px" } },
+            React.createElement("span", null,
+                (GAMES.find(g => g.id === st.gid)?.label) || st.gid,
+                st.stakes ? ` · ${st.stakes}` : "",
+                " \u00B7 ",
+                n,
+                " of ",
+                cap,
+                " seats"),
+            onClose && React.createElement("button", { onClick: onClose, style: { background: "transparent",
+                    border: "1px solid rgba(201,162,75,0.3)", color: "#C9A24B", borderRadius: 8, padding: "4px 11px",
+                    fontSize: 12, fontWeight: "bold", cursor: "pointer" } }, "\u2715 Close")),
+        React.createElement("div", { style: { flex: "1 1 auto", minHeight: 0, display: "flex", gap: 6,
+                flexDirection: land ? "row" : "column" } },
+            React.createElement("div", { style: { flex: "1 1 auto", minWidth: 0, minHeight: 0, position: "relative", borderRadius: 16,
+                    overflow: "hidden",
+                    background: "radial-gradient(120% 130% at 50% 4%, #10402d 0%, #0d3325 46%, #0a2419 100%)",
+                    border: "1px solid rgba(201,162,75,0.25)", boxShadow: "0 8px 40px rgba(0,0,0,0.5)" } },
+                React.createElement("div", { style: { position: "absolute", left: "calc(var(--u)*0.5)", right: "calc(var(--u)*0.5)",
+                        top: "calc(var(--u)*0.5)", bottom: "calc(var(--u)*0.5)", borderRadius: "50%/44%",
+                        border: "2px solid rgba(201,162,75,0.13)", pointerEvents: "none",
+                        background: "radial-gradient(56% 50% at 50% 46%, rgba(87,230,176,0.05), transparent 72%)" } }),
+                React.createElement("div", { ref: fieldRef, style: { position: "absolute", left: "calc(var(--u)*0.9)",
+                        right: "calc(var(--u)*0.9)", top: "calc(var(--u)*0.9)", bottom: "calc(var(--u)*3.1)",
+                        display: "flex", flexDirection: "column", justifyContent: "space-between", zIndex: 3 } }, rows.map((r, ri) => r === "C" ? centre : (React.createElement("div", { key: ri, className: "gm-row", style: { display: "flex", alignItems: "center",
+                        width: "100%", gap: "calc(var(--u)*0.7)",
+                        justifyContent: r.length >= 2 ? "space-between" : "center" } }, r.map(k => seatFor(k)))))),
+                React.createElement("div", { style: { position: "absolute", left: "calc(var(--u)*0.9)", right: "calc(var(--u)*0.9)",
+                        bottom: "calc(var(--u)*0.7)", zIndex: 4, textAlign: "center", pointerEvents: "none",
+                        fontSize: "calc(var(--u)*1.45)", color: "#EBD08A", whiteSpace: "nowrap", overflow: "hidden",
+                        textOverflow: "ellipsis", textShadow: "0 1px 6px rgba(0,0,0,0.9)" } }, turnText || ""),
+                coachAdvice && coachOpen && (React.createElement("div", { style: { position: "absolute", left: "calc(var(--u)*0.9)", right: "calc(var(--u)*0.9)",
+                        bottom: "calc(var(--u)*3.2)", zIndex: 7, background: "rgba(9,24,34,0.96)",
+                        border: "1px solid rgba(87,230,176,0.45)", borderRadius: "calc(var(--u)*0.85)",
+                        padding: "calc(var(--u)*0.9) calc(var(--u)*1.1)" } },
+                    React.createElement("span", { style: { fontSize: "calc(var(--u)*1.15)", letterSpacing: 1.6, color: "#57E6B0",
+                            fontWeight: "bold" } }, "COACH \u00B7 THIS SPOT"),
+                    React.createElement("p", { style: { fontSize: "calc(var(--u)*1.5)", color: "#cdeede", lineHeight: 1.4,
+                            marginTop: "calc(var(--u)*0.35)" } },
+                        coachAdvice.text,
+                        " ",
+                        React.createElement("span", { onClick: () => setCoachOpen(false), style: { color: "#57E6B0", cursor: "pointer",
+                                textDecoration: "underline" } }, "Hide \u25B4")))),
+                coachAdvice && !coachOpen && (React.createElement("button", { onClick: () => setCoachOpen(true), style: { position: "absolute", zIndex: 7,
+                        top: "calc(var(--u)*0.6)", right: "calc(var(--u)*0.9)",
+                        background: "rgba(87,230,176,0.12)", border: "1px solid rgba(87,230,176,0.4)",
+                        color: "#57E6B0", borderRadius: "calc(var(--u)*0.6)",
+                        padding: "calc(var(--u)*0.35) calc(var(--u)*0.8)",
+                        fontSize: "calc(var(--u)*1.25)", fontWeight: "bold", cursor: "pointer" } }, "Coach \u25BE"))),
+            actionBar)));
+}
 function OnlineTable({ mp, onClose }) {
     const [joinCode, setJoinCode] = useState("");
     const [tapDbg, setTapDbg] = useState("");
@@ -5423,9 +5674,7 @@ function OnlineTable({ mp, onClose }) {
                             "POT\u00A0\u00A0$",
                             MNY(v.pot || 0)),
                         React.createElement("div", { style: S.mpBoardRow }, (v.board && v.board.length > 0)
-                            ? v.board.map((c, ci) => React.createElement("span", { key: ci, style: { ...S.mpCard, ...(RED.has(c.s) ? S.mpCardRed : {}) } },
-                                c.r,
-                                React.createElement("span", { style: S.mpPip }, c.s)))
+                            ? v.board.map((c, ci) => React.createElement(BoardCard, { key: `mp-${ci}-${c.r}${c.s}`, card: c, idx: ci }))
                             : React.createElement("span", { style: S.mpPhaseTag }, v.phase === "acting" ? "pre-flop" : v.phase)),
                         v.phase === "showdown" && v.msg && React.createElement("div", { style: S.mpResult }, v.msg))),
                 React.createElement("div", { style: S.mpSeats }, v.players.map((p, i) => {
@@ -5550,6 +5799,7 @@ function App() {
     const [showProgress, setShowProgress] = useState(false);
     const [showNash, setShowNash] = useState(false);
     const [showOnline, setShowOnline] = useState(false);
+    const [previewLandscape, setPreviewLandscape] = useState(false);
     const mp = useOnlineTable();
     const [focus, setFocus] = useState(() => focusLoad());
     const [pendingCash, setPendingCash] = useState(false);
@@ -5682,7 +5932,7 @@ function App() {
         const actor = st.queue[0];
         const tilt = st.cpuTilt?.[actor] || 0;
         const heroOut = !live(st.players[0]);
-        const base = tilt > 0 ? 280 + Math.random() * 350 : 480 + Math.random() * 550;
+        const base = tilt > 0 ? 620 + Math.random() * 420 : 820 + Math.random() * 620;
         const delay = heroOut ? base / 3.5 : base;
         const t = setTimeout(() => {
             setSt(s => {
@@ -6115,6 +6365,8 @@ function App() {
         showProgress && React.createElement(ProgressReport, { focus: focus, onClose: () => setShowProgress(false), onSetFocus: gid => { const f = { gid, since: Date.now() }; setFocus(f); focusSave(f); }, onClearFocus: () => { setFocus(null); focusSave(null); setShowProgress(false); } }),
         showNash && React.createElement(NashTables, { onClose: () => setShowNash(false) }),
         showOnline && React.createElement(OnlineTable, { mp: mp, onClose: () => { mp.leaveTable(); setShowOnline(false); } }),
+        previewLandscape && React.createElement(LandscapeTable, { st: st, la: myTurn ? legalActions(st) : null, onAction: act, coachAdvice: advice, turnText: st.phase === "showdown" ? (st.msg || "Showdown")
+                : (st.queue && st.queue[0] != null && st.players[st.queue[0]]) ? `${st.players[st.queue[0]].name} to act…` : "Your turn", onClose: () => setPreviewLandscape(false) }),
         gamePick && React.createElement(SingleGamePicker, { curGid: st.gid, onDone: gid => {
                 const gp = gamePick;
                 setGamePick(null);
@@ -6435,7 +6687,11 @@ function App() {
                     React.createElement("div", { onClick: () => { setShowSettings(false); setShowNash(true); }, style: S.toolTile },
                         React.createElement("span", { style: S.toolTileIc }, "\u2660"),
                         React.createElement("span", { style: S.toolTileLb }, "Nash charts"),
-                        React.createElement("span", { style: S.toolTileDs }, "Push / fold"))),
+                        React.createElement("span", { style: S.toolTileDs }, "Push / fold")),
+                    React.createElement("div", { onClick: () => { setShowSettings(false); setPreviewLandscape(true); }, style: { ...S.toolTile, borderColor: "rgba(87,230,176,0.4)" } },
+                        React.createElement("span", { style: S.toolTileIc }, "\uD83D\uDD04"),
+                        React.createElement("span", { style: S.toolTileLb }, "Landscape (preview)"),
+                        React.createElement("span", { style: S.toolTileDs }, "New table \u00B7 rotate phone"))),
                 React.createElement("button", { onClick: replayTour, style: { ...S.tourSkip, display: "block", margin: "16px auto 0", color: "#9d8659", textDecoration: "underline" } }, "Replay the intro tour"),
                 React.createElement("button", { onClick: () => setShowSettings(false), style: S.modalDone }, "DONE")))),
         showReview && React.createElement(ReviewScreen, { onClose: () => setShowReview(false), mobile: mobile }),
@@ -6804,11 +7060,12 @@ function CentreInfo({ st, streetLbl }) {
                     border: `1px solid ${youWon ? "#3FD39C" : "#E2857A"}` } }, label));
         })()));
 }
-function BoardCard({ card, idx, small }) {
+function BoardCard({ card, idx, small, styleOverride }) {
     const isRed = RED.has(card.s);
-    return (React.createElement("div", { style: { ...(small ? S.boardCardSm : S.boardCard), color: isRed ? "#b91c1c" : "#111827", animation: `boardIn 0.3s cubic-bezier(.2,.7,.3,1) ${idx * 0.09}s backwards` } },
-        React.createElement("b", { style: { fontSize: small ? 11 : 13, lineHeight: 1 } }, card.r),
-        React.createElement("span", { style: { fontSize: small ? 10 : 12, lineHeight: 1 } }, card.s)));
+    const ov = styleOverride || null;
+    return (React.createElement("div", { style: { ...(small ? S.boardCardSm : S.boardCard), color: isRed ? "#b91c1c" : "#111827", animation: `boardIn 0.3s cubic-bezier(.2,.7,.3,1) ${idx * 0.09}s backwards`, ...(ov || {}) } },
+        React.createElement("b", { style: { fontSize: ov ? "inherit" : (small ? 11 : 13), lineHeight: 1 } }, card.r),
+        React.createElement("span", { style: { fontSize: ov ? "0.72em" : (small ? 10 : 12), lineHeight: 1 } }, card.s)));
 }
 function Seat({ p, reveal, gid, board, dealKey, isDealer, compact, thinking, wid, won, tilt, profile }) {
     if (!p)
@@ -7593,7 +7850,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 
   </script>
 
-  <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
-          data-cf-beacon='{"token": "58ce68fea4504dde8e8e96ca1c0dd912"}'></script>
 </body>
 </html>
